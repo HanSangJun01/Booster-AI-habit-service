@@ -1,0 +1,50 @@
+<!-- Generated: 2026-05-28 | Updated: 2026-05-28 -->
+
+# Booster AI Habit Service
+
+## Purpose
+Booster is an AI-powered habit completion service that uses verification-based accountability. The project is structured as a monorepo with three separate services: a frontend client, a backend API, and an AI service for habit verification and coaching.
+
+## Key Files
+
+| File | Description |
+|------|-------------|
+| `README.md` | Project overview (Korean: AI 검증 기반 습관 완주 서비스) |
+
+## Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| `frontend/` | Client-facing application (see `frontend/AGENTS.md`) |
+| `backend/` | API server and business logic (see `backend/AGENTS.md`) |
+| `ai-service/` | AI model integration for habit verification (see `ai-service/AGENTS.md`) |
+| `docs/` | Project documentation and planning (see `docs/AGENTS.md`) |
+| `.claude/` | Claude Code / OMC configuration (CLAUDE.md, skills) |
+
+## For AI Agents
+
+### Working In This Directory
+- This is a monorepo root — do not add application code here
+- Each service (`frontend/`, `backend/`, `ai-service/`) is independently deployable
+- Consult `docs/project-plan.md` for roadmap and feature scope before implementing
+- When adding a new top-level directory, also create its `AGENTS.md`
+
+### Testing Requirements
+- Run tests per-service from within each service directory
+- CI should validate all three services independently
+
+### Common Patterns
+- Service boundaries are strict: no cross-imports between `frontend/`, `backend/`, and `ai-service/`
+- Shared types or contracts (if any) should live in a dedicated `shared/` or `packages/` directory
+
+## Dependencies
+
+### Internal
+- `frontend/` depends on `backend/` API endpoints
+- `backend/` depends on `ai-service/` for verification logic
+- `ai-service/` is standalone (no dependency on other services)
+
+### External
+- To be determined as each service is implemented
+
+<!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->
