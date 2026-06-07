@@ -5,6 +5,7 @@
 > 기술 스택: Spring Boot REST API + PostgreSQL
 > 상태: 계획 문서 (코드 미생성). ERD/API 스펙 확정 시 필드명·경로 조정 예정.
 > 모드: ralplan consensus — **APPROVED** (Planner→Architect→Critic 합의 완료, 2026-06-04)
+> Open Questions: **전체 확정 완료** (Q1–Q5, 2026-06-07)
 
 ---
 
@@ -100,10 +101,11 @@ backend (Spring Boot)
     ├── participant      # Phase 1 (참여·GPS 등록·승인)
     ├── team             # Phase 2 (팀 구성)
     ├── challengecheckin # Phase 3 (팀 인증·참여율)
-    ├── settlement       # Phase 4 (정산)
-    ├── social           # Phase 4 (채팅·응원·리더보드)
+    ├── settlement       # Phase 4a (정산)
+    ├── social           # Phase 4b (채팅·응원·리더보드)
     └── shared
         ├── gps          # GpsVerificationEvaluator (A/B 공유)
+        ├── checkin      # CheckInOrchestrator (GPS 인증 단일 진입점, A/B 공유)
         └── contract     # A-axis 인터페이스 (CoinService 등)
 ```
 
@@ -237,8 +239,8 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 
 ### A-axis 인터페이스 계약 (★중요)
 - **단방향, 쓰기 없음**: B-axis는 A-axis의 PersonalCheckIn을 호출하거나 수정하지 않는다.
-- 동일 GPS 인증 이벤트를 두 흐름이 처리해야 한다면, **공통 진입점(Verification orchestration)** 이 A-axis `PersonalCheckInService`와 B-axis `ChallengeCheckInService`를 **각각 독립 호출**한다. 이 오케스트레이션 진입점의 소유권은 A/B 경계 협의 필요 → **Open Question**.
-- 공유 컴포넌트: `GpsVerificationEvaluator` (반경 판정 로직) — A/B 공용 shared 모듈.
+- **GPS 오케스트레이션 진입점 (확정)**: `shared.checkin.CheckInOrchestrator`가 1회 GPS 액션을 수신해 A-axis `PersonalCheckInService`와 B-axis `ChallengeCheckInService`를 각각 독립 호출한다. 두 흐름의 성공·실패는 완전히 독립이며, ChallengeCheckIn 실패가 PersonalCheckIn에 영향을 주지 않는다.
+- 공유 컴포넌트: `GpsVerificationEvaluator` (반경 판정 로직) — A/B 공용 shared 모듈. `CheckInOrchestrator`가 내부에서 사용.
 
 ---
 
@@ -247,7 +249,7 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 ### 목표
 챌린지 종료 시 권위 있는 참여율 재계산으로 승패를 결정하고, 코인 정산(승팀 분배/패팀 소멸/DRAW 반환)을 원자적·멱등하게 처리한다.
 
-> **Phase 4a 착수 선결 조건**: 탈퇴 일관성 계약(Open Q[탈퇴]) 해소 후 착수.
+> **Phase 4a 착수 선결 조건**: 탈퇴 일관성 계약(Q2b/Q2c) 및 정산 트리거(Q3) 확정 완료 — 착수 가능.
 
 ### 구현 기능/작업
 - 챌린지 종료 감지 (`endedAt` 도달) → `status = ENDED` (스케줄러 담당, Phase 4a 내에서 결정)
@@ -272,19 +274,19 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
   - `determineResult(teamA, teamB)` — WIN/LOSE/DRAW
   - `distributeCoins(...)` — CoinService 호출로 분배/반환 (DRAW는 활성 참여자만 대상)
 - `ChallengeEndScheduler`
-  - `markEndedChallenges()` — endedAt 경과 챌린지 ENDED 전이 (주기 작업, 정산 트리거와 역할 분리)
+  - `markEndedChallenges()` — endedAt 경과 챌린지를 ENDED로 전이한 뒤, 동일 실행에서 `SettlementService.settleChallenge()`를 호출. 정산 트리거 경로는 이 스케줄러 단일. 멱등 보장으로 수동 재시도 API도 동일 settleChallenge() 재사용 가능.
 
 ### API 엔드포인트 (개략, 4a)
 - `GET /challenges/{id}/result` — 정산 결과 조회
 
 ### Phase 4a 내 의존성
 - SettlementService → ParticipationRateCalculator(권위 모드), ChallengeLifecycleService(인원 스냅샷·탈퇴 이력), CoinService
-- ChallengeEndScheduler → status=ENDED 전이만 담당. 정산(`settleChallenge`) 트리거 방식은 별도 결정 (Open Q[정산 트리거])
+- ChallengeEndScheduler → ENDED 전이 + settleChallenge() 직접 호출. 단일 트리거 경로 (확정)
 
 ### A-axis 인터페이스 계약 — Phase 4a (★중요)
 - `CoinService.credit(userId, amount, reason=SETTLEMENT_WIN | DEPOSIT_REFUND, referenceId=challengeId)` — 정산 분배·반환
 - 패팀 소멸: 추가 코인 동작 없음 (참여 시 이미 차감). 감사용 소멸 기록은 B-axis Settlement에 남김
-- **탈퇴 일관성 계약**: 정산 착수 전, A-axis로부터 해당 챌린지 참여자 전원의 `ChallengeParticipant.activeUntil`이 확정됨을 동기적으로 보장. 수신 방식(동기 조회·이벤트·배치)은 탈퇴 일관성 계약 Open Q에서 결정.
+- **탈퇴 일관성 계약 (확정)**: A-axis 탈퇴 API가 `User.isActive = false` 처리와 동일 트랜잭션에서 `ChallengeParticipant.activeUntil`을 즉시 기록 (동기 in-process 호출, Q2b 확정). 정산 로직은 DB에 있는 `activeUntil` 값을 그대로 읽어 구간 분할 계산. `activeUntil IS NULL`인 참여자는 챌린지 `endedAt`까지 활성으로 간주 (Q2c 확정).
 
 ---
 
@@ -329,7 +331,7 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 | `CoinService.credit` | B→A | 정산 분배/반환 (referenceId로 추적) |
 | `CoinService.getBalance` | B→A | 신청 전 잔액 검증 |
 | User 활성/탈퇴 이벤트 | A→B | 탈퇴 시 participant.activeUntil 마킹 트리거 |
-| GPS 인증 오케스트레이션 | 공유 | 1회 GPS 액션 → A·B 흐름 각각 독립 호출 |
+| GPS 인증 오케스트레이션 | 공유 | `CheckInOrchestrator`(shared.checkin)가 A·B 흐름 각각 독립 호출 (확정) |
 | `GpsVerificationEvaluator` | 공유 모듈 | 반경 판정 로직 (중복 제거) |
 | 금지: PersonalCheckIn 쓰기 | — | B-axis는 절대 수행하지 않음 (불변식) |
 
@@ -339,29 +341,28 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 
 1. **Phase 1** (Challenge + 참여/GPS) — A-axis CoinService 스텁/계약만 있으면 즉시 착수 가능. Challenge CRUD·탐색·초대코드부터 시작.
 2. **Phase 2** (팀 구성) — Phase 1 참여 확정에 의존. A-axis 없이도 내부 로직 착수 가능.
-3. **Phase 3** (ChallengeCheckIn) — Phase 2 팀·시작시각에 의존. **Open Q1(GPS 오케스트레이션 진입점)** 을 Phase 3 착수 전 배치 결정 필요. `ChallengeCheckInService` 구현은 이 결정 전에도 가능.
-4. **Phase 4a** (정산) — Phase 3 인증 데이터에 의존. **[탈퇴 일관성 계약] (Open Q2)** 해소 필수. `CoinService.credit` 계약 확정 필요.
+3. **Phase 3** (ChallengeCheckIn) — Phase 2 팀·시작시각에 의존. `CheckInOrchestrator` 구조 확정(Q1)으로 차단 없음. `ChallengeCheckInService` 및 `CheckInOrchestrator` 함께 구현.
+4. **Phase 4a** (정산) — Phase 3 인증 데이터에 의존. 탈퇴 일관성 계약(Q2b/Q2c) 및 정산 트리거(Q3) 모두 확정. `CoinService.credit` 계약 확정 후 착수.
 5. **Phase 4b** (소셜) — Phase 2/3에만 의존. **Phase 4a와 병렬 착수 가능**. 채팅(REST pull)·이모지(개인 대상) 방향 확정으로 즉시 착수 가능.
 
 **병렬화 권장**:
-- Phase 1 진행 중 CoinService 계약 + GPS 오케스트레이션 소유권(Open Q1)을 A-axis 팀과 조기 합의 → Phase 3 차단 최소화.
-- Phase 3 진행 중 탈퇴 일관성 계약(Open Q2) 해소 → Phase 4a 착수 지연 방지.
-- Phase 4b는 Phase 4a 결과 없이도 독립 진행 가능 → 정산 블로커에 발이 묶이지 않음.
+- Phase 1 진행 중 A-axis 팀과 CoinService 계약 조기 확정 → Phase 1 말미 참여 확정 로직 차단 최소화.
+- Phase 3 진행 중 Phase 4b 소셜 기능 병렬 착수 가능 (정산 대기 불필요).
+- Phase 4a와 Phase 4b 완전 독립 — 정산 블로커가 소셜 기능을 막지 않음.
 
 ---
 
-## Open Questions (실행 전/중 해소 필요)
+## Resolved Questions (전체 확정 완료 — 2026-06-07)
 
-`.omc/plans/open-questions.md`에도 기록됨.
+`.omc/plans/open-questions.md`에 상세 기록됨.
 
-1. **GPS 인증 오케스트레이션 진입점 소유권**: 1회 GPS 액션이 PersonalCheckIn(A-axis)과 ChallengeCheckIn(B-axis) 둘 다 갱신할 때, 누가(A or B or 공유 컨트롤러) 두 서비스를 독립 호출하는가? — **Phase 3 착수 전 배치 결정 필요**. 단, B-axis `ChallengeCheckInService.recordCheckIn()` 시그니처는 이 결정과 무관하게 먼저 구현 가능.
-2. **[탈퇴 일관성 계약] — Phase 4a 착수 전 필수 해소 (Open Q2+Q3 통합)**
-   - **2a. 탈퇴일 구간 경계 규칙**: 탈퇴한 날(Day N)을 탈퇴 전 구간에 포함하는가, 이후 구간에 포함하는가? 정산 분모 수식에 직접 영향.
-   - **2b. activeUntil 마킹 수신 방식**: A-axis 탈퇴 이벤트를 B-axis가 어떻게 수신하는가 (동기 조회·도메인 이벤트·배치)? Principle 6(모듈러 모놀리스) 전제 하에 동기 in-process 호출이 기본 권장.
-   - **2c. 정산 착수 precondition**: 정산 시작 전 모든 참여자의 `activeUntil`이 확정됨을 A-axis에 동기 조회로 검증하거나, 스케줄러가 정산 전 마킹 완료를 보장하는 순서를 명시. 이 precondition이 없으면 비동기 탈퇴 이벤트 지연 시 Principle 2(결정론) 위반 가능.
-3. **정산 트리거 방식**: `ChallengeEndScheduler`가 ENDED 전이만 담당하고 정산은 별도 트리거인가, 스케줄러가 정산까지 수행하는가? 두 호출자가 동시에 `settleChallenge`를 호출할 수 있는 경로를 제거하도록 트리거를 단일화 권장.
-4. **팀 채팅 실시간성**: MVP는 REST pull로 충분한가, WebSocket이 필요한가? (스펙상 푸시 Phase 2 → REST pull 기본 권장)
-5. **응원 이모지 대상 단위**: 참여자 개인 대상인가 팀 대상인가? (스펙 미명시 → Phase 4b 착수 전 결정)
+1. **[Q1] GPS 인증 오케스트레이션 진입점** — `shared.checkin.CheckInOrchestrator`가 진입점. A-axis `PersonalCheckInService`와 B-axis `ChallengeCheckInService`를 각각 독립 호출. `GpsVerificationEvaluator` 공유 사용.
+2. **[Q2a] 탈퇴일 구간 경계 규칙** — Day N 포함(이전 구간), Day N+1부터 잔여 인원 구간. 예) 14일 챌린지 Day7 탈퇴 → 분모 = (7×5)+(7×4) = 63.
+3. **[Q2b] activeUntil 마킹 수신 방식** — A-axis 탈퇴 API 동일 트랜잭션에서 동기 in-process 마킹.
+4. **[Q2c] 정산 precondition** — Q2b에 의해 탈퇴 시 즉시 기록. `activeUntil IS NULL` = 챌린지 종료일까지 활성.
+5. **[Q3] 정산 트리거 방식** — `ChallengeEndScheduler` 단일 경로. ENDED 전이 후 동일 실행에서 `settleChallenge()` 호출.
+6. **[Q4] 팀 채팅 실시간성** — MVP는 REST pull (페이지네이션). WebSocket Phase 2.
+7. **[Q5] 응원 이모지 대상 단위** — MVP는 개인 대상(`toParticipantId`). 팀 전체 Phase 2.
 
 ---
 
