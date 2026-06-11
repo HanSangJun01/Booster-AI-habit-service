@@ -3,9 +3,10 @@
 > 대상: Challenge / Team / ChallengeCheckIn / Settlement 백엔드 (B-axis)
 > 기반: deep-interview `di-booster-20260531` (Ambiguity 19.5%, PASSED)
 > 기술 스택: Spring Boot REST API + PostgreSQL
-> 상태: 계획 문서 (코드 미생성). ERD/API 스펙 확정 시 필드명·경로 조정 예정.
+> 상태: 계획 문서 (코드 미생성)
 > 모드: ralplan consensus — **APPROVED** (Planner→Architect→Critic 합의 완료, 2026-06-04)
 > Open Questions: **전체 확정 완료** (Q1–Q5, 2026-06-07)
+> DB/API 동기화: `bs-22-database-design-plan.md` + `MVP_API_SPEC.md` 기준 반영 (2026-06-11)
 
 ---
 
@@ -125,10 +126,37 @@ backend (Spring Boot)
 - 승인 흐름: `approvalType = AUTO` (즉시 확정) vs `LEADER` (방장 승인 대기)
 - 참여 확정 동시성 제어 (10명 정원, 11명 초과 방지)
 
-### 관련 엔티티/테이블
-- `Challenge` (id, category, title, verificationMethod, durationDays, depositCoins, visibility, approvalType, status, inviteCode, startedAt, endedAt)
-- `ChallengeParticipant` (id, userId, challengeId, teamId(nullable), personalStatement, gpsLat, gpsLng, gpsRadiusMeters, gpsPlaceName, status(PENDING/CONFIRMED), activeUntil)
-- Challenge.status 상태머신: `RECRUITING → ONGOING → ENDED → SETTLED`
+### 관련 엔티티/테이블 (bs-22 확정 기준)
+
+**`challenges`**
+```
+id, category, title, description, verification_method, duration_days, deposit_coins,
+visibility, approval_type, status, invite_code, max_participants,
+started_at, ended_at, created_by, created_at, updated_at
+```
+- status: `RECRUITING | ONGOING | ENDED | SETTLED`
+- visibility: `PUBLIC | PRIVATE`
+- approval_type: `AUTO | LEADER`
+  - `LEADER` 승인 권한자 = `created_by` 고정 (별도 `leader_id` 컬럼 없음)
+- `invite_code`: UNIQUE, `PRIVATE` 챌린지에서만 사용 (PUBLIC은 NULL)
+- `max_participants`: 기본 10명. 애플리케이션 레벨에서 정책 관리 (DB 고정 아님)
+
+**`challenge_participants`**
+```
+id, challenge_id, user_id, team_id(nullable), personal_statement,
+gps_lat, gps_lng, gps_radius_meters, gps_place_name, gps_locked,
+status, active_until, joined_at, approved_at, created_at, updated_at
+```
+- status: `PENDING | CONFIRMED | REJECTED | CANCELLED | LEFT`
+  - `PENDING`: LEADER 승인 대기
+  - `CONFIRMED`: 참여 확정 (AUTO: 즉시, LEADER: 승인 후)
+  - `REJECTED`: LEADER가 거절
+  - `CANCELLED`: 챌린지 **시작 전** 자발적 취소
+  - `LEFT`: 챌린지 **시작 후** 탈퇴 (회원 탈퇴 등)
+- UNIQUE (challenge_id, user_id)
+- `gps_locked`: Phase 2 팀 구성 시 true로 변경
+
+Challenge.status 상태머신: `RECRUITING → ONGOING → ENDED → SETTLED`
 
 ### 서비스 클래스 & 핵심 메서드 (개념 수준)
 - `ChallengeService`
@@ -142,13 +170,16 @@ backend (Spring Boot)
   - `confirmParticipation(...)` — 확정 시 정원 체크 (10명 도달 시 Phase 2 팀 구성 트리거로 위임)
 - `InviteCodeGenerator` — 충돌 없는 코드 생성
 
-### API 엔드포인트 (개략, 확정 아님)
-- `POST /challenges` — 생성
-- `GET /challenges?category=&keyword=` — 공개 탐색
-- `GET /challenges/invite/{code}` — 초대 코드 조회
-- `GET /challenges/{id}` — 상세
-- `POST /challenges/{id}/participants` — 참여 신청 (personalStatement + GPS 등록 포함)
-- `POST /challenges/{id}/participants/{participantId}/approve` — 방장 승인
+### API 엔드포인트 (MVP_API_SPEC 기준)
+- `POST /api/challenges` — 생성 (personalStatement + GPS 등록 없이 챌린지 기본 정보만)
+- `GET /api/challenges/{challengeId}` — 상세 (스펙 확정)
+- `GET /api/challenges?category=&keyword=` — 공개 탐색
+- `GET /api/challenges/invite/{code}` — 초대 코드 조회
+- `POST /api/challenges/{challengeId}/participants` — 참여 신청 (personalStatement + GPS 등록 포함, 스펙 확정)
+- `DELETE /api/challenges/{challengeId}/participants/{userId}` — 참여 취소 (챌린지 시작 전, 스펙 확정)
+- `POST /api/challenges/{challengeId}/participants/{participantId}/approve` — 방장 승인
+
+> **API 스펙 충돌 주의**: MVP_API_SPEC은 `POST /api/teams/{teamId}/challenges`로 챌린지를 팀 하위 리소스로 정의하지만, bs-19/project-plan은 챌린지-first 모델(챌린지 → 10명 모집 → 팀 자동 구성)을 따른다. 위 경로는 bs-19 모델 기준으로 유지하며, A-axis 팀과 경로 최종 합의 필요.
 
 ### Phase 내 의존성
 - ParticipationService → ChallengeService (상태·정원 조회)
@@ -173,9 +204,24 @@ backend (Spring Boot)
 - 시작 시점에 모든 참여자 GPS 위치 불변(locked) 마킹
 - 시작 시점 팀 인원수 스냅샷 기록 (정산 분모 기준값)
 
-### 관련 엔티티/테이블
-- `Team` (id, challengeId, name, participationRate(cache), result(nullable), initialMemberCount)
-- `ChallengeParticipant.teamId` 채워짐, `activeUntil` 초기값(=endedAt) 설정
+### 관련 엔티티/테이블 (bs-22 확정 기준)
+
+**`teams`**
+```
+id, challenge_id, name, participation_rate(cache), result(nullable),
+initial_member_count, created_at, updated_at
+```
+- result: `WIN | LOSE | DRAW | NULL(진행 중)`
+- `initial_member_count = 5` 고정 (5:5 구성)
+- UNIQUE (challenge_id, name)
+- `participation_rate`: 화면용 캐시. 정산 시에는 원본 재계산값 사용.
+
+**`challenge_participants` 변경 사항 (팀 구성 완료 후)**
+```
+team_id       → assigned_team_id
+gps_locked    → true
+active_until  → challenge.ended_at
+```
 
 ### 서비스 클래스 & 핵심 메서드
 - `TeamFormationService`
@@ -185,8 +231,8 @@ backend (Spring Boot)
   - `startChallenge(challengeId)` — 상태 전이 + 시각 설정 + GPS 잠금 + 인원 스냅샷
 
 ### API 엔드포인트 (개략)
-- 별도 외부 트리거 없음 (내부 자동). 단, 디버깅/운영용 `GET /challenges/{id}/teams` 정도 제공
-- `GET /challenges/{id}/teams` — 구성된 팀 조회
+- 별도 외부 트리거 없음 (내부 자동). 단, 디버깅/운영용 `GET /api/challenges/{challengeId}/teams` 정도 제공
+- `GET /api/challenges/{challengeId}/teams` — 구성된 팀 조회
 
 ### Phase 내 의존성
 - TeamFormationService ← Phase 1 ParticipationService.confirmParticipation 가 호출
@@ -210,11 +256,22 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 - 팀 참여율 점진 캐시 갱신 (화면용)
 - 팀 상세 뷰: 우리 팀/상대 팀의 오늘 인증 여부·연속 출석·전체 참여율·Day N/총일수
 
-### 관련 엔티티/테이블
-- `ChallengeCheckIn` (id, participantId, date(KST), status(SUCCESS/MISSED), verifiedAt)
-  - **NOT PersonalCheckIn** — 별도 테이블, 별도 리포지토리
-- `Team.participationRate` 캐시 컬럼 갱신
-- (unique constraint: participantId + date — 일자별 1건 보장)
+### 관련 엔티티/테이블 (bs-22 확정 기준)
+
+**`challenge_check_ins`** — **NOT `check_ins`(A-axis)** — 별도 테이블, 별도 리포지토리
+```
+id, participant_id, challenge_id, team_id, check_in_date(DATE),
+status, verified_at, current_lat, current_lng, created_at, updated_at
+```
+- status: `SUCCESS | FAILED`
+  - **MISSED = 레코드 미생성**. 참여율 계산 시 SUCCESS 레코드 부재로 미수행 판단.
+  - MVP에서는 자정 MISSED 배치 생성 없음. 통계 고도화 시 검토.
+- `check_in_date`: `DATE` 타입. DB 타임존 의존 없이 애플리케이션에서 KST 기준 `LocalDate` 계산 후 저장.
+- `current_lat`, `current_lng`: 인증 시점 좌표 (감사/디버깅용). GPS 좌표 저장 여부 및 정밀도·보관 정책은 미정 (bs-22 Open Question 12.3).
+- `challenge_id`, `team_id`: 정규화 관점에서 `participant_id`로 추적 가능하나 조회 성능·쿼리 단순성을 위해 중복 저장.
+- UNIQUE (participant_id, check_in_date) — 챌린지별 하루 1건 보장
+
+`teams.participation_rate` 캐시 컬럼 갱신 (분자 기준)
 
 ### 서비스 클래스 & 핵심 메서드
 - `ChallengeCheckInService`
@@ -228,10 +285,11 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 - `GpsVerificationEvaluator` (shared.gps)
   - `isWithinRadius(registered, current)` — A/B 공유, 중복 제거
 
-### API 엔드포인트 (개략)
-- `POST /challenges/{id}/checkin` — 팀 챌린지 GPS 인증 (현재 좌표 전송)
-- `GET /challenges/{id}/team-detail` — 우리 팀 vs 상대 팀 비교 뷰
-- `GET /challenges/{id}/checkins/today` — 팀원별 오늘 상태
+### API 엔드포인트 (MVP_API_SPEC 기준)
+- `POST /api/challenges/{challengeId}/check-ins` — 팀 챌린지 GPS 인증 (현재 좌표 전송, 스펙 확정)
+- `GET /api/challenges/{challengeId}/check-ins` — 팀 체크인 목록 조회 (스펙 확정)
+- `GET /api/challenges/{challengeId}/check-ins?date={yyyyMMdd}` — 특정 날짜 팀원별 인증 상태 (date 파라미터 방식 검토)
+- `GET /api/challenges/{challengeId}/team-detail` — 우리 팀 vs 상대 팀 비교 뷰 (스펙 미포함 — B-axis 추가 API)
 
 ### Phase 내 의존성
 - recordCheckIn → GpsVerificationEvaluator, ChallengeParticipant(등록 위치)
@@ -263,9 +321,30 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
   - 탈퇴자: 승·패·DRAW 모두 예치금 반환 없음. 탈퇴자 예치금은 별도 재분배 없이 소멸 처리한다 (DRAW 시 활성자의 분배 풀에 합산되지 않는다).
 - **정산 멱등성**: `UPDATE challenge SET status = SETTLED WHERE id = ? AND status = ENDED` 의 affected-rows = 1 인 호출자만 코인 분배를 수행한다. affected-rows = 0 이면 즉시 no-op 반환. 상태 플래그 조회 후 전이하는 방식(check-then-set)은 race condition 위험으로 사용하지 않는다.
 
-### 관련 엔티티/테이블 (4a)
-- `Team.result` (WIN/LOSE/DRAW), `Team.participationRate` 최종 확정값
-- `Settlement` (id, challengeId, computedAt, totalPool, perWinnerPayout, status) — 정산 감사 기록
+### 관련 엔티티/테이블 (bs-22 확정 기준)
+
+**`teams` 변경 사항 (정산 완료 후)**
+```
+result              → 'WIN' | 'LOSE' | 'DRAW'
+participation_rate  → 최종 재계산값으로 확정
+```
+
+**`settlements`** — 챌린지 단위 정산 감사 기록
+```
+id, challenge_id, computed_at, total_pool, per_winner_payout, status,
+winner_team_id, loser_team_id, draw, created_at, updated_at
+```
+- UNIQUE (challenge_id)
+- status: `PENDING | COMPLETED | FAILED`
+- `draw = true` 시 `winner_team_id`, `loser_team_id`는 NULL
+- `per_winner_payout`: 정수 코인, 소수점 발생 시 내림(floor) 처리. 잔액(remainder) 귀속 기준 미정 (bs-22 Open Question 12.5)
+- 재시도 전략: `status = FAILED` 시 DELETE+INSERT 아닌 기존 레코드 `UPDATE`
+- 개별 참여자 지급 이력이 필요해지면 `settlement_participants` 테이블 확장 (bs-22 8.4)
+
+**`challenges` 변경 사항 (정산 완료 후)**
+```
+status → 'SETTLED'
+```
 
 ### 서비스 클래스 & 핵심 메서드 (4a)
 - `SettlementService`
@@ -276,8 +355,8 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 - `ChallengeEndScheduler`
   - `markEndedChallenges()` — endedAt 경과 챌린지를 ENDED로 전이한 뒤, 동일 실행에서 `SettlementService.settleChallenge()`를 호출. 정산 트리거 경로는 이 스케줄러 단일. 멱등 보장으로 수동 재시도 API도 동일 settleChallenge() 재사용 가능.
 
-### API 엔드포인트 (개략, 4a)
-- `GET /challenges/{id}/result` — 정산 결과 조회
+### API 엔드포인트 (MVP_API_SPEC 기준, 4a)
+- `GET /api/challenges/{challengeId}/result` — 정산 결과 조회 (B-axis 추가 API)
 
 ### Phase 4a 내 의존성
 - SettlementService → ParticipationRateCalculator(권위 모드), ChallengeLifecycleService(인원 스냅샷·탈퇴 이력), CoinService
@@ -300,20 +379,32 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 - 응원 이모지 (참여자 간 이모지 반응)
 - 팀 리더보드 (참여율/인증 순위)
 
-### 관련 엔티티/테이블 (4b)
-- `ChatMessage` (id, teamId, senderId, content, createdAt)
-- `CheerEmoji` (id, challengeId, fromParticipantId, **toParticipantId**, emojiType, createdAt) — 팀 전체 대상(`toTeamId`)은 Phase 2. MVP는 참여자 개인 대상만.
+### 관련 엔티티/테이블 (bs-22 확정 기준, 4b)
+
+**`chat_messages`**
+```
+id, team_id, sender_id, content, created_at, updated_at, deleted_at
+```
+- `deleted_at`: 소프트 딜리트 (NULL이면 유효 메시지)
+- content NOT NULL, team_id NOT NULL, sender_id NOT NULL
+
+**`cheer_emojis`**
+```
+id, challenge_id, from_participant_id, to_participant_id, emoji_type, created_at
+```
+- `from_participant_id <> to_participant_id` 제약
+- 팀 전체 대상(`to_team_id`)은 Phase 2. MVP는 참여자 개인 대상만.
 
 ### 서비스 클래스 & 핵심 메서드 (4b)
 - `TeamChatService` — REST pull 전용 (WebSocket 제외, Phase 2)
 - `CheerService` — 개인 대상 이모지 전송·조회
 - `LeaderboardService`
 
-### API 엔드포인트 (개략, 4b)
-- `GET /challenges/{id}/leaderboard` — 팀 리더보드
-- `GET /teams/{id}/chat?page=` — 채팅 조회 (페이지네이션)
-- `POST /teams/{id}/chat` — 메시지 전송 (팀 소속 사용자만)
-- `POST /challenges/{id}/cheers` — 응원 이모지 전송 (toParticipantId 대상)
+### API 엔드포인트 (MVP_API_SPEC 기준, 4b)
+- `GET /api/challenges/{challengeId}/leaderboards?type=PERSONAL|TEAM` — 리더보드 조회 (스펙 확정)
+- `GET /api/teams/{teamId}/chat?page=` — 채팅 조회 (페이지네이션)
+- `POST /api/teams/{teamId}/chat` — 메시지 전송 (팀 소속 사용자만)
+- `POST /api/challenges/{challengeId}/cheers` — 응원 이모지 전송 (to_participant_id 대상)
 
 ### Phase 4b 내 의존성
 - Phase 2 팀 구성, Phase 3 인증 데이터에만 의존. Phase 4a(정산) 완료 불필요 → 병렬 착수 가능.
@@ -334,6 +425,40 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 | GPS 인증 오케스트레이션 | 공유 | `CheckInOrchestrator`(shared.checkin)가 A·B 흐름 각각 독립 호출 (확정) |
 | `GpsVerificationEvaluator` | 공유 모듈 | 반경 판정 로직 (중복 제거) |
 | 금지: PersonalCheckIn 쓰기 | — | B-axis는 절대 수행하지 않음 (불변식) |
+
+---
+
+## DB/API 정합성 주의 사항
+
+### 미결 Open Questions (bs-22 기준, B-axis 영향 있음)
+
+| # | 항목 | 내용 | 영향 Phase |
+|---|------|------|-----------|
+| OQ-DB-1 | A-axis User FK | `user_id`, `created_by`, `sender_id`를 `users.id`에 실제 FK로 걸 것인가, 논리 참조만 사용할 것인가 | Phase 1 |
+| OQ-DB-2 | GPS 좌표 저장 | `challenge_check_ins.current_lat/lng` 저장 여부, 소수점 정밀도, 보관 기간/마스킹 정책 | Phase 3 |
+| OQ-DB-3 | remainder 귀속 | `per_winner_payout` 소수점 내림 후 잔액 코인 귀속 기준 (플랫폼 수수료 / 임의 1명 / 소각) | Phase 4a |
+| OQ-DB-4 | teams 테이블 명칭 | 일반 사용자 팀(`teams`)과 챌린지 5:5 팀의 역할이 충돌하는 경우 `challenge_teams`로 분리 검토 | Phase 2 |
+
+### API 스펙 불일치 항목
+
+| 항목 | MVP_API_SPEC | bs-19 계획 | 비고 |
+|------|-------------|-----------|------|
+| 챌린지 생성 경로 | `POST /api/teams/{teamId}/challenges` | `POST /api/challenges` | 팀-first vs 챌린지-first 모델 충돌. A-axis 팀과 경로 합의 필요 |
+| 팀 상세 비교 뷰 | 스펙 미포함 | `GET /api/challenges/{challengeId}/team-detail` | B-axis 추가 API로 스펙에 반영 필요 |
+| 채팅/응원 API | 스펙 미포함 | `/api/teams/{teamId}/chat`, `/api/challenges/{challengeId}/cheers` | Phase 4b에서 스펙 추가 필요 |
+| 정산 결과 조회 | 스펙 미포함 | `GET /api/challenges/{challengeId}/result` | B-axis 추가 API로 스펙에 반영 필요 |
+
+### Flyway 마이그레이션 계획 (bs-22 기준)
+
+```
+V1__create_challenge_and_participant_tables.sql   → Phase 1 착수 전
+V2__create_team_tables.sql                        → Phase 2 착수 전
+V3__create_challenge_check_in_tables.sql          → Phase 3 착수 전
+V4__create_settlement_tables.sql                  → Phase 4a 착수 전
+V5__create_social_tables.sql                      → Phase 4b 착수 전
+```
+
+> 이미 팀 개발 환경에 별도 V1이 적용된 경우, 기존 V1을 기준으로 파일 번호를 조정한다.
 
 ---
 
