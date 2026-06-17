@@ -1,1 +1,16 @@
 .DS_Store
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Gradle
+.gradle/
+**/.gradle/
+
+# Build outputs
+build/
+**/build/
+
+# OMC local runtime
+.omc/
+**/.omc/
