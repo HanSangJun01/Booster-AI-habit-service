@@ -29,6 +29,24 @@ Booster is an AI-powered habit completion service that uses verification-based a
 - Consult `docs/project-plan.md` for roadmap and feature scope before implementing
 - When adding a new top-level directory, also create its `AGENTS.md`
 
+### MVP Design Document References
+
+When working on database design, ERD structure, API contracts, backend architecture, DTOs, controllers, services, or request/response formats, agents must refer to the following documents first:
+
+| Document | Path | Purpose |
+|----------|------|---------|
+| MVP ERD | `docs/erd/MVP_ERD.md` | Defines MVP database tables, relationships, derived data, and ERD scope |
+| MVP API Spec | `docs/api/MVP_API_SPEC.md` | Defines MVP API endpoints, request bodies, response formats, and API naming conventions |
+
+### Rules for Using MVP Documents
+- Use `docs/erd/MVP_ERD.md` as the source of truth for database tables, relationships, and ERD-level decisions.
+- Use `docs/api/MVP_API_SPEC.md` as the source of truth for API endpoints, request/response fields, DTO design, and controller structure.
+- Keep database column names and API field names aligned in `snake_case` unless there is a clear implementation reason not to.
+- If the ERD and API spec conflict, do not make assumptions. Report the conflict first and ask for confirmation before modifying code or documentation.
+- Do not add features outside the MVP scope unless they are explicitly requested.
+- Treat leaderboard, calendar summaries, rankings, progress rates, and similar aggregate values as derived data unless the ERD document states otherwise.
+- When adding or modifying backend code, check both documents before creating entities, DTOs, repositories, services, or controllers.
+
 ### Testing Requirements
 - Run tests per-service from within each service directory
 - CI should validate all three services independently
