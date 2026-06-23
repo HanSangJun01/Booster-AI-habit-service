@@ -326,6 +326,8 @@ ended_at = started_at + duration_days
 
 이 테이블은 개인 습관 체크인과 분리되며, 팀 챌린지 승패 및 정산 계산에만 사용된다.
 
+> **BS-27 확정 (인증 구조)**: 인증 결과는 통합형(`verification_logs`)이 아니라 **분리형**으로 확정되었다. 체크인(`challenge_check_ins`)을 기준으로 인증 제출(`verification_submissions`)과 GPS 결과(`gps_verification_results`) / AI 결과(`ai_verification_results`, Phase 2) / 최종 판정(`verification_decisions`)을 분리한다. 테이블명은 복수형으로 통일한다. 상세 결정은 `docs/database/BS-27-verification-schema-decision.md` 참조. Flyway 마이그레이션 반영은 후속 [BE/DB] 이슈에서 처리한다.
+
 ---
 
 ### 5.2 주요 테이블
@@ -368,6 +370,22 @@ FAILED
 UNIQUE (participant_id, check_in_date)
 status IN ('SUCCESS', 'FAILED')
 ```
+
+---
+
+#### 5.2.2 인증 결과 분리 테이블 (BS-27 분리형)
+
+`challenge_check_ins`의 인증 결과는 다음 테이블로 분리하여 저장한다(통합형 `verification_logs` 미채택).
+
+```text
+verification_submissions    인증 시도/제출 단위 (challenge_check_ins 1:N)
+gps_verification_results    GPS 인증 결과 (submission 1:1) — MVP
+ai_verification_results     AI 인증 결과 (submission 1:1) — Phase 2 구현 보류
+verification_decisions      최종 체크인 성공/실패 판정 (submission 1:1)
+```
+
+- `verification_decisions`는 GPS/AI 결과를 종합한 **최종 판정** 테이블이다. MVP에서는 `gps_verification_results`만으로 최종 판정을 산출하며, AI 통과 여부는 Phase 2에서 추가된다.
+- 컬럼·제약조건 상세 및 Flyway 반영은 후속 [BE/DB] 이슈에서 확정한다.
 
 ---
 
@@ -572,26 +590,27 @@ participant_leaderboard_snapshots
 
 ### 8.1 AI 인증 상세 결과
 
-초기 MVP에서는 GPS 인증 중심으로 설계하고, 이미지/AI 인증 결과는 이후 확장한다.
+MVP에서는 GPS 인증 중심으로 설계하고, **AI 인증 구현은 보류한다(Phase 2 확장).** 인증 결과 분리 구조 자체(§5.2.2)는 MVP에 포함되며, 그중 `ai_verification_results`만 Phase 2에서 실제 사용된다.
 
-후보 테이블:
+Phase 2 대상 테이블:
 
 ```text
-verification_evidences
-ai_verification_results
-verification_models
+ai_verification_results   AI 인증 결과 (verification_submissions 1:1)
 ```
 
-저장 후보 데이터:
+`ai_verification_results` 저장 후보 데이터:
 
 ```text
-image_url
-detected_object
+model_name
+detected_label
 gesture_type
 confidence_score
-model_version
-ai_decision
+is_passed
+raw_result
 ```
+
+- AI 통과 여부는 Phase 2에서 `verification_decisions`의 최종 판정 종합에 반영된다.
+- 모델 메타/학습 이력 등 추가 테이블이 필요해지는 시점에 별도로 검토한다.
 
 ---
 
@@ -697,10 +716,16 @@ challenges 1:N challenge_participants
 challenges 1:N teams
 teams 1:N challenge_participants
 challenge_participants 1:N challenge_check_ins
+challenge_check_ins 1:N verification_submissions
+verification_submissions 1:1 gps_verification_results
+verification_submissions 1:1 ai_verification_results   # Phase 2 확장
+verification_submissions 1:1 verification_decisions
 challenges 1:1 settlements
 teams 1:N chat_messages
 challenge_participants 1:N cheer_emojis
 ```
+
+> 인증 분리형 관계(BS-27 확정): `gps_verification_results`와 `verification_decisions`는 MVP 대상이며, `ai_verification_results`는 Phase 2 확장 대상이다.
 
 ---
 
