@@ -32,10 +32,10 @@ public class ChallengeParticipant {
     @Column(name = "personal_statement", columnDefinition = "TEXT")
     private String personalStatement;
 
-    @Column(name = "gps_lat", precision = 10, scale = 7)
+    @Column(name = "gps_lat")
     private Double gpsLat;
 
-    @Column(name = "gps_lng", precision = 10, scale = 7)
+    @Column(name = "gps_lng")
     private Double gpsLng;
 
     @Column(name = "gps_radius_meters")
