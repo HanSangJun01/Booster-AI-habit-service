@@ -11,7 +11,7 @@ MVP 핵심 흐름은 다음과 같다.
 3. 팀은 챌린지를 생성할 수 있다.
 4. 사용자는 챌린지에 참여할 수 있다.
 5. 사용자는 매일 챌린지에 대한 체크인을 수행할 수 있다.
-6. 체크인 과정에서 GPS, 사진, AI 인증 결과를 기록할 수 있다.
+6. 체크인 과정에서 MVP 기준 GPS 인증 결과를 기록하며, 사진 및 AI 인증 결과는 Phase 2 확장 대상으로 둔다.
 7. 사용자가 체크인에 실패하거나 지연된 경우 복귀 미션을 생성하고 수행할 수 있다.
 8. 챌린지 결과는 개인 또는 팀 단위 리더보드로 조회할 수 있다.
 9. 사용자는 체크인 알림, 미수행 알림, 복귀 미션 알림을 받을 수 있다.
@@ -79,8 +79,9 @@ MVP 핵심 흐름은 다음과 같다.
 | CheckIns | POST | /api/challenges/{challengeId}/check-ins | 일일 체크인 생성 |
 | CheckIns | GET | /api/challenges/{challengeId}/check-ins | 챌린지 체크인 목록 조회 |
 | CheckIns | GET | /api/users/{userId}/check-ins | 사용자 체크인 목록 조회 |
-| Verifications | POST | /api/check-ins/{checkInId}/verification-logs | 체크인 인증 결과 저장 |
-| Verifications | GET | /api/check-ins/{checkInId}/verification-logs | 체크인 인증 로그 조회 |
+| Verifications | POST | /api/check-ins/{checkInId}/verification-submissions | 인증 제출 생성 (MVP: GPS 인증) |
+| Verifications | GET | /api/check-ins/{checkInId}/verification-submissions | 인증 제출/결과 목록 조회 |
+| Verifications | ~~POST/GET~~ | ~~/api/check-ins/{checkInId}/verification-logs~~ | (deprecated) 통합형 초기안, 미채택 — BS-27 참조 |
 | Recovery | POST | /api/check-ins/{checkInId}/recovery-missions | 복귀 미션 생성 |
 | Recovery | GET | /api/users/{userId}/recovery-missions | 사용자 복귀 미션 목록 조회 |
 | Recovery | PATCH | /api/recovery-missions/{recoveryMissionId} | 복귀 미션 수행 결과 수정 |
@@ -577,70 +578,89 @@ MVP 핵심 흐름은 다음과 같다.
 
 ## 9. Verifications API
 
-## 9.1 체크인 인증 결과 저장
+> BS-27 결정에 따라 인증 구조는 분리형(verification_submissions / gps_verification_results / ai_verification_results / verification_decisions)으로 확정되었다.
+> MVP는 GPS 인증 중심이며, 최종 판정은 GPS 결과만으로 산출한다. AI 인증(imageUrl, aiResult, confidenceScore)은 Phase 2 확장이다.
+> 기존 통합형 `/verification-logs`는 deprecated이다(§9.3).
 
-### POST /api/check-ins/{checkInId}/verification-logs
+## 9.1 인증 제출 생성
 
-체크인 과정에서 발생한 GPS, 사진, AI 인증 결과를 저장한다.
+### POST /api/check-ins/{checkInId}/verification-submissions
 
-#### Request
+체크인에 대한 인증 제출을 생성하고, MVP에서는 GPS 인증 결과를 기준으로 최종 판정을 산출한다.
+
+#### Request (MVP — GPS 중심)
 
 ```json
 {
-  "verificationType": "GPS_PHOTO_AI",
   "latitude": 37.5665,
-  "longitude": 126.9780,
-  "imageUrl": "https://example.com/images/checkin-1.jpg",
-  "aiResult": "PASS",
-  "confidenceScore": 0.92
+  "longitude": 126.9780
 }
 ```
+
+- `imageUrl` (optional): 사진 인증용. **Phase 2 확장** 입력이며 MVP 판정에는 사용하지 않는다.
+- `aiResult`, `confidenceScore`: **MVP 요청 바디에서 제거.** AI 인증 결과는 Phase 2 확장 대상이다.
 
 #### Response
 
 ```json
 {
   "success": true,
-  "message": "인증 결과가 저장되었습니다.",
+  "message": "인증 제출이 처리되었습니다.",
   "data": {
-    "verificationLogId": 1,
+    "submissionId": 1,
     "checkInId": 1,
-    "verificationType": "GPS_PHOTO_AI",
-    "result": "PASS",
-    "confidenceScore": 0.92,
+    "gpsResult": {
+      "distanceMeters": 12,
+      "isWithinRadius": true
+    },
+    "finalPassed": true,
+    "failureReason": null,
     "createdAt": "2026-06-10T08:31:00"
   }
 }
 ```
 
+- `gpsResult`: gps_verification_results에 저장된 GPS 인증 결과 (거리·반경 내 포함 여부).
+- `finalPassed`, `failureReason`: verification_decisions에 저장된 최종 판정. MVP에서는 GPS 결과만으로 결정된다.
+
 ---
 
-## 9.2 체크인 인증 로그 조회
+## 9.2 인증 제출/결과 조회
 
-### GET /api/check-ins/{checkInId}/verification-logs
+### GET /api/check-ins/{checkInId}/verification-submissions
 
-특정 체크인에 연결된 인증 로그를 조회한다.
+특정 체크인에 연결된 인증 제출과 결과 목록을 조회한다.
 
 #### Response
 
 ```json
 {
   "success": true,
-  "message": "인증 로그 조회에 성공했습니다.",
+  "message": "인증 제출 목록 조회에 성공했습니다.",
   "data": [
     {
-      "verificationLogId": 1,
-      "verificationType": "GPS_PHOTO_AI",
+      "submissionId": 1,
       "latitude": 37.5665,
       "longitude": 126.9780,
-      "imageUrl": "https://example.com/images/checkin-1.jpg",
-      "aiResult": "PASS",
-      "confidenceScore": 0.92,
+      "gpsResult": {
+        "distanceMeters": 12,
+        "isWithinRadius": true
+      },
+      "finalPassed": true,
+      "failureReason": null,
       "createdAt": "2026-06-10T08:31:00"
     }
   ]
 }
 ```
+
+---
+
+## 9.3 (deprecated) 체크인 인증 로그
+
+### ~~POST/GET /api/check-ins/{checkInId}/verification-logs~~
+
+GPS/사진/AI 인증 결과와 최종 판정을 단일 `verification_logs` 테이블에 통합 저장하던 초기안이다. 책임이 섞여 미채택되었으며, §9.1·§9.2의 분리형 엔드포인트로 대체되었다. 사유는 `docs/database/BS-27-verification-schema-decision.md` 참조.
 
 ## 10. Recovery Missions API
 
@@ -909,21 +929,40 @@ GET /api/challenges/1/leaderboards?type=PERSONAL
 
 ## 14.3 verification_type
 
-| 값 | 설명 |
-|---|---|
-| GPS | GPS 위치 인증 |
-| PHOTO | 사진 인증 |
-| AI | AI 이미지 인증 |
-| GPS_PHOTO | GPS + 사진 인증 |
-| GPS_PHOTO_AI | GPS + 사진 + AI 인증 |
+| 값 | 설명 | 범위 |
+|---|---|---|
+| GPS | GPS 위치 인증 | MVP |
+| PHOTO | 사진 인증 | Phase 2 |
+| AI | AI 이미지 인증 | Phase 2 |
+| GPS_PHOTO | GPS + 사진 인증 | Phase 2 |
+| GPS_PHOTO_AI | GPS + 사진 + AI 인증 | Phase 2 |
 
-## 14.4 verification_result
+> MVP는 GPS 인증만 사용한다. 사진/AI 조합 타입은 Phase 2 확장 대상이다.
 
-| 값 | 설명 |
+## 14.4 인증 결과 / 최종 판정 (역할 분리)
+
+BS-27 분리형 구조에서 "개별 인증 결과"와 "최종 판정"은 서로 다른 테이블·의미를 가진다.
+
+### gps_verification_results (GPS 인증 결과)
+
+GPS 제출 1건에 대한 위치 인증 결과. 거리·반경 기반의 사실 데이터이며, 그 자체로 체크인 성공을 의미하지 않는다.
+
+| 필드 | 설명 |
 |---|---|
-| PASS | 인증 성공 |
-| FAIL | 인증 실패 |
-| PENDING | 인증 대기 |
+| distanceMeters | 목표 좌표와 제출 좌표 간 거리(m) |
+| isWithinRadius | 허용 반경 내 포함 여부 (true/false) |
+
+### verification_decisions (최종 판정)
+
+인증 제출에 대한 최종 체크인 성공/실패 판정. MVP에서는 GPS 결과만으로 산출한다.
+
+| 값 (finalPassed) | 설명 |
+|---|---|
+| true | 최종 인증 성공 |
+| false | 최종 인증 실패 (failureReason에 사유 기록) |
+
+> AI 통과 여부(`aiResult` 등)는 Phase 2에서 verification_decisions 종합 판정에 추가된다. MVP에서는 미사용/NULL.
+> 기존 통합형 `verification_result`(PASS/FAIL/PENDING) 단일 상태값은 deprecated이다.
 
 ## 14.5 recovery_status
 
