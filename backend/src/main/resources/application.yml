@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    active: stub
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/booster}
     username: ${DB_USERNAME:booster}

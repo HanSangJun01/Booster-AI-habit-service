@@ -27,8 +27,9 @@ public class Challenge {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "verification_method", nullable = false, length = 50)
-    private String verificationMethod;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "verification_type", nullable = false, length = 20)
+    private VerificationType verificationType;
 
     @Column(name = "duration_days", nullable = false)
     private int durationDays;
@@ -77,21 +78,13 @@ public class Challenge {
     }
 
     public void start(LocalDateTime startedAt, LocalDateTime endedAt) {
-        this.status = ChallengeStatus.ONGOING;
+        this.status = ChallengeStatus.ACTIVE;
         this.startedAt = startedAt;
         this.endedAt = endedAt;
     }
 
     public void markEnded() {
         this.status = ChallengeStatus.ENDED;
-    }
-
-    // affected-rows=1 gate — 정산 멱등성 핵심
-    public void markSettled() {
-        if (this.status != ChallengeStatus.ENDED) {
-            throw new IllegalStateException("Cannot settle challenge not in ENDED status: " + id);
-        }
-        this.status = ChallengeStatus.SETTLED;
     }
 
     public void setInviteCode(String inviteCode) {

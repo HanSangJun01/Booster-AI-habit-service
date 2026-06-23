@@ -38,12 +38,6 @@ public class ChallengeCheckIn {
     @Column(name = "verified_at")
     private LocalDateTime verifiedAt;
 
-    @Column(name = "current_lat")
-    private Double currentLat;
-
-    @Column(name = "current_lng")
-    private Double currentLng;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -55,5 +49,10 @@ public class ChallengeCheckIn {
     protected void onCreate() {
         if (createdAt == null) createdAt = LocalDateTime.now();
         if (updatedAt == null) updatedAt = LocalDateTime.now();
+    }
+
+    public void updateStatus(CheckInStatus status, LocalDateTime verifiedAt) {
+        this.status = status;
+        this.verifiedAt = verifiedAt;
     }
 }

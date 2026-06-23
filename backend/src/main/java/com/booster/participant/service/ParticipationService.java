@@ -39,8 +39,8 @@ public class ParticipationService {
         Challenge challenge = challengeRepository.findByIdWithLock(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
-        if (challenge.getStatus() != ChallengeStatus.RECRUITING) {
-            throw new IllegalStateException("Challenge is not in RECRUITING status");
+        if (challenge.getStatus() != ChallengeStatus.READY) {
+            throw new IllegalStateException("Challenge is not in READY status");
         }
 
         if (participantRepository.findByChallengeIdAndUserId(challengeId, userId).isPresent()) {
@@ -120,7 +120,7 @@ public class ParticipationService {
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
-        if (challenge.getStatus() != ChallengeStatus.RECRUITING) {
+        if (challenge.getStatus() != ChallengeStatus.READY) {
             throw new IllegalStateException("Cannot cancel after challenge has started");
         }
 

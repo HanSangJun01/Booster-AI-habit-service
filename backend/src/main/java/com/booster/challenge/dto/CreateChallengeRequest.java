@@ -2,6 +2,7 @@ package com.booster.challenge.dto;
 
 import com.booster.challenge.domain.ApprovalType;
 import com.booster.challenge.domain.ChallengeVisibility;
+import com.booster.challenge.domain.VerificationType;
 import jakarta.validation.constraints.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -19,8 +20,8 @@ public class CreateChallengeRequest {
 
     private String description;
 
-    @NotBlank
-    private String verificationMethod;
+    @NotNull
+    private VerificationType verificationType;
 
     @Min(1)
     private int durationDays;

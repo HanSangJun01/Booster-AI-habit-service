@@ -33,12 +33,12 @@ public class ChallengeService {
                 .category(request.getCategory())
                 .title(request.getTitle())
                 .description(request.getDescription())
-                .verificationMethod(request.getVerificationMethod())
+                .verificationType(request.getVerificationType())
                 .durationDays(request.getDurationDays())
                 .depositCoins(request.getDepositCoins())
                 .visibility(request.getVisibility())
                 .approvalType(request.getApprovalType())
-                .status(ChallengeStatus.RECRUITING)
+                .status(ChallengeStatus.READY)
                 .maxParticipants(request.getMaxParticipants())
                 .createdBy(userId)
                 .build();
@@ -53,7 +53,7 @@ public class ChallengeService {
     }
 
     public Page<ChallengeResponse> searchPublicChallenges(String category, String keyword, Pageable pageable) {
-        return challengeRepository.searchPublic(ChallengeStatus.RECRUITING, category, keyword, pageable)
+        return challengeRepository.searchPublic(ChallengeStatus.READY, category, keyword, pageable)
                 .map(ChallengeResponse::from);
     }
 

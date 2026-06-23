@@ -4,6 +4,7 @@ import com.booster.challenge.domain.ApprovalType;
 import com.booster.challenge.domain.Challenge;
 import com.booster.challenge.domain.ChallengeStatus;
 import com.booster.challenge.domain.ChallengeVisibility;
+import com.booster.challenge.domain.VerificationType;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -19,7 +20,7 @@ public class ChallengeDetailResponse {
     private String category;
     private String title;
     private String description;
-    private String verificationMethod;
+    private VerificationType verificationType;
     private int durationDays;
     private long depositCoins;
     private ChallengeVisibility visibility;
@@ -45,7 +46,7 @@ public class ChallengeDetailResponse {
                 .category(c.getCategory())
                 .title(c.getTitle())
                 .description(c.getDescription())
-                .verificationMethod(c.getVerificationMethod())
+                .verificationType(c.getVerificationType())
                 .durationDays(c.getDurationDays())
                 .depositCoins(c.getDepositCoins())
                 .visibility(c.getVisibility())

@@ -44,12 +44,15 @@ public class SettlementService {
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge not found: " + challengeId));
 
         if (challenge.getStatus() != ChallengeStatus.ENDED) {
-            return; // 멱등성 — 이미 정산됐거나 상태 불일치 시 no-op
+            return; // not in settleable state — no-op
         }
 
-        // ENDED → SETTLED 전이 (동시 호출 시 두 번째 호출은 IllegalStateException으로 차단됨)
-        challenge.markSettled();
-        challengeRepository.save(challenge);
+        // Idempotency gate: skip if already completed (SETTLED state removed from ChallengeStatus)
+        if (settlementRepository.findByChallengeId(challengeId)
+                .filter(s -> s.getStatus() == SettlementStatus.COMPLETED)
+                .isPresent()) {
+            return;
+        }
 
         Settlement settlement = settlementRepository.findByChallengeId(challengeId)
                 .orElseGet(() -> Settlement.builder()
@@ -84,7 +87,8 @@ public class SettlementService {
                 resultB = TeamResult.DRAW;
             }
 
-            log.info("Settlement result: challengeId={}, teamA={} ({}), teamB={} ({})", challengeId, teamA.getId(), resultA, teamB.getId(), resultB);
+            log.info("Settlement result: challengeId={}, teamA={} ({}), teamB={} ({})",
+                    challengeId, teamA.getId(), resultA, teamB.getId(), resultB);
 
             // 전체 참여자 (CONFIRMED + LEFT) 조회
             List<ChallengeParticipant> allParticipants = participantRepository
@@ -148,5 +152,4 @@ public class SettlementService {
             settlementRepository.save(settlement);
         }
     }
-
 }

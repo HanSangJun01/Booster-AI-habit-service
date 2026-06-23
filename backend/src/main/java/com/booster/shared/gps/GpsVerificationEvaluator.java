@@ -19,6 +19,10 @@ public class GpsVerificationEvaluator {
         return isWithinRadius(registered.lat(), registered.lng(), radiusMeters, current.lat(), current.lng());
     }
 
+    public double calculateDistanceMeters(double lat1, double lng1, double lat2, double lng2) {
+        return haversineDistance(lat1, lng1, lat2, lng2);
+    }
+
     private double haversineDistance(double lat1, double lng1, double lat2, double lng2) {
         double dLat = Math.toRadians(lat2 - lat1);
         double dLng = Math.toRadians(lng2 - lng1);

@@ -23,7 +23,7 @@ public class ChallengeEndScheduler {
     public void markEndedChallenges() {
         log.debug("ChallengeEndScheduler running");
         List<Challenge> toEnd = challengeRepository.findByStatusAndEndedAtBefore(
-                ChallengeStatus.ONGOING, LocalDateTime.now());
+                ChallengeStatus.ACTIVE, LocalDateTime.now());
 
         for (Challenge c : toEnd) {
             try {
