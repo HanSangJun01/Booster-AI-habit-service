@@ -21,6 +21,7 @@ public class ChallengeEndScheduler {
 
     @Scheduled(fixedDelay = 60_000)
     public void markEndedChallenges() {
+        log.debug("ChallengeEndScheduler running");
         List<Challenge> toEnd = challengeRepository.findByStatusAndEndedAtBefore(
                 ChallengeStatus.ONGOING, LocalDateTime.now());
 
@@ -28,6 +29,7 @@ public class ChallengeEndScheduler {
             try {
                 c.markEnded();
                 challengeRepository.save(c);
+                log.info("Challenge ended, triggering settlement: challengeId={}", c.getId());
                 settlementService.settleChallenge(c.getId());
             } catch (Exception e) {
                 log.error("Failed to end/settle challengeId={}", c.getId(), e);

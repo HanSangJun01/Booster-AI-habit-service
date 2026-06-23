@@ -11,6 +11,7 @@ import com.booster.shared.gps.GpsVerificationEvaluator;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -34,6 +36,7 @@ public class ChallengeCheckInService {
     private final GpsVerificationEvaluator gpsVerificationEvaluator;
 
     public CheckInResponse recordCheckIn(Long userId, Long challengeId, double currentLat, double currentLng) {
+        log.info("CheckIn requested: userId={}, challengeId={}", userId, challengeId);
         // 1. CONFIRMED 참여자 조회
         ChallengeParticipant participant = participantRepository
                 .findConfirmedByUserAndChallenge(challengeId, userId)
@@ -47,6 +50,7 @@ public class ChallengeCheckInService {
         Optional<ChallengeCheckIn> existing = checkInRepository
                 .findByParticipantIdAndCheckInDate(participant.getId(), today);
         if (existing.isPresent() && existing.get().getStatus() == CheckInStatus.SUCCESS) {
+            log.debug("CheckIn already SUCCESS, skipping: participantId={}", participant.getId());
             return CheckInResponse.from(existing.get());
         }
 
@@ -60,6 +64,12 @@ public class ChallengeCheckInService {
         );
         CheckInStatus status = withinRadius ? CheckInStatus.SUCCESS : CheckInStatus.FAILED;
         LocalDateTime verifiedAt = withinRadius ? LocalDateTime.now() : null;
+
+        if (withinRadius) {
+            log.info("CheckIn SUCCESS: participantId={}, date={}", participant.getId(), today);
+        } else {
+            log.info("CheckIn FAILED (GPS): participantId={}, date={}", participant.getId(), today);
+        }
 
         // 5. 체크인 저장
         ChallengeCheckIn checkIn = ChallengeCheckIn.builder()

@@ -35,7 +35,10 @@ public class TeamFormationService {
         List<ChallengeParticipant> confirmed = participantRepository
                 .findByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
 
+        log.info("Team formation check: challengeId={}, confirmedCount={}", challengeId, confirmed.size());
+
         if (confirmed.size() < TEAM_SIZE * 2) {
+            log.debug("Not enough participants yet: challengeId={}, count={}", challengeId, confirmed.size());
             return;
         }
 

@@ -6,11 +6,13 @@ import com.booster.social.domain.ChatMessage;
 import com.booster.social.dto.ChatMessageResponse;
 import com.booster.social.repository.ChatMessageRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @Transactional
 @RequiredArgsConstructor
@@ -31,6 +33,7 @@ public class TeamChatService {
                 .anyMatch(p -> p.getUserId().equals(senderId));
 
         if (!isMember) {
+            log.warn("Unauthorized chat access: userId={}, teamId={}", senderId, teamId);
             throw new UnauthorizedException("User " + senderId + " is not a member of team " + teamId);
         }
 
@@ -40,7 +43,9 @@ public class TeamChatService {
                 .content(content)
                 .build();
 
-        return ChatMessageResponse.from(chatMessageRepository.save(message));
+        ChatMessageResponse response = ChatMessageResponse.from(chatMessageRepository.save(message));
+        log.info("Chat message sent: teamId={}, userId={}", teamId, senderId);
+        return response;
     }
 
     public void deleteMessage(Long senderId, Long teamId, Long messageId) {
@@ -57,5 +62,6 @@ public class TeamChatService {
 
         message.softDelete();
         chatMessageRepository.save(message);
+        log.info("Chat message deleted: messageId={}, userId={}", messageId, senderId);
     }
 }

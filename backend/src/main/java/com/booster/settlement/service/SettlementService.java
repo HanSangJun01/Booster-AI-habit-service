@@ -39,6 +39,7 @@ public class SettlementService {
 
     @Transactional
     public void settleChallenge(Long challengeId) {
+        log.info("Settlement started: challengeId={}", challengeId);
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge not found: " + challengeId));
 
@@ -82,6 +83,8 @@ public class SettlementService {
                 resultA = TeamResult.DRAW;
                 resultB = TeamResult.DRAW;
             }
+
+            log.info("Settlement result: challengeId={}, teamA={} ({}), teamB={} ({})", challengeId, teamA.getId(), resultA, teamB.getId(), resultB);
 
             // 전체 참여자 (CONFIRMED + LEFT) 조회
             List<ChallengeParticipant> allParticipants = participantRepository
@@ -137,6 +140,7 @@ public class SettlementService {
             settlement.complete(LocalDateTime.now(), totalPool, perWinnerPayout,
                     winnerTeamId, loserTeamId, isDraw);
             settlementRepository.save(settlement);
+            log.info("Settlement completed: challengeId={}, totalPool={}", challengeId, totalPool);
 
         } catch (Exception e) {
             log.error("Settlement failed for challengeId={}", challengeId, e);

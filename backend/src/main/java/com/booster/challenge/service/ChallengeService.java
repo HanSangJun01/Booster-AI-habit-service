@@ -11,11 +11,13 @@ import com.booster.participant.domain.ParticipantStatus;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -45,7 +47,9 @@ public class ChallengeService {
             challenge.setInviteCode(inviteCodeGenerator.generate());
         }
 
-        return ChallengeResponse.from(challengeRepository.save(challenge));
+        Challenge saved = challengeRepository.save(challenge);
+        log.info("Challenge created: id={}, userId={}, visibility={}", saved.getId(), userId, saved.getVisibility());
+        return ChallengeResponse.from(saved);
     }
 
     public Page<ChallengeResponse> searchPublicChallenges(String category, String keyword, Pageable pageable) {
@@ -60,6 +64,7 @@ public class ChallengeService {
     }
 
     public ChallengeResponse getChallengeByInviteCode(String code) {
+        log.debug("Challenge lookup by invite code: {}", code);
         return challengeRepository.findByInviteCode(code)
                 .map(ChallengeResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge not found with invite code: " + code));

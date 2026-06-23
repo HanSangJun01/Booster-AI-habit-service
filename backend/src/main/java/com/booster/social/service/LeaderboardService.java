@@ -9,6 +9,7 @@ import com.booster.social.dto.LeaderboardEntry;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+@Slf4j
 @Service
 @Transactional(readOnly = true)
 @RequiredArgsConstructor
@@ -27,6 +29,7 @@ public class LeaderboardService {
     private final TeamRepository teamRepository;
 
     public List<LeaderboardEntry> getPersonalLeaderboard(Long challengeId) {
+        log.debug("Personal leaderboard requested: challengeId={}", challengeId);
         List<ChallengeParticipant> participants =
                 participantRepository.findByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
 
@@ -59,6 +62,7 @@ public class LeaderboardService {
     }
 
     public List<LeaderboardEntry> getTeamLeaderboard(Long challengeId) {
+        log.debug("Team leaderboard requested: challengeId={}", challengeId);
         List<Team> teams = teamRepository.findByChallengeId(challengeId);
 
         teams.sort(Comparator.comparing(Team::getParticipationRate).reversed());

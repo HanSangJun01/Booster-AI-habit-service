@@ -25,3 +25,15 @@ logging:
   level:
     com.booster: INFO
     org.hibernate.SQL: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info, metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: booster
