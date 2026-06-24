@@ -29,6 +29,9 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
+                        // [BS-30 모니터링] Prometheus가 수치를 긁어가려면 인증 없이 접근 가능해야 함.
+                        // 로컬 측정 한정. EC2 배포 시엔 IP 제한 등으로 보호 필요.
+                        .requestMatchers("/actuator/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex ->
                         ex.authenticationEntryPoint(restAuthenticationEntryPoint))

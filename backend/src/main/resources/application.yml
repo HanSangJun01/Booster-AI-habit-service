@@ -14,6 +14,14 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
         default_batch_fetch_size: 100
+        # [BS-30 ② SQL 가시성] 코드 수정 없이 설정만. 측정 주간 한정.
+        # generate_statistics: 한 요청이 쿼리 몇 번 날렸는지 통계 출력 → N+1 탐지
+        generate_statistics: true
+        # 지정 ms보다 느린 쿼리를 org.hibernate.SQL_SLOW 로 자동 로깅 → 느린 쿼리 색출
+        session:
+          events:
+            log:
+              LOG_QUERIES_SLOWER_THAN_MS: 100
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -41,3 +49,29 @@ logging:
   level:
     com.booster: INFO
     org.hibernate.SQL: WARN
+    # [BS-30 ②] 느린 쿼리만 INFO로 노출(전체 SQL은 WARN로 막아 부하테스트 로그 폭주 방지)
+    org.hibernate.SQL_SLOW: INFO
+
+# [BS-30 계기판] Actuator 노출 설정. 측정 주간 한정, A축 원본(BS-25)엔 없음.
+management:
+  endpoints:
+    web:
+      exposure:
+        # health: 살아있나 / metrics: 수치 조회 / prometheus: Prometheus가 긁어갈 엔드포인트
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # 모든 수치에 이 태그를 붙여 A축 앱 식별 (Grafana에서 필터용)
+      application: booster-a-axis
+    distribution:
+      # [③ 퍼센타일] 평균은 거짓말 → p95/p99로 "가끔 느린 놈" 색출
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+      # SLO 경계: 이 시간들을 넘는 요청 비율을 히스토그램 버킷으로 집계
+      slo:
+        http.server.requests: 100ms, 300ms, 500ms, 1s
