@@ -14,7 +14,7 @@ import java.time.OffsetDateTime;
 
 /**
  * 사용자별 연속 인증 기록. user_id를 PK로 공유(1:1).
- * bs-20: currentStreak / maxStreak / lastSuccessDate.
+ * bs-25: currentStreak / maxStreak / lastSuccessDate.
  */
 @Entity
 @Table(name = "streaks")

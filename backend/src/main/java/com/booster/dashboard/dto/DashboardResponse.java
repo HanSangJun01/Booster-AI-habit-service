@@ -3,7 +3,7 @@ package com.booster.dashboard.dto;
 import java.time.LocalDate;
 import java.util.List;
 
-/** 홈 대시보드 단일 응답. bs-20 Phase 4. */
+/** 홈 대시보드 단일 응답. bs-25 Phase 4. */
 public record DashboardResponse(
         long coinBalance,
         StreakInfo streak,

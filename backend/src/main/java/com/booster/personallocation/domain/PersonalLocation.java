@@ -14,7 +14,7 @@ import java.time.OffsetDateTime;
 
 /**
  * 개인 GPS 등록 위치 (사용자당 1개, user_id PK 공유).
- * bs-20 Principle 4: PersonalCheckIn 전용. ChallengeParticipant의 GPS와 무관(A축 독립).
+ * bs-25 Principle 4: PersonalCheckIn 전용. ChallengeParticipant의 GPS와 무관(A축 독립).
  */
 @Entity
 @Table(name = "personal_locations")

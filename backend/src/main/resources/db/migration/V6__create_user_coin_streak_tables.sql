@@ -1,5 +1,5 @@
 -- A-axis Phase 1: User / CoinTransaction / Streak
--- bs-20 기준. Flyway 번호는 B축(V1~V5)과의 통합 충돌 방지를 위해 V6부터 시작한다.
+-- bs-25 기준. Flyway 번호는 B축(V1~V5)과의 통합 충돌 방지를 위해 V6부터 시작한다.
 
 CREATE TABLE users (
     id               BIGSERIAL PRIMARY KEY,

@@ -4,7 +4,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Haversine 공식 기반 GPS 반경 판정.
- * bs-20 §공통: Haversine(현재좌표, 등록좌표) <= 등록반경(meters).
+ * bs-25 §공통: Haversine(현재좌표, 등록좌표) <= 등록반경(meters).
  * (B축에도 동일한 shared.gps 컴포넌트가 존재하며, 통합 시 단일 컴포넌트로 합친다.)
  */
 @Component

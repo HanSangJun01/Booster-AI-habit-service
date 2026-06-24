@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 코인 변동의 단일 진입점. 모든 변동은 CoinTransaction으로 기록되며 User.coinBalance와 동기화된다.
- * (bs-20 Principle 2 — 단일 진실 원천)
+ * (bs-25 Principle 2 — 단일 진실 원천)
  */
 @Service
 @RequiredArgsConstructor

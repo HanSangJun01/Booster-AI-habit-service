@@ -4,7 +4,7 @@ import lombok.Getter;
 import org.springframework.http.HttpStatus;
 
 /**
- * 비즈니스 예외 공통 타입. bs-20 에러 응답 포맷({code, message})을 따른다.
+ * 비즈니스 예외 공통 타입. bs-25 에러 응답 포맷({code, message})을 따른다.
  * status: HTTP 상태, code: 클라이언트 식별용 에러 코드.
  */
 @Getter

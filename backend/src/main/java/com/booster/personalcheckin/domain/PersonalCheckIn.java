@@ -20,7 +20,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 /**
- * 개인 일일 인증 기록. bs-20: UNIQUE(user_id, date) — 사용자·날짜당 1건.
+ * 개인 일일 인증 기록. bs-25: UNIQUE(user_id, date) — 사용자·날짜당 1건.
  * ★불변식: 이 테이블은 개인 스트릭/코인/복귀 흐름 전용. 챌린지(B축) 인증과 완전히 분리된다.
  */
 @Entity

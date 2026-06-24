@@ -1,5 +1,5 @@
 -- A-axis Phase 2: PersonalLocation / PersonalCheckIn
--- bs-20 기준. 개인 인증 전용 테이블(챌린지 인증과 분리).
+-- bs-25 기준. 개인 인증 전용 테이블(챌린지 인증과 분리).
 
 CREATE TABLE personal_locations (
     user_id       BIGINT       PRIMARY KEY REFERENCES users(id),

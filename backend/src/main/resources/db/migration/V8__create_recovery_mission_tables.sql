@@ -1,5 +1,5 @@
 -- A-axis Phase 3: RecoveryMission
--- bs-20 기준. PersonalCheckIn(미인증일)과 1:1 (personal_check_in_id UNIQUE).
+-- bs-25 기준. PersonalCheckIn(미인증일)과 1:1 (personal_check_in_id UNIQUE).
 
 CREATE TABLE recovery_missions (
     id                   BIGSERIAL PRIMARY KEY,

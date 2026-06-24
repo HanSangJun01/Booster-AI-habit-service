@@ -19,7 +19,7 @@ import java.time.OffsetDateTime;
 
 /**
  * 복귀 미션. PersonalCheckIn(미인증일)과 1:1 (personal_check_in_id UNIQUE).
- * bs-20 Phase 3: deadlineAt 이내 GPS 인증 시 성공(-50, 스트릭 유지),
+ * bs-25 Phase 3: deadlineAt 이내 GPS 인증 시 성공(-50, 스트릭 유지),
  * 초과 시 스케줄러가 실패 처리(-100, 스트릭 0).
  */
 @Entity

@@ -18,7 +18,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.OffsetDateTime;
 
 /**
- * 코인 변동 이력(단일 진실 원천). bs-20 Principle 2:
+ * 코인 변동 이력(단일 진실 원천). bs-25 Principle 2:
  * SUM(amount) == User.coinBalance 가 항상 성립하도록 amount는 실제 차감/지급액(effective)을 기록한다.
  */
 @Entity

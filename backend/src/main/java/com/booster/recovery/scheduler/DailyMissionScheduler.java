@@ -7,7 +7,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 매일 KST 00:01 실행. bs-20 §스케줄러 — 실행 순서 필수 준수:
+ * 매일 KST 00:01 실행. bs-25 §스케줄러 — 실행 순서 필수 준수:
  *   ① 만료된 복귀 미션 FAILED 처리 (Phase 3)
  *   ② 전일 미인증자 RECOVERY_PENDING 생성 (Phase 2)
  * ①이 먼저 실행되어야 새 PENDING 생성이 이미 만료된 건을 덮어쓰지 않는다.

@@ -27,7 +27,7 @@ jwt:
   access-token-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:86400000}
 
 booster:
-  # 스트릭 보상: 7일마다 반복 지급(true) / 최초 7일 1회만(false). bs-20 확정: 반복.
+  # 스트릭 보상: 7일마다 반복 지급(true) / 최초 7일 1회만(false). bs-25 확정: 반복.
   streak:
     reward-repeat: ${STREAK_REWARD_REPEAT:true}
     reward-interval-days: 7

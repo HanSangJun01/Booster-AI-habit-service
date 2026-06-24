@@ -1,7 +1,7 @@
 package com.booster.coin.domain;
 
 /**
- * A축 코인 변동 사유. (bs-20 §코인 로직)
+ * A축 코인 변동 사유. (bs-25 §코인 로직)
  * 통합 시 B축의 사유(CHALLENGE_DEPOSIT/SETTLEMENT_WIN/DEPOSIT_REFUND 등)와 단일 enum으로 합친다.
  */
 public enum CoinTransactionReason {
