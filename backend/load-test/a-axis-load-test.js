@@ -37,7 +37,13 @@ export const options = {
   },
 };
 
+// 부하 유저의 인증 장소 좌표(서울 시청 부근). 체크인도 같은 좌표로 보내 반경 안에 들어오게 함.
+const SEED_LAT = 37.5665;
+const SEED_LNG = 126.9780;
+
 // 전체 테스트 시작 전 1회: 부하용 유저 생성 + 로그인 → 토큰 확보
+// [2차 변경] 1차는 가입/로그인만 해서 /location이 100% 404(위치 미등록)였음.
+//           2차는 setup에서 위치 등록 + 오늘 체크인까지 시드 → 읽기 5종이 전부 실제 데이터로 200 응답하도록.
 export function setup() {
   const email = `loadtest_${Date.now()}@booster.test`;
   const password = 'loadtest1234';
@@ -55,6 +61,25 @@ export function setup() {
   if (!token) {
     throw new Error(`로그인 실패 — 토큰 못 받음. status=${loginRes.status} body=${loginRes.body}`);
   }
+
+  const authHeaders = Object.assign({ Authorization: `Bearer ${token}` }, JSON_HEADERS);
+
+  // ① 인증 장소 등록 → 이후 GET /location이 200을 돌려주게 됨 (1차 E1 404 착시 제거)
+  const locRes = http.post(`${BASE}/api/users/me/location`,
+    JSON.stringify({ lat: SEED_LAT, lng: SEED_LNG, radiusMeters: 200, placeName: 'loadtest-home' }),
+    { headers: authHeaders });
+  if (locRes.status !== 201) {
+    throw new Error(`위치 등록 실패. status=${locRes.status} body=${locRes.body}`);
+  }
+
+  // ② 오늘 체크인(같은 좌표라 반경 내 → SUCCESS) → dashboard/today가 실제 데이터로 응답
+  const checkInRes = http.post(`${BASE}/api/personal/check-in`,
+    JSON.stringify({ lat: SEED_LAT, lng: SEED_LNG }),
+    { headers: authHeaders });
+  if (checkInRes.status !== 201) {
+    throw new Error(`체크인 시드 실패. status=${checkInRes.status} body=${checkInRes.body}`);
+  }
+
   return { token };
 }
 
