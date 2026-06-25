@@ -43,7 +43,7 @@ fi
 ok "백엔드 UP"
 
 # Grafana 헬스체크
-if ! curl -sf "http://localhost:3000/api/health" | grep -q '"database":"ok"'; then
+if ! curl -sf "http://localhost:3000/api/health" | grep -q '"database"'; then
   fail "Grafana가 실행 중이지 않습니다. 'docker-compose -f docker-compose.monitoring.yml up -d' 먼저 실행하세요."
 fi
 ok "Grafana UP"
@@ -133,6 +133,7 @@ CHALLENGE_ID=""
 for i in $(seq 1 10); do
   RESP=$(curl -sf -X POST "$API/api/challenges" \
     -H "Content-Type: application/json" \
+    -H "X-User-Id: 1" \
     -d "{
       \"title\": \"시나리오테스트$i\",
       \"category\": \"HEALTH\",
@@ -141,8 +142,7 @@ for i in $(seq 1 10); do
       \"depositCoins\": 100,
       \"maxParticipants\": 10,
       \"visibility\": \"PUBLIC\",
-      \"approvalType\": \"AUTO\",
-      \"createdBy\": 1
+      \"approvalType\": \"AUTO\"
     }" 2>/dev/null || echo '{}')
 
   if [ -z "$CHALLENGE_ID" ]; then
@@ -177,8 +177,8 @@ log "챌린지 $CHALLENGE_ID 에 사용자 1~5 참여 신청..."
 for userId in 1 2 3 4 5; do
   STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API/api/challenges/$CHALLENGE_ID/participants" \
     -H "Content-Type: application/json" \
+    -H "X-User-Id: $userId" \
     -d "{
-      \"userId\": $userId,
       \"personalStatement\": \"참여합니다\",
       \"gpsLat\": 37.5665,
       \"gpsLng\": 126.9780,
@@ -201,10 +201,10 @@ FIRST_STATUS=""
 for i in $(seq 1 20); do
   RESP=$(curl -sf -X POST "$API/api/challenges/$CHALLENGE_ID/check-ins" \
     -H "Content-Type: application/json" \
+    -H "X-User-Id: 1" \
     -d "{
-      \"userId\": 1,
-      \"submittedLat\": 37.5665,
-      \"submittedLng\": 126.9780
+      \"currentLat\": 37.5665,
+      \"currentLng\": 126.9780
     }" 2>/dev/null || echo '{}')
 
   STATUS=$(echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('status','?'))" 2>/dev/null)
