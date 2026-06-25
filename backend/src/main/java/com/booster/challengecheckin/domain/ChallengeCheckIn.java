@@ -25,7 +25,7 @@ public class ChallengeCheckIn {
     @Column(name = "challenge_id", nullable = false)
     private Long challengeId;
 
-    @Column(name = "team_id", nullable = false)
+    @Column(name = "team_id")
     private Long teamId;
 
     @Column(name = "check_in_date", nullable = false)

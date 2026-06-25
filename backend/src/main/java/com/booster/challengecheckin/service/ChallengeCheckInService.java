@@ -116,7 +116,9 @@ public class ChallengeCheckInService {
 
         if (withinRadius) {
             log.info("CheckIn SUCCESS: participantId={}, date={}", participant.getId(), today);
-            updateTeamParticipationRate(participant.getTeamId());
+            if (participant.getTeamId() != null) {
+                updateTeamParticipationRate(participant.getTeamId());
+            }
         } else {
             log.info("CheckIn FAILED (GPS): participantId={}, date={}", participant.getId(), today);
         }

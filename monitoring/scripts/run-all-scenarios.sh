@@ -189,6 +189,11 @@ for userId in 1 2 3 4 5; do
 done
 
 ok "시나리오 B 완료 — Grafana에서 POST 응답시간·DB 커넥션 확인"
+
+# 챌린지 ACTIVE 전환 (체크인·k6 전제조건)
+log "챌린지 $CHALLENGE_ID 상태를 ACTIVE로 전환..."
+psql_exec "UPDATE challenges SET status='ACTIVE', started_at=NOW()-INTERVAL '1 minute' WHERE id=$CHALLENGE_ID;" || warn "챌린지 상태 업데이트 실패"
+ok "챌린지 ACTIVE 전환 완료"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════
@@ -220,6 +225,18 @@ ok "시나리오 C 완료 — 첫 번째: $FIRST_STATUS, 중복 체크인 멱등
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════
+# 시나리오 E — 동시성 부하 (k6) — D 이전에 실행 (챌린지 ACTIVE 상태)
+# ══════════════════════════════════════════════════════════════════════
+echo -e "${CYAN}══ 시나리오 E: 동시성 부하 (k6) ══${NC}"
+log "k6 부하 테스트 시작 (5VU→20VU→50VU→0VU)..."
+echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
+echo ""
+
+k6 run -e BASE_URL="$API" -e CHALLENGE_ID="$CHALLENGE_ID" "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
+
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════
 # 시나리오 D — 정산 스케줄러
 # ══════════════════════════════════════════════════════════════════════
 echo -e "${CYAN}══ 시나리오 D: 정산 스케줄러 ══${NC}"
@@ -233,17 +250,6 @@ sleep 30
 
 RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
 ok "시나리오 D 완료 — 정산 결과: $RESULT"
-echo ""
-
-# ══════════════════════════════════════════════════════════════════════
-# 시나리오 E — 동시성 부하 (k6)
-# ══════════════════════════════════════════════════════════════════════
-echo -e "${CYAN}══ 시나리오 E: 동시성 부하 (k6) ══${NC}"
-log "k6 부하 테스트 시작 (5VU→20VU→50VU→0VU)..."
-echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
-echo ""
-
-k6 run -e BASE_URL="$API" -e CHALLENGE_ID="$CHALLENGE_ID" "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
 
 echo ""
 
@@ -260,7 +266,7 @@ echo ""
 # ══════════════════════════════════════════════════════════════════════
 log "결과 파일 자동 생성 중..."
 
-BASELINE_FILE="$PROJECT_ROOT/docs/monitoring/baseline-$(date +%Y-%m-%d-%H-%M).md"
+BASELINE_FILE="$PROJECT_ROOT/docs/monitoring/baselines/baseline-$(date +%Y-%m-%d-%H-%M).md"
 
 python3 - <<PYEOF
 import json, urllib.request, datetime, os
@@ -409,7 +415,7 @@ PYEOF
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════${NC}"
-echo -e "${GREEN} 결과 파일: docs/monitoring/baseline-$(date +%Y-%m-%d).md${NC}"
+echo -e "${GREEN} 결과 파일: docs/monitoring/baselines/baseline-$(date +%Y-%m-%d-%H-%M).md${NC}"
 echo -e "${GREEN}════════════════════════════════════════${NC}"
 echo ""
 echo "다음 단계:"
