@@ -79,7 +79,7 @@ payload = {
         'name': 'DS_PROMETHEUS',
         'type': 'datasource',
         'pluginId': 'prometheus',
-        'value': 'Prometheus'
+        'value': 'prometheus'
     }],
     'folderId': 0
 }
@@ -254,11 +254,159 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN} 모든 시나리오 완료${NC}"
 echo -e "${GREEN}════════════════════════════════════════${NC}"
 echo ""
-echo "다음 단계:"
-echo "  1. Grafana 대시보드에서 각 섹션 수치 확인"
-echo "     → http://localhost:3000"
-echo "  2. 수치를 docs/monitoring/week1-baseline.md 에 기록"
-echo "  3. ./gradlew clean test (BAxisIsolationTest 확인)"
+
+# ══════════════════════════════════════════════════════════════════════
+# 결과 자동 기록 — baseline-YYYY-MM-DD.md 생성
+# ══════════════════════════════════════════════════════════════════════
+log "결과 파일 자동 생성 중..."
+
+BASELINE_FILE="$PROJECT_ROOT/docs/monitoring/baseline-$(date +%Y-%m-%d).md"
+
+python3 - <<PYEOF
+import json, urllib.request, datetime, os
+
+# ── k6 요약 로드 ─────────────────────────────────────────
+try:
+    with open('/tmp/k6-summary.json') as f:
+        k6 = json.load(f)
+    metrics = k6.get('metrics', {})
+
+    def pct(metric, p):
+        m = metrics.get(metric, {})
+        v = m.get('values', {})
+        return v.get(f'p({p})', v.get('med' if p == 50 else None, None))
+
+    def val(metric, key='avg'):
+        m = metrics.get(metric, {})
+        return m.get('values', {}).get(key, None)
+
+    http_p50  = round(pct('http_req_duration', 50) or 0, 2)
+    http_p95  = round(pct('http_req_duration', 95) or 0, 2)
+    http_p99  = round(pct('http_req_duration', 99) or 0, 2)
+    http_avg  = round(val('http_req_duration') or 0, 2)
+    list_p95  = round(pct('challenge_list_duration', 95) or 0, 2)
+    list_p99  = round(pct('challenge_list_duration', 99) or 0, 2)
+    detail_p95= round(pct('challenge_detail_duration', 95) or 0, 2)
+    detail_p99= round(pct('challenge_detail_duration', 99) or 0, 2)
+    err_rate  = round((val('errors', 'rate') or 0) * 100, 3)
+    total_req = int(metrics.get('http_reqs', {}).get('values', {}).get('count', 0))
+    rps       = round(metrics.get('http_reqs', {}).get('values', {}).get('rate', 0), 2)
+    k6_ok = True
+except Exception as e:
+    k6_ok = False
+    print(f"  [WARN] k6 요약 파싱 실패: {e}")
+
+# ── Prometheus 쿼리 ───────────────────────────────────────
+def prom(query):
+    try:
+        url = f"http://localhost:9090/api/v1/query?query={urllib.parse.quote(query)}"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            d = json.load(r)
+        result = d['data']['result']
+        return round(float(result[0]['value'][1]), 4) if result else None
+    except:
+        return None
+
+import urllib.parse
+
+heap_used  = prom('sum(jvm_memory_used_bytes{application="booster", area="heap"})')
+heap_max   = prom('sum(jvm_memory_max_bytes{application="booster", area="heap"} > 0)')
+heap_pct   = round(heap_used / heap_max * 100, 2) if heap_used and heap_max else None
+threads    = prom('jvm_threads_live_threads{application="booster"}')
+gc_rate    = prom('rate(jvm_gc_pause_seconds_sum{application="booster"}[1m])')
+gc_ms      = round((gc_rate or 0) * 1000, 2)
+hk_active  = prom('hikaricp_connections_active{application="booster"}')
+hk_idle    = prom('hikaricp_connections_idle{application="booster"}')
+hk_pending = prom('hikaricp_connections_pending{application="booster"}')
+hk_acq_p99 = prom('histogram_quantile(0.99, sum(rate(hikaricp_connections_acquire_seconds_bucket{application="booster"}[2m])) by (le))')
+hk_acq_ms  = round((hk_acq_p99 or 0) * 1000, 3)
+
+# ── md 생성 ──────────────────────────────────────────────
+date_str = datetime.date.today().strftime('%Y-%m-%d')
+md = f"""# 성능 기준선 — {date_str}
+
+**측정일**: {date_str}
+**환경**: Docker Compose (PostgreSQL 15, Spring Boot 3.x)
+**HikariCP pool-size**: 10 (default)
+**부하 도구**: k6 (5VU → 20VU → 50VU → 0VU), 총 2분 20초
+
+---
+
+## HTTP 응답시간 (k6 결과)
+
+| 지표 | 값 |
+|------|-----|
+| 평균 | {http_avg}ms |
+| p50 | {http_p50}ms |
+| p95 | {http_p95}ms |
+| p99 | {http_p99}ms |
+| 에러율 | {err_rate}% |
+| 총 요청 수 | {total_req:,}건 |
+| RPS | {rps} req/s |
+
+### API별 p95 / p99
+
+| API | p95 | p99 |
+|-----|-----|-----|
+| GET /api/challenges (목록) | {list_p95}ms | {list_p99}ms |
+| GET /api/challenges/{{id}} (상세) | {detail_p95}ms | {detail_p99}ms |
+
+---
+
+## JVM (부하 직후 측정)
+
+| 지표 | 측정값 |
+|------|-------|
+| Heap 사용량 | {round((heap_used or 0)/1024/1024, 1)} MB |
+| Heap 최대 | {round((heap_max or 0)/1024/1024, 0):.0f} MB |
+| **Heap 사용률** | **{heap_pct}%** |
+| 활성 스레드 | {threads}개 |
+| GC 일시정지 | {gc_ms}ms/분 |
+
+---
+
+## DB 커넥션 (부하 직후, HikariCP)
+
+| 지표 | 측정값 |
+|------|-------|
+| active | {hk_active} |
+| idle | {hk_idle} |
+| pending | {hk_pending} |
+| 획득 p99 | {hk_acq_ms}ms |
+
+---
+
+## k6 기준(threshold) 달성 여부
+
+| 기준 | 목표 | 결과 | 판정 |
+|------|------|------|------|
+| 전체 p99 | < 500ms | {http_p99}ms | {'✅' if http_p99 < 500 else '❌'} |
+| 목록 조회 p95 | < 200ms | {list_p95}ms | {'✅' if list_p95 < 200 else '❌'} |
+| 상세 조회 p95 | < 150ms | {detail_p95}ms | {'✅' if detail_p95 < 150 else '❌'} |
+| 에러율 | < 1% | {err_rate}% | {'✅' if err_rate < 1 else '❌'} |
+| Heap 사용률 | < 70% | {heap_pct}% | {'✅' if (heap_pct or 0) < 70 else '❌'} |
+| HikariCP pending | 0 | {hk_pending} | {'✅' if (hk_pending or 0) == 0 else '❌'} |
+
+---
+
+## Grafana 스크린샷
+
+<!-- 대시보드 스크린샷을 여기에 첨부하세요 -->
+<!-- http://localhost:3000/d/booster-baxis-v1 -->
+"""
+
+os.makedirs(os.path.dirname('$BASELINE_FILE'), exist_ok=True)
+with open('$BASELINE_FILE', 'w') as f:
+    f.write(md)
+print(f"  저장 완료: $BASELINE_FILE")
+PYEOF
+
 echo ""
-echo -e "${CYAN}Prometheus 지표 직접 확인:${NC}"
-echo "  curl -s localhost:8080/actuator/prometheus | grep hikaricp_connections_active"
+echo -e "${GREEN}════════════════════════════════════════${NC}"
+echo -e "${GREEN} 결과 파일: docs/monitoring/baseline-$(date +%Y-%m-%d).md${NC}"
+echo -e "${GREEN}════════════════════════════════════════${NC}"
+echo ""
+echo "다음 단계:"
+echo "  1. Grafana 대시보드 확인 → http://localhost:3000/d/booster-baxis-v1"
+echo "  2. 스크린샷을 baseline-$(date +%Y-%m-%d).md 에 첨부"
+echo "  3. ./gradlew clean test (BAxisIsolationTest 확인)"

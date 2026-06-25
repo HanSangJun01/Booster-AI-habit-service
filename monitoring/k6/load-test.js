@@ -1,6 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 const errorRate = new Rate('errors');
 const challengeListDuration = new Trend('challenge_list_duration');
@@ -16,6 +17,7 @@ export const options = {
     { duration: '30s', target: 50 },  // 피크
     { duration: '20s', target: 0  },  // 쿨다운
   ],
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(90)', 'p(95)', 'p(99)'],
   thresholds: {
     http_req_duration:        ['p(99)<500'],   // 전체 p99 < 500ms
     challenge_list_duration:  ['p(95)<200'],   // 목록 조회 p95 < 200ms
@@ -23,6 +25,13 @@ export const options = {
     errors:                   ['rate<0.01'],   // 에러율 1% 미만
   },
 };
+
+export function handleSummary(data) {
+  return {
+    '/tmp/k6-summary.json': JSON.stringify(data, null, 2),
+    stdout: textSummary(data, { indent: '  ', enableColors: true }),
+  };
+}
 
 export default function () {
   // 1. 챌린지 목록 조회

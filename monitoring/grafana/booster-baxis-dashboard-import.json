@@ -106,7 +106,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "jvm_memory_used_bytes{application=\"booster\", area=\"heap\"} / jvm_memory_max_bytes{application=\"booster\", area=\"heap\"}",
+          "expr": "sum(jvm_memory_used_bytes{application=\"booster\", area=\"heap\"}) / sum(jvm_memory_max_bytes{application=\"booster\", area=\"heap\"} > 0)",
           "legendFormat": "Heap 사용률",
           "refId": "A"
         }
