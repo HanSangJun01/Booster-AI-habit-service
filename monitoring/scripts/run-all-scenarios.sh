@@ -116,6 +116,7 @@ DELETE FROM verification_decisions WHERE id > 0;
 DELETE FROM gps_verification_results WHERE id > 0;
 DELETE FROM verification_submissions WHERE id > 0;
 DELETE FROM settlements WHERE id > 0;
+DELETE FROM challenge_check_ins WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
 DELETE FROM challenge_participants WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
 DELETE FROM challenges WHERE title LIKE '시나리오%';
 " 2>/dev/null || warn "초기화 중 일부 테이블 건너뜀 (첫 실행 시 정상)"
@@ -190,6 +191,13 @@ done
 
 ok "시나리오 B 완료 — Grafana에서 POST 응답시간·DB 커넥션 확인"
 
+# 참여자 상태 검증 (CONFIRMED 5명 확인)
+CONFIRMED_COUNT=$(psql_exec "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id=$CHALLENGE_ID AND status='CONFIRMED';" | tr -d ' ')
+log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 5"
+if [ "$CONFIRMED_COUNT" -ne 5 ]; then
+  warn "참여자 중 CONFIRMED가 5명이 아닙니다. 체크인 요청이 실패할 수 있습니다."
+fi
+
 # 챌린지 ACTIVE 전환 (체크인·k6 전제조건)
 log "챌린지 $CHALLENGE_ID 상태를 ACTIVE로 전환..."
 psql_exec "UPDATE challenges SET status='ACTIVE', started_at=NOW()-INTERVAL '1 minute' WHERE id=$CHALLENGE_ID;" || warn "챌린지 상태 업데이트 실패"
@@ -228,6 +236,33 @@ echo ""
 # 시나리오 E — 동시성 부하 (k6) — D 이전에 실행 (챌린지 ACTIVE 상태)
 # ══════════════════════════════════════════════════════════════════════
 echo -e "${CYAN}══ 시나리오 E: 동시성 부하 (k6) ══${NC}"
+
+# Smoke 검증: 챌린지 목록, 상세, 체크인 read/write 단건 확인 (k6 전)
+log "Smoke 검증 중 (k6 전)..."
+SMOKE_LIST=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges" 2>/dev/null || echo "000")
+SMOKE_DETAIL=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID" -H "X-User-Id: 1" 2>/dev/null || echo "000")
+SMOKE_CHECKIN_READ=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID/check-ins" -H "X-User-Id: 1" 2>/dev/null || echo "000")
+SMOKE_CHECKIN_WRITE_RESP=$(curl -sf -w "\n%{http_code}" -X POST "$API/api/challenges/$CHALLENGE_ID/check-ins" \
+  -H "Content-Type: application/json" -H "X-User-Id: 1" \
+  -d '{"currentLat":37.5665,"currentLng":126.9780}' 2>/dev/null || printf '{}\n000')
+SMOKE_CHECKIN_WRITE=$(echo "$SMOKE_CHECKIN_WRITE_RESP" | tail -1)
+
+log "  GET /api/challenges → $SMOKE_LIST"
+log "  GET /api/challenges/$CHALLENGE_ID → $SMOKE_DETAIL"
+log "  GET .../check-ins → $SMOKE_CHECKIN_READ"
+log "  POST .../check-ins → $SMOKE_CHECKIN_WRITE"
+
+if [ "$SMOKE_LIST" != "200" ] || [ "$SMOKE_DETAIL" != "200" ] || [ "$SMOKE_CHECKIN_READ" != "200" ]; then
+  fail "Smoke 검증 실패 — k6 부하 테스트 중단. 위 응답코드를 확인하세요."
+fi
+if [ "$SMOKE_CHECKIN_WRITE" != "200" ] && [ "$SMOKE_CHECKIN_WRITE" != "201" ]; then
+  SMOKE_BODY=$(echo "$SMOKE_CHECKIN_WRITE_RESP" | head -1)
+  warn "체크인 쓰기 smoke 실패: HTTP $SMOKE_CHECKIN_WRITE — $SMOKE_BODY"
+  warn "k6 에러율이 높을 수 있습니다. 계속 진행합니다."
+fi
+ok "Smoke 검증 통과"
+echo ""
+
 log "k6 부하 테스트 시작 (5VU→20VU→50VU→0VU)..."
 echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
 echo ""

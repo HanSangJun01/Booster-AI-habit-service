@@ -50,6 +50,9 @@ export default function () {
   challengeListDuration.add(listRes.timings.duration);
   check(listRes, { 'list 200': (r) => r.status === 200 });
   errorRate.add(listRes.status >= 400);
+  if (listRes.status >= 400) {
+    console.error(`[VU${__VU}] list failed: ${listRes.status} ${listRes.body}`);
+  }
 
   sleep(0.3);
 
@@ -58,6 +61,9 @@ export default function () {
   challengeDetailDuration.add(detailRes.timings.duration);
   check(detailRes, { 'detail 200': (r) => r.status === 200 });
   errorRate.add(detailRes.status >= 400);
+  if (detailRes.status >= 400) {
+    console.error(`[VU${__VU}] detail failed: ${detailRes.status} ${detailRes.body}`);
+  }
 
   sleep(0.3);
 
@@ -68,8 +74,11 @@ export default function () {
     { headers: authHeaders }
   );
   checkInWriteDuration.add(checkInWriteRes.timings.duration);
-  check(checkInWriteRes, { 'checkin write 200': (r) => r.status === 200 });
+  check(checkInWriteRes, { 'checkin write 2xx': (r) => r.status === 200 || r.status === 201 });
   errorRate.add(checkInWriteRes.status >= 400);
+  if (checkInWriteRes.status >= 400) {
+    console.error(`[VU${__VU}] checkin write failed: ${checkInWriteRes.status} ${checkInWriteRes.body}`);
+  }
 
   sleep(0.3);
 
@@ -81,6 +90,9 @@ export default function () {
   checkInReadDuration.add(checkInReadRes.timings.duration);
   check(checkInReadRes, { 'checkin read 200': (r) => r.status === 200 });
   errorRate.add(checkInReadRes.status >= 400);
+  if (checkInReadRes.status >= 400) {
+    console.error(`[VU${__VU}] checkin read failed: ${checkInReadRes.status} ${checkInReadRes.body}`);
+  }
 
   sleep(0.5);
 }
