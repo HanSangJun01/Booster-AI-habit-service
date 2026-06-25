@@ -260,7 +260,7 @@ echo ""
 # ══════════════════════════════════════════════════════════════════════
 log "결과 파일 자동 생성 중..."
 
-BASELINE_FILE="$PROJECT_ROOT/docs/monitoring/baseline-$(date +%Y-%m-%d).md"
+BASELINE_FILE="$PROJECT_ROOT/docs/monitoring/baseline-$(date +%Y-%m-%d-%H-%M).md"
 
 python3 - <<PYEOF
 import json, urllib.request, datetime, os
@@ -322,10 +322,10 @@ hk_acq_p99 = prom('histogram_quantile(0.99, sum(rate(hikaricp_connections_acquir
 hk_acq_ms  = round((hk_acq_p99 or 0) * 1000, 3)
 
 # ── md 생성 ──────────────────────────────────────────────
-date_str = datetime.date.today().strftime('%Y-%m-%d')
+date_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
 md = f"""# 성능 기준선 — {date_str}
 
-**측정일**: {date_str}
+**측정일시**: {date_str}
 **환경**: Docker Compose (PostgreSQL 15, Spring Boot 3.x)
 **HikariCP pool-size**: 10 (default)
 **부하 도구**: k6 (5VU → 20VU → 50VU → 0VU), 총 2분 20초
