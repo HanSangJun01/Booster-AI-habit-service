@@ -771,6 +771,142 @@
       ],
       "title": "JVM Non-Heap / Buffer 메모리",
       "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "id": 104,
+      "title": "📈 응답시간 심층 분석",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum by (le, uri, method) (rate(http_server_requests_seconds_bucket{application=\"booster\", uri!~\"/actuator/.*\"}[2m]))) * 1000",
+          "legendFormat": "p99 {{method}} {{uri}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum by (le, uri, method) (rate(http_server_requests_seconds_bucket{application=\"booster\", uri!~\"/actuator/.*\"}[2m]))) * 1000",
+          "legendFormat": "p95 {{method}} {{uri}}",
+          "refId": "B"
+        }
+      ],
+      "title": "URI별 p95 / p99 응답시간 (ms) — 느린 엔드포인트 특정용",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "E" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "D" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "C" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(http_server_requests_seconds_count{application=\"booster\", status=~\"2..\", uri!~\"/actuator/.*\"}[1m]))",
+          "legendFormat": "2xx 성공",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(http_server_requests_seconds_count{application=\"booster\", status=~\"3..\", uri!~\"/actuator/.*\"}[1m]))",
+          "legendFormat": "3xx 리다이렉트",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(http_server_requests_seconds_count{application=\"booster\", status=~\"4..\", uri!~\"/actuator/.*\"}[1m]))",
+          "legendFormat": "4xx 클라이언트 오류",
+          "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(http_server_requests_seconds_count{application=\"booster\", status=~\"5..\", uri!~\"/actuator/.*\"}[1m]))",
+          "legendFormat": "5xx 서버 오류 🚨",
+          "refId": "E"
+        }
+      ],
+      "title": "HTTP 상태코드 분포 (1분 누적)",
+      "type": "timeseries"
     }
 
   ],
@@ -783,5 +919,5 @@
   "timezone": "browser",
   "title": "Booster Backend - B-axis 모니터링",
   "uid": "booster-baxis-v1",
-  "version": 1
+  "version": 2
 }
