@@ -243,7 +243,7 @@ log "k6 부하 테스트 시작 (5VU→20VU→50VU→0VU)..."
 echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
 echo ""
 
-k6 run "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
+k6 run -e BASE_URL="$API" -e CHALLENGE_ID="$CHALLENGE_ID" "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
 
 echo ""
 
@@ -284,10 +284,13 @@ try:
     http_p95  = round(pct('http_req_duration', 95) or 0, 2)
     http_p99  = round(pct('http_req_duration', 99) or 0, 2)
     http_avg  = round(val('http_req_duration') or 0, 2)
-    list_p95  = round(pct('challenge_list_duration', 95) or 0, 2)
-    list_p99  = round(pct('challenge_list_duration', 99) or 0, 2)
-    detail_p95= round(pct('challenge_detail_duration', 95) or 0, 2)
-    detail_p99= round(pct('challenge_detail_duration', 99) or 0, 2)
+    list_p95      = round(pct('challenge_list_duration', 95) or 0, 2)
+    list_p99      = round(pct('challenge_list_duration', 99) or 0, 2)
+    detail_p95    = round(pct('challenge_detail_duration', 95) or 0, 2)
+    detail_p99    = round(pct('challenge_detail_duration', 99) or 0, 2)
+    checkin_w_p95 = round(pct('checkin_write_duration', 95) or 0, 2)
+    checkin_w_p99 = round(pct('checkin_write_duration', 99) or 0, 2)
+    checkin_r_p95 = round(pct('checkin_read_duration', 95) or 0, 2)
     err_rate  = round((val('errors', 'rate') or 0) * 100, 3)
     total_req = int(metrics.get('http_reqs', {}).get('values', {}).get('count', 0))
     rps       = round(metrics.get('http_reqs', {}).get('values', {}).get('rate', 0), 2)
@@ -350,6 +353,8 @@ md = f"""# 성능 기준선 — {date_str}
 |-----|-----|-----|
 | GET /api/challenges (목록) | {list_p95}ms | {list_p99}ms |
 | GET /api/challenges/{{id}} (상세) | {detail_p95}ms | {detail_p99}ms |
+| POST /api/challenges/{{id}}/check-ins (쓰기) | {checkin_w_p95}ms | {checkin_w_p99}ms |
+| GET /api/challenges/{{id}}/check-ins (조회) | {checkin_r_p95}ms | - |
 
 ---
 
@@ -383,6 +388,7 @@ md = f"""# 성능 기준선 — {date_str}
 | 전체 p99 | < 500ms | {http_p99}ms | {'✅' if http_p99 < 500 else '❌'} |
 | 목록 조회 p95 | < 200ms | {list_p95}ms | {'✅' if list_p95 < 200 else '❌'} |
 | 상세 조회 p95 | < 150ms | {detail_p95}ms | {'✅' if detail_p95 < 150 else '❌'} |
+| 체크인 쓰기 p95 | < 300ms | {checkin_w_p95}ms | {'✅' if checkin_w_p95 < 300 else '❌'} |
 | 에러율 | < 1% | {err_rate}% | {'✅' if err_rate < 1 else '❌'} |
 | Heap 사용률 | < 70% | {heap_pct}% | {'✅' if (heap_pct or 0) < 70 else '❌'} |
 | HikariCP pending | 0 | {hk_pending} | {'✅' if (hk_pending or 0) == 0 else '❌'} |

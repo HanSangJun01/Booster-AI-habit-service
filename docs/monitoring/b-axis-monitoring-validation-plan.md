@@ -111,7 +111,8 @@ k6 run monitoring/k6/load-test.js
 for userId in 1 2 3 4 5; do
   curl -s -X POST http://localhost:8080/api/challenges/1/participants \
     -H "Content-Type: application/json" \
-    -d '{"userId":'$userId',"personalStatement":"참여합니다",
+    -H "X-User-Id: $userId" \
+    -d '{"personalStatement":"참여합니다",
          "gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,
          "gpsPlaceName":"서울시청"}' > /dev/null
 done
@@ -137,7 +138,8 @@ done
 for i in $(seq 1 20); do
   curl -s -X POST http://localhost:8080/api/challenges/1/check-ins \
     -H "Content-Type: application/json" \
-    -d '{"userId":1,"submittedLat":37.5665,"submittedLng":126.9780}' \
+    -H "X-User-Id: 1" \
+    -d '{"currentLat":37.5665,"currentLng":126.9780}' \
     | jq -r '.data.status'
 done
 ```
@@ -202,6 +204,7 @@ watch -n 1 'curl -s localhost:8080/actuator/prometheus | \
 | 전체 p99 응답시간 | < 500ms |
 | 챌린지 목록 조회 p95 | < 200ms |
 | 챌린지 상세 조회 p95 | < 150ms |
+| 체크인 쓰기 p95 | < 300ms |
 | 에러율 | < 1% |
 
 **확인 지표**:
@@ -255,7 +258,7 @@ docker exec booster-postgres psql -U booster -c \
 | # | 기준 | 측정 방법 |
 |---|------|----------|
 | AC-09 | GET /api/challenges p95 응답시간 < 200ms (k6 기본부하 20VU) | k6 결과 |
-| AC-10 | POST /api/challenges/{id}/check-ins 평균 응답시간 < 300ms | 시나리오 C |
+| AC-10 | POST /api/challenges/{id}/check-ins p95 응답시간 < 300ms | k6 결과 (시나리오 E) |
 | AC-11 | 5xx 응답 0건 (모든 시나리오 통틀어) | Prometheus 쿼리 |
 | AC-12 | `hikaricp_connections_pending` = 0 (20VU 이하 부하) | 시나리오 E |
 | AC-13 | JVM Heap 사용률 < 70% (부하 후) | Grafana 패널 |
@@ -264,7 +267,7 @@ docker exec booster-postgres psql -U booster -c \
 
 ## 6. 1주차 기준선 문서화 템플릿
 
-실험 완료 후 아래 파일로 저장: `docs/monitoring/week1-baseline.md`
+실험 완료 후 자동 생성: `docs/monitoring/baseline-YYYY-MM-DD-HH-MM.md` (스크립트 실행 시 자동 저장)
 
 ```markdown
 ## 1주차 성능 기준선
