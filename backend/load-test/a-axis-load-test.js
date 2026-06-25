@@ -44,7 +44,22 @@ const SEED_LNG = 126.9780;
 // 전체 테스트 시작 전 1회: 부하용 유저 생성 + 로그인 → 토큰 확보
 // [2차 변경] 1차는 가입/로그인만 해서 /location이 100% 404(위치 미등록)였음.
 //           2차는 setup에서 위치 등록 + 오늘 체크인까지 시드 → 읽기 5종이 전부 실제 데이터로 200 응답하도록.
+// [3차 변경] LOGIN_EMAIL 환경변수를 주면, 미리 SQL로 대량 시딩해 둔 고정 유저로 "로그인만" 함
+//           (signup/위치/체크인 시드 생략). 데이터 많은 유저로 dashboard/coins 부하를 측정하기 위함.
+//           예: docker run ... -e LOGIN_EMAIL=seed3rd@booster.test -e LOGIN_PASSWORD=seed1234 ...
 export function setup() {
+  const loginEmail = __ENV.LOGIN_EMAIL;
+  if (loginEmail) {
+    const res = http.post(`${BASE}/api/auth/login`,
+      JSON.stringify({ email: loginEmail, password: __ENV.LOGIN_PASSWORD || 'seed1234' }),
+      { headers: JSON_HEADERS });
+    const token = res.json('accessToken');
+    if (!token) {
+      throw new Error(`[3차] 시드 유저 로그인 실패 — SQL 시드/가입 먼저 했는지 확인. status=${res.status} body=${res.body}`);
+    }
+    return { token };
+  }
+
   const email = `loadtest_${Date.now()}@booster.test`;
   const password = 'loadtest1234';
   const nickname = 'loadtester';
