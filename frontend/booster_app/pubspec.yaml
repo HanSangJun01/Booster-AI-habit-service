@@ -1,0 +1,19 @@
+name: booster_app
+description: Booster - 팀 기반 습관 챌린지 앱 (목업 → Flutter)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/booster_emblem.png
