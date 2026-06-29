@@ -74,7 +74,39 @@ class ChallengeCheckInServiceTest {
                 .gpsLng(lng)
                 .gpsRadiusMeters(100)
                 .gpsLocked(true)
+                .build(); // teamId = null
+    }
+
+    private ChallengeParticipant confirmedParticipantWithTeam() {
+        return ChallengeParticipant.builder()
+                .challenge(mock(com.booster.challenge.domain.Challenge.class))
+                .userId(userId)
+                .teamId(5L)
+                .status(ParticipantStatus.CONFIRMED)
+                .gpsLat(lat)
+                .gpsLng(lng)
+                .gpsRadiusMeters(100)
+                .gpsLocked(true)
                 .build();
+    }
+
+    // ── 재현 테스트: teamId가 null인 참여자는 체크인 불가 ──
+
+    @Test
+    void recordCheckIn_whenParticipantHasNoTeam_shouldThrowIllegalStateException() {
+        // given: teamId = null인 참여자 (팀 배정 안 된 상태)
+        ChallengeParticipant participant = confirmedParticipant(); // teamId = null
+        when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
+                .thenReturn(Optional.of(participant));
+
+        Challenge challenge = mock(Challenge.class);
+        when(challenge.getStatus()).thenReturn(ChallengeStatus.ACTIVE);
+        when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
+
+        // 수정 전: teamId=null 그대로 저장 성공 → 정산에서 누락
+        // 수정 후: IllegalStateException 발생
+        assertThrows(IllegalStateException.class,
+                () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
     // ── 이슈 4: recordCheckIn - 챌린지 ENDED 상태일 때 IllegalStateException 기대 ──
@@ -111,7 +143,7 @@ class ChallengeCheckInServiceTest {
 
     @Test
     void recordCheckIn_whenDuplicateInsert_shouldHandleGracefully() {
-        ChallengeParticipant participant = confirmedParticipant();
+        ChallengeParticipant participant = confirmedParticipantWithTeam();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
 

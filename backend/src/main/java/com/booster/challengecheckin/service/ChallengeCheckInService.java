@@ -65,6 +65,12 @@ public class ChallengeCheckInService {
             throw new IllegalStateException("Check-in is only allowed when challenge is ACTIVE");
         }
 
+        // 팀 배정 없는 참여자의 체크인 차단 — 정산 계산에서 누락되므로 허용 불가
+        if (participant.getTeamId() == null) {
+            throw new IllegalStateException(
+                    "Check-in not allowed: participant has no team assignment, userId=" + userId);
+        }
+
         // 2. KST 기준 오늘 날짜
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
