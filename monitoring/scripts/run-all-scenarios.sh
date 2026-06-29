@@ -158,6 +158,25 @@ else
   CHALLENGE_ID=1
 fi
 
+# 엣지케이스용 ENDED 챌린지 생성
+log "엣지케이스용 ENDED 챌린지 생성 중..."
+ENDED_RESP=$(curl -sf -X POST "$API/api/challenges" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: 1" \
+  -d '{
+    "title": "시나리오엣지케이스",
+    "category": "HEALTH",
+    "verificationType": "GPS",
+    "durationDays": 14,
+    "depositCoins": 100,
+    "maxParticipants": 10,
+    "visibility": "PUBLIC",
+    "approvalType": "AUTO"
+  }' 2>/dev/null || echo '{}')
+ENDED_CHALLENGE_ID=$(echo "$ENDED_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('id','999'))" 2>/dev/null)
+psql_exec "UPDATE challenges SET status='ENDED', ended_at=NOW()-INTERVAL '1 minute' WHERE id=$ENDED_CHALLENGE_ID;" || warn "ENDED 챌린지 상태 업데이트 실패"
+ok "ENDED 챌린지 생성 완료 (ID: $ENDED_CHALLENGE_ID)"
+
 # 목록 조회 5회
 log "챌린지 목록 조회 테스트 (5회)..."
 for i in $(seq 1 5); do
@@ -263,11 +282,67 @@ fi
 ok "Smoke 검증 통과"
 echo ""
 
-log "k6 부하 테스트 시작 (5VU→20VU→50VU→0VU)..."
-echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
+# 팀 구성 동시성 테스트용 챌린지 생성 (빈 슬롯 10개, 참여자 없음)
+log "팀 구성 동시성 테스트용 챌린지 생성 중..."
+FORMATION_RESP=$(curl -sf -X POST "$API/api/challenges" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: 1" \
+  -d '{
+    "title": "시나리오동시성테스트",
+    "category": "HEALTH",
+    "verificationType": "GPS",
+    "durationDays": 14,
+    "depositCoins": 100,
+    "maxParticipants": 10,
+    "visibility": "PUBLIC",
+    "approvalType": "AUTO"
+  }' 2>/dev/null || echo '{}')
+FORMATION_CHALLENGE_ID=$(echo "$FORMATION_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('id','0'))" 2>/dev/null)
+ok "동시성 테스트 챌린지 생성 완료 (ID: $FORMATION_CHALLENGE_ID)"
 echo ""
 
-k6 run -e BASE_URL="$API" -e CHALLENGE_ID="$CHALLENGE_ID" "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
+# 데이터 볼륨 시딩 (과거 30일 체크인 — 쿼리 성능 검증용)
+log "데이터 볼륨 시딩 중 (참여자별 30일 과거 체크인)..."
+psql_exec "
+INSERT INTO challenge_check_ins (challenge_id, participant_id, team_id, check_in_date, status, created_at, updated_at)
+SELECT $CHALLENGE_ID, cp.id, cp.team_id,
+       CURRENT_DATE - (gs.n || ' days')::INTERVAL,
+       'SUCCESS',
+       NOW(), NOW()
+FROM challenge_participants cp
+CROSS JOIN generate_series(1, 30) AS gs(n)
+WHERE cp.challenge_id = $CHALLENGE_ID
+ON CONFLICT DO NOTHING;
+" || warn "데이터 시딩 중 일부 충돌 (이미 존재하는 데이터 - 정상)"
+SEEDED_COUNT=$(psql_exec "SELECT COUNT(*) FROM challenge_check_ins WHERE challenge_id=$CHALLENGE_ID;" | tr -d ' ')
+ok "데이터 시딩 완료 — 총 체크인 수: ${SEEDED_COUNT}건"
+echo ""
+
+log "k6 부하 테스트 시작 (정상부하 + 동시같은유저 + 엣지케이스)..."
+echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
+echo "  ※ Soak 테스트: SOAK_DURATION=30m ./scripts/run-all-scenarios.sh 으로 실행"
+echo ""
+
+k6 run \
+  -e BASE_URL="$API" \
+  -e CHALLENGE_ID="$CHALLENGE_ID" \
+  -e ENDED_CHALLENGE_ID="${ENDED_CHALLENGE_ID:-999}" \
+  -e FORMATION_CHALLENGE_ID="${FORMATION_CHALLENGE_ID:-0}" \
+  ${SOAK_DURATION:+-e SOAK_DURATION="$SOAK_DURATION"} \
+  "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."
+
+# 팀 구성 동시성 결과 검증 (k6 teamFormationConcurrency 시나리오 완료 후)
+if [ "${FORMATION_CHALLENGE_ID:-0}" != "0" ]; then
+  log "팀 구성 동시성 결과 확인 중..."
+  TEAM_COUNT=$(psql_exec "SELECT COUNT(*) FROM teams WHERE challenge_id=$FORMATION_CHALLENGE_ID;" | tr -d ' ')
+  if [ "$TEAM_COUNT" -eq 1 ]; then
+    ok "[PASS] 팀 구성 동시성 — 팀 1개만 생성 (race condition 없음)"
+  elif [ "$TEAM_COUNT" -eq 0 ]; then
+    warn "[WARN] 팀 미구성 — 10명 참여 완료 여부 확인 필요"
+  else
+    warn "[FAIL] race condition 감지 — 팀 ${TEAM_COUNT}개 생성됨 (1개여야 함)"
+  fi
+fi
 
 echo ""
 
@@ -286,6 +361,139 @@ sleep 30
 RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
 ok "시나리오 D 완료 — 정산 결과: $RESULT"
 
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════
+# 시나리오 F — 비즈니스 로직 값 검증
+# ══════════════════════════════════════════════════════════════════════
+echo -e "${CYAN}══ 시나리오 F: 비즈니스 로직 값 검증 ══${NC}"
+
+# F-1: 팀 참여율 검증 (체크인이 있었으므로 > 0 이어야 함)
+log "팀 참여율 검증 중..."
+RATE=$(psql_exec "SELECT participation_rate FROM teams WHERE challenge_id=$CHALLENGE_ID LIMIT 1;" | tr -d ' \n')
+if [ -n "$RATE" ] && [ "$RATE" != "" ]; then
+  RATE_POSITIVE=$(python3 -c "print('yes' if float('${RATE:-0}') > 0 else 'no')" 2>/dev/null)
+  if [ "$RATE_POSITIVE" = "yes" ]; then
+    ok "[PASS] 팀 참여율: ${RATE} (0 초과 확인)"
+  else
+    warn "[WARN] 팀 참여율이 0임 — 체크인 반영 여부 확인 필요"
+  fi
+else
+  warn "[WARN] 팀 참여율 조회 실패 — 팀이 미구성 상태(참여자 10명 미만)"
+fi
+
+# F-2: 정산 금액 검증
+log "정산 금액 검증 중..."
+PAYOUT=$(psql_exec "SELECT per_winner_payout FROM settlements WHERE challenge_id=$CHALLENGE_ID LIMIT 1;" | tr -d ' \n')
+SETTLE_STATUS=$(psql_exec "SELECT status FROM settlements WHERE challenge_id=$CHALLENGE_ID LIMIT 1;" | tr -d ' \n')
+if [ -n "$PAYOUT" ]; then
+  ok "[PASS] 정산 완료 — status=${SETTLE_STATUS}, per_winner_payout=${PAYOUT}코인"
+else
+  warn "[WARN] 정산 데이터 없음 — 스케줄러 실행 대기 중이거나 팀 미구성 상태"
+fi
+
+ok "시나리오 F 완료"
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════
+# 시나리오 G — 인덱스 존재 여부 확인 및 EXPLAIN 검증
+# ══════════════════════════════════════════════════════════════════════
+echo -e "${CYAN}══ 시나리오 G: 인덱스 존재 여부 확인 ══${NC}"
+
+log "challenge_check_ins 인덱스 확인 중..."
+IDX=$(psql_exec "
+SELECT indexname FROM pg_indexes
+WHERE tablename='challenge_check_ins'
+  AND indexdef LIKE '%challenge_id%'
+  AND indexdef LIKE '%check_in_date%'
+LIMIT 1;" | tr -d ' \n')
+
+if [ -n "$IDX" ]; then
+  ok "[PASS] 복합 인덱스 발견: $IDX"
+  log "EXPLAIN ANALYZE 실행 중..."
+  EXPLAIN=$(psql_exec "EXPLAIN ANALYZE SELECT * FROM challenge_check_ins WHERE challenge_id=$CHALLENGE_ID AND check_in_date=CURRENT_DATE;" 2>/dev/null)
+  if echo "$EXPLAIN" | grep -q "Index Scan\|Index Only Scan"; then
+    ok "[PASS] Index Scan 확인 — 쿼리가 인덱스를 사용 중"
+  else
+    warn "[WARN] Seq Scan 감지 — 인덱스가 있으나 사용되지 않음 (데이터량 확인 필요)"
+  fi
+else
+  warn "[WARN] (challenge_id, check_in_date) 복합 인덱스 없음"
+  warn "      → 권장 migration:"
+  warn "        CREATE INDEX idx_checkins_challenge_date"
+  warn "          ON challenge_check_ins(challenge_id, check_in_date);"
+fi
+
+ok "시나리오 G 완료"
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════
+# 시나리오 H — GPS 경계값 테스트
+# ══════════════════════════════════════════════════════════════════════
+echo -e "${CYAN}══ 시나리오 H: GPS 경계값 테스트 ══${NC}"
+
+# 전용 챌린지 생성 + userId=6 참여 (radius=100m)
+log "GPS 경계값 테스트용 챌린지 생성 중 (userId=6, radius=100m)..."
+GPS_CHALLENGE_RESP=$(curl -sf -X POST "$API/api/challenges" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: 6" \
+  -d '{
+    "title": "시나리오GPS경계값",
+    "category": "HEALTH",
+    "verificationType": "GPS",
+    "durationDays": 14,
+    "depositCoins": 100,
+    "maxParticipants": 10,
+    "visibility": "PUBLIC",
+    "approvalType": "AUTO"
+  }' 2>/dev/null || echo '{}')
+GPS_CHALLENGE_ID=$(echo "$GPS_CHALLENGE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('id','0'))" 2>/dev/null)
+
+if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
+  # userId=6 참여 신청 (GPS: 서울시청, radius=100m)
+  curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/participants" \
+    -H "Content-Type: application/json" \
+    -H "X-User-Id: 6" \
+    -d '{"personalStatement":"GPS테스트","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
+    > /dev/null 2>&1
+
+  # ACTIVE 전환
+  psql_exec "UPDATE challenges SET status='ACTIVE', started_at=NOW()-INTERVAL '1 minute' WHERE id=$GPS_CHALLENGE_ID;" || true
+
+  # H-1: 반경 내 체크인 (≈44m north — 100m 이내)
+  log "H-1: 반경 내 체크인 테스트 (37.56690, 126.9780 — 약 44m)..."
+  INSIDE_RESP=$(curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/check-ins" \
+    -H "Content-Type: application/json" \
+    -H "X-User-Id: 6" \
+    -d '{"currentLat":37.56690,"currentLng":126.9780}' 2>/dev/null || echo '{}')
+  INSIDE_STATUS=$(echo "$INSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('status','?'))" 2>/dev/null)
+  if [ "$INSIDE_STATUS" = "SUCCESS" ]; then
+    ok "[PASS] 반경 내(44m) 체크인 → SUCCESS"
+  else
+    warn "[WARN] 반경 내(44m) 체크인 → $INSIDE_STATUS (SUCCESS 기대)"
+  fi
+
+  # H-2: 반경 외 체크인 (≈222m north — 100m 초과, 다음 날 시뮬레이션을 위해 date 조작)
+  # 날짜를 어제로 바꿔 멱등성 우회 후 외부 좌표 테스트
+  psql_exec "UPDATE challenge_check_ins SET check_in_date=CURRENT_DATE-1 WHERE challenge_id=$GPS_CHALLENGE_ID AND participant_id=(SELECT id FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=6 LIMIT 1);" || true
+
+  log "H-2: 반경 외 체크인 테스트 (37.56850, 126.9780 — 약 222m)..."
+  OUTSIDE_RESP=$(curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/check-ins" \
+    -H "Content-Type: application/json" \
+    -H "X-User-Id: 6" \
+    -d '{"currentLat":37.56850,"currentLng":126.9780}' 2>/dev/null || echo '{}')
+  OUTSIDE_STATUS=$(echo "$OUTSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('status','?'))" 2>/dev/null)
+  OUTSIDE_HTTP=$(echo "$OUTSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status', d.get('data',{}).get('status','?')))" 2>/dev/null)
+  if [ "$OUTSIDE_STATUS" = "FAILED" ]; then
+    ok "[PASS] 반경 외(222m) 체크인 → FAILED (GPS 판정 정상)"
+  else
+    warn "[WARN] 반경 외(222m) 체크인 → $OUTSIDE_STATUS (FAILED 기대)"
+  fi
+else
+  warn "GPS 경계값 테스트용 챌린지 생성 실패 — 건너뜀"
+fi
+
+ok "시나리오 H 완료"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════
@@ -339,6 +547,10 @@ try:
 except Exception as e:
     k6_ok = False
     print(f"  [WARN] k6 요약 파싱 실패: {e}")
+    http_p50 = http_p95 = http_p99 = http_avg = 0
+    list_p95 = list_p99 = detail_p95 = detail_p99 = 0
+    checkin_w_p95 = checkin_w_p99 = checkin_r_p95 = 0
+    err_rate = 0; total_req = 0; rps = 0
 
 # ── Prometheus 쿼리 ───────────────────────────────────────
 def prom(query):

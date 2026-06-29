@@ -14,10 +14,11 @@
 3. [실행 방법](#실행-방법)
 4. [시나리오 상세 설명](#시나리오-상세-설명)
 5. [k6 로드 테스트 구조](#k6-로드-테스트-구조)
-6. [Grafana/Prometheus 지표 해석](#grafanaprometheus-지표-해석)
-7. [테스트 실패 시 원인 확인 순서](#테스트-실패-시-원인-확인-순서)
-8. [원인 분류 기준](#원인-분류-기준)
-9. [Baseline 파일 해석](#baseline-파일-해석)
+6. [SQL 쿼리 가시성 (dev 프로파일)](#sql-쿼리-가시성-dev-프로파일)
+7. [Grafana/Prometheus 지표 해석](#grafanaprometheus-지표-해석)
+8. [테스트 실패 시 원인 확인 순서](#테스트-실패-시-원인-확인-순서)
+9. [원인 분류 기준](#원인-분류-기준)
+10. [Baseline 파일 해석](#baseline-파일-해석)
 
 ---
 
@@ -67,18 +68,20 @@
    ├─ 2~20회: 멱등 처리 (이미 존재하면 조기 반환)
    └─ → 기준선: 3단계 verification chain 응답시간, 멱등성 동작 검증
 
-6. 시나리오 E: 동시성 부하 테스트 (2분 20초)
-   ├─ k6 부하 생성
-   │  ├─ 0~30초: 5 VU (워밍업)
-   │  ├─ 30~90초: 20 VU (기본 부하)
-   │  ├─ 90~120초: 50 VU (피크)
-   │  └─ 120~140초: 0 VU (쿨다운)
+6. 시나리오 E: 동시성 부하 테스트 (약 3분)
+   ├─ k6 멀티 시나리오 실행
+   │  ├─ normal_load: 5→20→50 VU 램프업 (0s~2m20s)
+   │  ├─ concurrent_same_user: 10 VU 모두 userId=1 (1m30s~1m50s, 피크 중 실행)
+   │  ├─ edge_cases: ENDED·미참여·GPS누락 → 4xx 확인 (2m20s, 5회)
+   │  ├─ team_formation_concurrency: 10 VU 동시 참여 신청 (2m30s~2m40s, 선택)
+   │  └─ soak: 5 VU 장기 부하 (SOAK_DURATION 환경변수로 opt-in)
    ├─ k6 내장 검증 기준 (threshold)
-   │  ├─ 전체 p99 < 500ms ✅
-   │  ├─ 목록 조회 p95 < 200ms ✅
-   │  ├─ 상세 조회 p95 < 150ms ✅
-   │  ├─ 체크인 쓰기 p95 < 300ms ✅
-   │  └─ 에러율 < 1% ❌ (현재 25%)
+   │  ├─ 전체 p99 < 500ms
+   │  ├─ 목록 조회 p95 < 200ms
+   │  ├─ 상세 조회 p95 < 150ms
+   │  ├─ 체크인 쓰기 p95 < 300ms
+   │  ├─ 에러율 < 1%
+   │  └─ 엣지케이스 4xx 정상 반환율 > 95%
    └─ → 측정: HikariCP 커넥션 풀 동작, GC 일시정지, 응답시간 분포
 
 7. 시나리오 D: 정산 스케줄러 (1~2분)
@@ -87,12 +90,28 @@
    ├─ 정산 결과 조회 (/api/challenges/{id}/result)
    └─ → 검증: SettlementService 멱등성, 정산 프로세스 동작
 
-8. 결과 자동 기록 (1~2분)
-   ├─ k6 summary 파싱
-   ├─ Prometheus 메트릭 수집
-   └─ → 저장: docs/monitoring/baselines/baseline-YYYY-MM-DD-HH-MM.md
+8. 시나리오 F: 비즈니스 로직 값 검증
+   ├─ 체크인 후 DB 직접 쿼리로 값 정확성 확인
+   ├─ participation_rate > 0 검증
+   ├─ per_winner_payout 정산 금액 검증
+   └─ → [PASS]/[WARN] 출력
 
-**전체 소요 시간**: 약 2~3시간 (모든 시나리오 포함)
+9. 시나리오 G: 인덱스 존재 여부 확인
+   ├─ pg_indexes에서 (challenge_id, check_in_date) 복합인덱스 조회
+   ├─ 없으면 [WARN] + 권장 CREATE INDEX SQL 출력
+   └─ 있으면 EXPLAIN ANALYZE로 Index Scan 확인
+
+10. 시나리오 H: GPS 경계값 테스트
+    ├─ H-1: 반경 44m (이내) → SUCCESS 기대
+    ├─ H-2: 반경 222m (초과) → FAILED 기대
+    └─ → 기대값 불일치 시 [WARN] 출력
+
+11. 결과 자동 기록 (1~2분)
+    ├─ k6 summary 파싱
+    ├─ Prometheus 메트릭 수집
+    └─ → 저장: docs/monitoring/baselines/baseline-YYYY-MM-DD-HH-MM.md
+
+**전체 소요 시간**: 약 10~15분 (Soak 제외)
 ```
 
 ---
@@ -329,33 +348,37 @@ POST /check-ins Latency (중복) → 10~50ms (급격히 단축)
 
 ### 시나리오 E: 동시성 부하 테스트 (k6)
 
-**목적**: HikariCP 커넥션 풀 동작 및 시스템 부하 최대 지점 관찰
+**목적**: HikariCP 커넥션 풀 동작, 멱등성·경쟁조건, 엣지케이스 4xx 검증
 
-**테스트 흐름**:
-```
-k6 stages (VU = Virtual User):
-├─ 0~30초: 5 VU  (5명의 동시 사용자)
-├─ 30~90초: 20 VU (20명)
-├─ 90~120초: 50 VU (50명 - 피크)
-└─ 120~140초: 0 VU (쿨다운)
-```
+**k6 멀티 시나리오 구성**:
 
-**각 VU의 동작** (매 사이클마다 반복):
+| 시나리오 | VU | 시간 | 시작 시점 | 목적 |
+|---------|-----|------|----------|------|
+| `normal_load` (워밍업) | 5 | 30초 | 0s | JVM JIT, 커넥션 풀 준비 |
+| `normal_load` (기본 부하) | 20 | 1분 | 30s | 일반 트래픽 시뮬레이션 |
+| `normal_load` (피크) | 50 | 30초 | 1m30s | 커넥션 풀 포화 임박 관찰 |
+| `normal_load` (쿨다운) | 0 | 20초 | 2m | 자원 회복 확인 |
+| `concurrent_same_user` | 10 | 20초 | 1m30s | 동일 userId=1 동시 체크인 — 멱등성·경쟁조건 |
+| `edge_cases` | 1 | 5회 반복 | 2m20s | ENDED 챌린지·미참여 유저·GPS 누락 → 4xx 확인 |
+| `team_formation_concurrency` | 10 | 10초 | 2m30s | 팀 구성 동시성 (FORMATION_CHALLENGE_ID 필요) |
+| `soak` (opt-in) | 5 | `$SOAK_DURATION` | 2m40s | 메모리 누수 확인 |
+
+**각 normalFlow VU의 동작** (매 사이클마다 반복):
 1. `GET /api/challenges` (목록 조회)
 2. `GET /api/challenges/{id}` (상세 조회)
 3. `POST /api/challenges/{id}/check-ins` (체크인 쓰기)
 4. `GET /api/challenges/{id}/check-ins?date=...` (체크인 목록)
 
-**기대 결과**:
-| 지표 | 기준 | 현황 |
+**성공 기준 (thresholds)**:
+
+| 지표 | 기준 | 설명 |
 |-----|------|------|
-| 전체 p99 응답시간 | < 500ms | ✅ ~33~37ms |
-| 목록 조회 p95 | < 200ms | ✅ ~18ms |
-| 상세 조회 p95 | < 150ms | ✅ ~22ms |
-| 체크인 쓰기 p95 | < 300ms | ✅ ~31ms |
-| 에러율 | < 1% | ❌ 25% |
-| HikariCP active max | < 9 | ✅ 0~2 |
-| HikariCP pending | 0 | ✅ 0 |
+| 전체 p99 응답시간 | < 500ms | `http_req_duration` |
+| 목록 조회 p95 | < 200ms | `challenge_list_duration` |
+| 상세 조회 p95 | < 150ms | `challenge_detail_duration` |
+| 체크인 쓰기 p95 | < 300ms | `checkin_write_duration` |
+| 에러율 | < 1% | `errors` |
+| 엣지케이스 4xx 정상 반환율 | > 95% | `edge_case_correct` |
 
 **실시간 모니터링** (다른 터미널에서 실행):
 ```bash
@@ -372,6 +395,7 @@ watch -n 1 'curl -s localhost:8080/actuator/prometheus | \
 - [ ] 에러율이 높은 경우 (> 5%):
   - 백엔드 로그: `docker logs booster-backend | tail -50`
   - 에러 타입: APP_ERROR (500), TEST_SCRIPT_ERROR (check fail), DB_ERROR (timeout)
+- [ ] `edge_case_correct < 95%`: ENDED 챌린지·미참여·GPS 누락 요청이 4xx를 반환하지 않음 → 백엔드 검증 로직 확인
 - [ ] HikariCP 커넥션 부족 (pending > 0):
   - `application.yml`에서 `hikaricp.maximum-pool-size` 증가
   - 또는 DB 쿼리 최적화 필요
@@ -394,46 +418,69 @@ const checkInWriteDuration = new Trend('checkin_write_duration');  // 체크인 
 const checkInReadDuration = new Trend('checkin_read_duration');  // 체크인 읽기
 ```
 
-#### 2. 부하 단계 설정 (stages)
+#### 2. 멀티 시나리오 설정 (scenarios)
 ```javascript
 export const options = {
-  stages: [
-    { duration: '30s', target: 5  },   // 워밍업: 5명 동시 요청
-    { duration: '1m',  target: 20 },   // 기본: 20명
-    { duration: '30s', target: 50 },   // 피크: 50명
-    { duration: '20s', target: 0  },   // 쿨다운
-  ],
+  scenarios: {
+    normal_load: {
+      executor: 'ramping-vus',
+      stages: [
+        { duration: '30s', target: 5  },
+        { duration: '1m',  target: 20 },
+        { duration: '30s', target: 50 },
+        { duration: '20s', target: 0  },
+      ],
+      exec: 'normalFlow',
+    },
+    concurrent_same_user: {
+      executor: 'constant-vus',
+      vus: 10, duration: '20s', startTime: '1m30s',
+      exec: 'sameUserFlow',       // 10 VU 모두 userId=1
+    },
+    edge_cases: {
+      executor: 'per-vu-iterations',
+      vus: 1, iterations: 5, startTime: '2m20s',
+      exec: 'edgeCaseFlow',       // ENDED·미참여·GPS누락 → 4xx 확인
+    },
+    // FORMATION_CHALLENGE_ID 환경변수 있을 때만 활성화
+    ...(formationEnabled ? { team_formation_concurrency: { ... } } : {}),
+    // SOAK_DURATION 환경변수 있을 때만 활성화
+    ...(soakEnabled ? { soak: { ... } } : {}),
+  },
   thresholds: {
-    http_req_duration:        ['p(99)<500'],   // 전체 p99 < 500ms
-    challenge_list_duration:  ['p(95)<200'],   // 목록 p95 < 200ms
-    challenge_detail_duration:['p(95)<150'],   // 상세 p95 < 150ms
-    checkin_write_duration:   ['p(95)<300'],   // 체크인 p95 < 300ms
-    errors:                   ['rate<0.01'],   // 에러율 < 1%
+    http_req_duration:         ['p(99)<500'],
+    challenge_list_duration:   ['p(95)<200'],
+    challenge_detail_duration: ['p(95)<150'],
+    checkin_write_duration:    ['p(95)<300'],
+    errors:                    ['rate<0.01'],
+    edge_case_correct:         ['rate>0.95'],  // 엣지케이스 4xx 정상 반환율
   },
 };
 ```
 
-#### 3. 메인 테스트 함수 (default)
+#### 3. 내보낸 함수 (exported functions)
 ```javascript
-export default function () {
-  const userId = (__VU % 5) + 1;  // VU 번호 기반 userId 순환 (1~5)
-  
-  // 1. 목록 조회 (GET)
-  // 2. 상세 조회 (GET)
-  // 3. 체크인 쓰기 (POST)
-  // 4. 체크인 읽기 (GET)
-  
-  // 각 요청마다 check() 함수로 상태 코드 검증
-  // 실패 시 errorRate.add(true) 호출
-}
+export function normalFlow()        { /* userId=(__VU%5)+1, 목록→상세→체크인→조회 */ }
+export function sameUserFlow()      { /* 10 VU 모두 userId=1, sleep 없음 */ }
+export function edgeCaseFlow()      { /* ENDED·미참여·GPS누락 → edgeCaseCorrect.add() */ }
+export function teamFormationFlow() { /* userId=__VU(1~10), 동시 참여 신청 */ }
 ```
 
 #### 4. 환경 변수
 ```bash
-# 실행 시 전달
-k6 run -e BASE_URL="http://localhost:8080" \
-       -e CHALLENGE_ID="1" \
-       monitoring/k6/load-test.js
+# 전체 자동 실행 (권장) — 환경변수를 스크립트가 자동 설정
+./monitoring/scripts/run-all-scenarios.sh
+
+# Soak 포함
+SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
+
+# k6 단독 실행 (env var 수동 지정)
+k6 run \
+  -e BASE_URL=http://localhost:8080 \
+  -e CHALLENGE_ID=1 \
+  -e ENDED_CHALLENGE_ID=2 \
+  -e FORMATION_CHALLENGE_ID=3 \
+  monitoring/k6/load-test.js
 ```
 
 ### k6 결과 해석
@@ -458,6 +505,41 @@ k6 실행 후 콘솔 출력:
 - `p(99) < 500ms`: 99%의 요청이 500ms 이내 → ✅ 양호
 - `errors < 0.01` (1%): 에러율 < 1% → ❌ 현재 25%로 높음
 - `check` 실패: k6 내부 검증 실패 (상태 코드 검증 등)
+
+---
+
+## SQL 쿼리 가시성 (dev 프로파일)
+
+### 활성화 방법
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=stub,dev'
+```
+
+`application-dev.yml`이 적용되어 아래가 활성화됩니다.
+
+| 설정 | 효과 |
+|------|------|
+| `org.hibernate.SQL: DEBUG` | 실행되는 모든 SQL을 콘솔에 출력 |
+| `org.hibernate.orm.jdbc.bind: TRACE` | SQL 바인딩 파라미터 값 출력 |
+| `org.hibernate.stat: DEBUG` | 요청 종료 시 쿼리 횟수·시간 통계 출력 |
+| `org.hibernate.SQL_SLOW: WARN` | 100ms 초과 쿼리를 WARN 레벨로 출력 |
+
+### 로그 확인 예시
+
+**쿼리 횟수** (요청 종료 시 자동 출력):
+```
+DEBUG org.hibernate.stat - Session Metrics {
+  5 queries executed to database;  ← 이 요청에서 쿼리 5회 실행 → N+1 의심
+}
+```
+
+**느린 쿼리** (`SQL_SLOW` 로거):
+```
+WARN  org.hibernate.SQL_SLOW - SlowQuery: 143 milliseconds. SQL: 'select ...'
+```
+
+> `application-dev.yml`은 dev 환경 전용입니다. `application.yml`(기본)은 수정하지 않습니다.
 
 ---
 
@@ -855,8 +937,11 @@ HikariCP pending 0 → ✅ 정상 (요청 대기 없음)
 ### 명령어 치트시트
 
 ```bash
-# 전체 자동 실행
-bash monitoring/scripts/run-all-scenarios.sh
+# 전체 자동 실행 (권장)
+./monitoring/scripts/run-all-scenarios.sh
+
+# Soak 테스트 포함 (30분 메모리 누수 확인)
+SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
 
 # Grafana 열기
 open http://localhost:3000
@@ -871,8 +956,12 @@ curl http://localhost:8080/actuator/health | jq .
 docker exec booster-postgres psql -U booster -d booster -c \
   "DELETE FROM challenge_check_ins WHERE id > 0;"
 
-# k6 개별 실행
-k6 run monitoring/k6/load-test.js
+# k6 단독 실행 (env var 수동 지정)
+k6 run \
+  -e BASE_URL=http://localhost:8080 \
+  -e CHALLENGE_ID=1 \
+  -e ENDED_CHALLENGE_ID=2 \
+  monitoring/k6/load-test.js
 
 # 백엔드 로그 보기
 docker logs booster-backend -f | grep -E "ERROR|Exception"

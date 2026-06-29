@@ -1,9 +1,9 @@
 # B-axis 백엔드 모니터링 및 검증 계획서
 
-> 상태: pending approval
-> 작성: 2026-06-25
+> 상태: completed
+> 작성: 2026-06-25 | 최종 업데이트: 2026-06-29
 > 기반 환경: Spring Boot 3.x + Actuator + Micrometer + Prometheus + Grafana (Docker Compose)
-> 브랜치: test/BS-30-backend-validation
+> 브랜치: test/BS-30-backend-validation-b-axis
 
 ---
 
@@ -19,7 +19,7 @@
 | k6 부하 테스트 | ✅ 4단계 VU 시나리오, p99/에러율 기준 내장 | `monitoring/k6/load-test.js` |
 | HikariCP 풀 | ✅ 기본값 (max 10) | Spring Boot 자동 구성 |
 | 아키텍처 테스트 | ✅ `BAxisIsolationTest` (흐름 분리 불변식) | `src/test/java/com/booster/arch/` |
-| DB 마이그레이션 | ✅ V1~V7 적용 완료 | `src/main/resources/db/migration/` |
+| DB 마이그레이션 | ✅ V1~V8 적용 완료 | `src/main/resources/db/migration/` |
 
 ---
 
@@ -184,19 +184,26 @@ curl -s http://localhost:8080/api/challenges/1/result | jq
 
 ---
 
-### 시나리오 E — 동시성 부하 (DB 커넥션 풀 관찰)
+### 시나리오 E — 동시성 부하 (k6 멀티 시나리오)
 
-**목적**: 동시 요청 시 HikariCP 커넥션 거동 측정 (k6 피크 단계: 50 VU)
+**목적**: 정상 부하 + 동시 같은 유저 + 엣지케이스 + (opt-in) Soak 를 한 번에 실행
 
 **실행 절차**:
 ```bash
-# k6 부하 테스트 실행 (워밍업 5VU → 기본부하 20VU → 피크 50VU → 쿨다운)
-k6 run monitoring/k6/load-test.js
+# 전체 자동 실행 (환경 확인 → DB 시딩 → k6 → 결과 저장)
+./monitoring/scripts/run-all-scenarios.sh
 
-# 실시간 커넥션 관찰 (별도 터미널)
-watch -n 1 'curl -s localhost:8080/actuator/prometheus | \
-  grep -E "hikaricp_connections_(active|pending|idle|acquire)"'
+# Soak 포함 (30분 메모리 추이 관찰)
+SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
 ```
+
+**k6 시나리오 구성**:
+| 시나리오 | 목적 |
+|---------|------|
+| `normal_load` | 5→20→50VU 정상 부하, HikariCP 풀 거동 관찰 |
+| `concurrent_same_user` | 10VU 모두 userId=1 동시 체크인 — 멱등성·경쟁조건 검증 |
+| `edge_cases` | ENDED 챌린지·미참여 유저·GPS 누락 → 4xx 정상 반환 확인 |
+| `soak` (opt-in) | 장시간 부하 — Heap이 계속 오르면 메모리 누수 |
 
 **k6 내장 성공 기준**:
 | 지표 | 기준 |
@@ -206,11 +213,11 @@ watch -n 1 'curl -s localhost:8080/actuator/prometheus | \
 | 챌린지 상세 조회 p95 | < 150ms |
 | 체크인 쓰기 p95 | < 300ms |
 | 에러율 | < 1% |
+| 엣지케이스 4xx 정상 반환율 | > 95% |
 
 **확인 지표**:
 - `hikaricp_connections_pending` > 0 지속 여부 (풀 포화 신호)
 - `hikaricp_connections_acquire_seconds_max` 피크
-- 응답 타임아웃(HikariCP 기본 30s) 발생 여부
 - Grafana 대시보드 → 응답시간 심층 분석 섹션: URI별 p95/p99, HTTP 상태코드 분포
 
 ---
@@ -251,7 +258,7 @@ docker exec booster-postgres psql -U booster -c \
 | AC-05 | 체크인 동일 날짜 중복 호출 → 2번째부터 멱등 처리 (SUCCESS 유지) | 시나리오 C 실행 |
 | AC-06 | 정산 2회 실행 → 두 번째는 no-op (settlements 레코드 1건 유지) | 시나리오 D 실행 |
 | AC-07 | `BAxisIsolationTest` 통과 (PersonalCheckIn/Streak/RecoveryMission 참조 없음) | `./gradlew test` |
-| AC-08 | V7까지 Flyway 마이그레이션 모두 `success=true` | pg_stat 쿼리 |
+| AC-08 | V8까지 Flyway 마이그레이션 모두 `success=true` | pg_stat 쿼리 |
 
 ### 성능 기준선
 
@@ -317,7 +324,7 @@ docker exec booster-postgres psql -U booster -c \
 - [ ] GC 일시정지 < 100ms
 - [ ] Heap 사용률 < 70%
 - [ ] BAxisIsolationTest PASS
-- [ ] Flyway V1~V7 전체 success=true
+- [ ] Flyway V1~V8 전체 success=true
 ```
 
 ---
@@ -329,10 +336,13 @@ docker exec booster-postgres psql -U booster -c \
 2. 시나리오 A (기준선)     → 조회/생성 응답시간 측정
 3. 시나리오 B (참여 신청)  → 쓰기 트랜잭션 레이턴시
 4. 시나리오 C (체크인)     → verification chain + 멱등성
-5. 시나리오 D (정산)       → 스케줄러 + 멱등 게이트
-6. 시나리오 E (동시성)     → k6 부하 + DB 커넥션 풀 거동
-7. 기준선 문서화           → docs/monitoring/week1-baseline.md 작성
-8. ./gradlew clean test    → AC-07 확인
+5. 시나리오 E (동시성)     → k6 멀티 시나리오 (normal + concurrent + edge + soak opt-in)
+6. 시나리오 D (정산)       → 스케줄러 + 멱등 게이트
+7. 시나리오 F (비즈니스 로직 검증) → 참여율·정산금액 값 정확성
+8. 시나리오 G (인덱스 검증) → pg_indexes 확인 + EXPLAIN ANALYZE
+9. 시나리오 H (GPS 경계값) → 반경 내/외 체크인 판정 확인
+10. 기준선 문서화          → docs/monitoring/baselines/ 자동 생성
+11. ./gradlew clean test   → AC-07 확인
 ```
 
 예상 소요 시간: **2~3시간**
@@ -358,9 +368,10 @@ docker exec booster-postgres psql -U booster -c \
 | `prometheus.yml` | scrape 설정 (15s, host.docker.internal:8080) |
 | `docker-compose.monitoring.yml` | Prometheus:9090, Grafana:3000 |
 | `monitoring/grafana/booster-baxis-dashboard-import.json` | Grafana Import용 대시보드 (16개 패널) |
-| `monitoring/k6/load-test.js` | k6 부하 테스트 (5→20→50VU, p99/에러율 기준 내장) |
+| `monitoring/k6/load-test.js` | k6 멀티 시나리오 (normal_load + concurrent_same_user + edge_cases + soak opt-in, 6개 threshold) |
+| `monitoring/scripts/run-all-scenarios.sh` | 전체 자동화 스크립트 (환경확인→DB시딩→시나리오A~H→k6→결과저장) |
 | `backend/src/main/resources/application.yml` | Actuator 노출 설정 |
 | `backend/src/main/resources/application-dev.yml` | SQL 가시성 (dev 프로파일, SQL DEBUG·슬로우쿼리 WARN) |
-| `docs/monitoring/BS-30-monitoring-observability-guide.md` | 관찰성 가이드 (dev 프로파일·Grafana Import·k6 실행법) |
+| `docs/monitoring/guides/test-harness-guide.md` | 테스트 하네스 전체 가이드 (구조·시나리오·SQL 가시성·Grafana·k6 실행법·장애 원인 분류) |
 | `backend/src/test/java/com/booster/arch/BAxisIsolationTest.java` | 흐름 분리 불변식 테스트 |
 | `backend/src/main/resources/db/migration/V6__align_with_spec.sql` | BS-30 스키마 정합성 |
