@@ -81,7 +81,7 @@ public class ParticipationRateCalculator {
             long successCount = checkInRepository
                     .findByChallengeIdAndCheckInDate(challenge.getId(), currentDate)
                     .stream()
-                    .filter(ci -> ci.getTeamId().equals(teamId)
+                    .filter(ci -> teamId.equals(ci.getTeamId())
                             && ci.getStatus() == CheckInStatus.SUCCESS)
                     .count();
 

@@ -1,5 +1,8 @@
 package com.booster.challengecheckin.service;
 
+import com.booster.challenge.domain.Challenge;
+import com.booster.challenge.domain.ChallengeStatus;
+import com.booster.challenge.repository.ChallengeRepository;
 import com.booster.challengecheckin.domain.ChallengeCheckIn;
 import com.booster.challengecheckin.domain.CheckInStatus;
 import com.booster.challengecheckin.domain.GpsVerificationResult;
@@ -18,6 +21,7 @@ import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +42,7 @@ public class ChallengeCheckInService {
 
     private final ChallengeCheckInRepository checkInRepository;
     private final ChallengeParticipantRepository participantRepository;
+    private final ChallengeRepository challengeRepository;
     private final TeamRepository teamRepository;
     private final GpsVerificationEvaluator gpsVerificationEvaluator;
     private final VerificationSubmissionRepository submissionRepository;
@@ -53,6 +58,13 @@ public class ChallengeCheckInService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "ChallengeParticipant not found for userId=" + userId + ", challengeId=" + challengeId));
 
+        // 1-1. 챌린지 상태 확인 (ACTIVE 상태에서만 체크인 허용)
+        Challenge challenge = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
+        if (challenge.getStatus() != ChallengeStatus.ACTIVE) {
+            throw new IllegalStateException("Check-in is only allowed when challenge is ACTIVE");
+        }
+
         // 2. KST 기준 오늘 날짜
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
@@ -65,14 +77,25 @@ public class ChallengeCheckInService {
         }
 
         // 4. 체크인 레코드 생성 (PENDING → 판정 후 SUCCESS/FAILED로 갱신)
-        ChallengeCheckIn checkIn = existing.orElseGet(() -> checkInRepository.save(
-                ChallengeCheckIn.builder()
-                        .participantId(participant.getId())
-                        .challengeId(challengeId)
-                        .teamId(participant.getTeamId())
-                        .checkInDate(today)
-                        .status(CheckInStatus.PENDING)
-                        .build()));
+        ChallengeCheckIn checkIn;
+        if (existing.isPresent()) {
+            checkIn = existing.get();
+        } else {
+            try {
+                checkIn = checkInRepository.save(
+                        ChallengeCheckIn.builder()
+                                .participantId(participant.getId())
+                                .challengeId(challengeId)
+                                .teamId(participant.getTeamId())
+                                .checkInDate(today)
+                                .status(CheckInStatus.PENDING)
+                                .build());
+            } catch (DataIntegrityViolationException e) {
+                // 동시 요청으로 unique constraint 위반 시 기존 레코드 재조회 (멱등 처리)
+                checkIn = checkInRepository.findByParticipantIdAndCheckInDate(participant.getId(), today)
+                        .orElseThrow(() -> new IllegalStateException("Check-in conflict unresolvable"));
+            }
+        }
 
         // 5. VerificationSubmission 생성
         int attemptNumber = submissionRepository.countByCheckInId(checkIn.getId()) + 1;

@@ -4,6 +4,7 @@ import com.booster.participant.dto.ParticipantResponse;
 import com.booster.participant.dto.ParticipationRequest;
 import com.booster.participant.service.ParticipationService;
 import com.booster.shared.common.ApiResponse;
+import com.booster.shared.common.UnauthorizedException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -30,6 +31,9 @@ public class ParticipantController {
             @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long challengeId,
             @PathVariable Long targetUserId) {
+        if (!userId.equals(targetUserId)) {
+            throw new UnauthorizedException("Cannot cancel another user's participation");
+        }
         participationService.cancelParticipation(userId, challengeId);
         return ApiResponse.success("Participation cancelled", null);
     }

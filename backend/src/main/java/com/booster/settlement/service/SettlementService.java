@@ -150,6 +150,9 @@ public class SettlementService {
             log.error("Settlement failed for challengeId={}", challengeId, e);
             settlement.fail();
             settlementRepository.save(settlement);
+            // NOTE: rethrow so @Transactional triggers rollback.
+            // Known trade-off: settlement.fail() save is also rolled back.
+            throw e;
         }
     }
 }

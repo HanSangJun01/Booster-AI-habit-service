@@ -96,6 +96,10 @@ public class ParticipationService {
             throw new UnauthorizedException("Only the challenge creator can approve participants");
         }
 
+        if (challenge.getStatus() != ChallengeStatus.READY) {
+            throw new IllegalStateException("Cannot approve participants after challenge has started");
+        }
+
         ChallengeParticipant participant = participantRepository.findById(participantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Participant", participantId));
 
