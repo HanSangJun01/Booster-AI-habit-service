@@ -32,6 +32,11 @@ public class TeamFormationService {
      */
     @Transactional
     public void formTeamsIfReady(Long challengeId) {
+        if (teamRepository.existsByChallengeId(challengeId)) {
+            log.debug("Teams already formed for challengeId={}, skipping", challengeId);
+            return;
+        }
+
         List<ChallengeParticipant> confirmed = participantRepository
                 .findByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
 

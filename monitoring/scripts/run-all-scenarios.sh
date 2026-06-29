@@ -192,9 +192,9 @@ echo ""
 # 시나리오 B — 참여 신청
 # ══════════════════════════════════════════════════════════════════════
 echo -e "${CYAN}══ 시나리오 B: 참여 신청 ══${NC}"
-log "챌린지 $CHALLENGE_ID 에 사용자 1~5 참여 신청..."
+log "챌린지 $CHALLENGE_ID 에 사용자 1~10 참여 신청..."
 
-for userId in 1 2 3 4 5; do
+for userId in 1 2 3 4 5 6 7 8 9 10; do
   STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API/api/challenges/$CHALLENGE_ID/participants" \
     -H "Content-Type: application/json" \
     -H "X-User-Id: $userId" \
@@ -210,11 +210,11 @@ done
 
 ok "시나리오 B 완료 — Grafana에서 POST 응답시간·DB 커넥션 확인"
 
-# 참여자 상태 검증 (CONFIRMED 5명 확인)
+# 참여자 상태 검증 (CONFIRMED 10명 확인)
 CONFIRMED_COUNT=$(psql_exec "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id=$CHALLENGE_ID AND status='CONFIRMED';" | tr -d ' ')
-log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 5"
-if [ "$CONFIRMED_COUNT" -ne 5 ]; then
-  warn "참여자 중 CONFIRMED가 5명이 아닙니다. 체크인 요청이 실패할 수 있습니다."
+log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 10"
+if [ "$CONFIRMED_COUNT" -ne 10 ]; then
+  warn "참여자 중 CONFIRMED가 10명이 아닙니다. 팀 구성이 실패할 수 있습니다."
 fi
 
 # 챌린지 ACTIVE 전환 (체크인·k6 전제조건)
@@ -335,12 +335,12 @@ k6 run \
 if [ "${FORMATION_CHALLENGE_ID:-0}" != "0" ]; then
   log "팀 구성 동시성 결과 확인 중..."
   TEAM_COUNT=$(psql_exec "SELECT COUNT(*) FROM teams WHERE challenge_id=$FORMATION_CHALLENGE_ID;" | tr -d ' ')
-  if [ "$TEAM_COUNT" -eq 1 ]; then
-    ok "[PASS] 팀 구성 동시성 — 팀 1개만 생성 (race condition 없음)"
+  if [ "$TEAM_COUNT" -eq 2 ]; then
+    ok "[PASS] 팀 구성 동시성 — A팀+B팀 정확히 2개 생성 (race condition 없음)"
   elif [ "$TEAM_COUNT" -eq 0 ]; then
     warn "[WARN] 팀 미구성 — 10명 참여 완료 여부 확인 필요"
   else
-    warn "[FAIL] race condition 감지 — 팀 ${TEAM_COUNT}개 생성됨 (1개여야 함)"
+    warn "[FAIL] race condition 감지 — 팀 ${TEAM_COUNT}개 생성됨 (2개여야 함)"
   fi
 fi
 
@@ -350,13 +350,13 @@ echo ""
 # 시나리오 D — 정산 스케줄러
 # ══════════════════════════════════════════════════════════════════════
 echo -e "${CYAN}══ 시나리오 D: 정산 스케줄러 ══${NC}"
-log "챌린지 $CHALLENGE_ID 강제 종료 (DB 직접 수정)..."
+log "챌린지 $CHALLENGE_ID 강제 종료 (ended_at을 과거로 설정, 스케줄러가 ACTIVE→ENDED 전환)..."
 
-psql_exec "UPDATE challenges SET status='ENDED', ended_at=NOW()-INTERVAL '1 minute' WHERE id=$CHALLENGE_ID;" || warn "챌린지 상태 업데이트 실패 (컬럼명 확인 필요)"
+psql_exec "UPDATE challenges SET ended_at=NOW()-INTERVAL '1 minute' WHERE id=$CHALLENGE_ID;" || warn "챌린지 ended_at 업데이트 실패"
 
-log "정산 스케줄러 대기 중 (30초)..."
+log "정산 스케줄러 대기 중 (70초, 스케줄러 주기 60초 기준)..."
 echo "  백엔드 로그에서 'Settlement' 키워드를 확인하세요."
-sleep 30
+sleep 70
 
 RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
 ok "시나리오 D 완료 — 정산 결과: $RESULT"
