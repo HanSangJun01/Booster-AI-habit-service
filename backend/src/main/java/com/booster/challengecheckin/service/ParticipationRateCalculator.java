@@ -2,6 +2,7 @@ package com.booster.challengecheckin.service;
 
 import com.booster.challenge.domain.Challenge;
 import com.booster.challenge.repository.ChallengeRepository;
+import com.booster.challengecheckin.domain.ChallengeCheckIn;
 import com.booster.challengecheckin.domain.CheckInStatus;
 import com.booster.challengecheckin.repository.ChallengeCheckInRepository;
 import com.booster.participant.domain.ChallengeParticipant;
@@ -17,6 +18,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -27,19 +30,12 @@ public class ParticipationRateCalculator {
     private final ChallengeCheckInRepository checkInRepository;
     private final ChallengeRepository challengeRepository;
 
-    /**
-     * 화면용 캐시값 반환.
-     */
     public BigDecimal currentRate(Long teamId) {
         return teamRepository.findById(teamId)
                 .orElseThrow(() -> new ResourceNotFoundException("Team", teamId))
                 .getParticipationRate();
     }
 
-    /**
-     * 날짜별 슬롯 루프 방식으로 팀의 권위적 참여율 계산 (정산용).
-     * SettlementService.computeAuthoritativeRate 와 동일한 알고리즘을 사용한다.
-     */
     public BigDecimal authoritativeRate(Long challengeId, Long teamId) {
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
@@ -51,7 +47,14 @@ public class ParticipationRateCalculator {
 
         LocalDate startDate = challenge.getStartedAt().toLocalDate();
         int durationDays = challenge.getDurationDays();
+        LocalDate endDate = startDate.plusDays(durationDays - 1);
         LocalDateTime challengeEndedAt = challenge.getEndedAt();
+
+        // 전체 기간 체크인을 한 번에 조회하여 N+1 제거
+        Map<LocalDate, List<ChallengeCheckIn>> checkInsByDate =
+                checkInRepository.findByChallengeIdAndCheckInDateBetween(challenge.getId(), startDate, endDate)
+                        .stream()
+                        .collect(Collectors.groupingBy(ChallengeCheckIn::getCheckInDate));
 
         long totalNumerator = 0L;
         long totalDenominator = 0L;
@@ -78,8 +81,7 @@ public class ParticipationRateCalculator {
                 continue;
             }
 
-            long successCount = checkInRepository
-                    .findByChallengeIdAndCheckInDate(challenge.getId(), currentDate)
+            long successCount = checkInsByDate.getOrDefault(currentDate, List.of())
                     .stream()
                     .filter(ci -> teamId.equals(ci.getTeamId())
                             && ci.getStatus() == CheckInStatus.SUCCESS)

@@ -18,12 +18,14 @@ import com.booster.team.domain.TeamResult;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -36,6 +38,7 @@ public class SettlementService {
     private final SettlementRepository settlementRepository;
     private final CoinService coinService;
     private final ParticipationRateCalculator participationRateCalculator;
+    private final SettlementFailureRecorder failureRecorder;
 
     @Transactional
     public void settleChallenge(Long challengeId) {
@@ -44,21 +47,29 @@ public class SettlementService {
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge not found: " + challengeId));
 
         if (challenge.getStatus() != ChallengeStatus.ENDED) {
-            return; // not in settleable state — no-op
-        }
-
-        // Idempotency gate: skip if already completed (SETTLED state removed from ChallengeStatus)
-        if (settlementRepository.findByChallengeId(challengeId)
-                .filter(s -> s.getStatus() == SettlementStatus.COMPLETED)
-                .isPresent()) {
             return;
         }
 
-        Settlement settlement = settlementRepository.findByChallengeId(challengeId)
-                .orElseGet(() -> Settlement.builder()
-                        .challengeId(challengeId)
-                        .status(SettlementStatus.PENDING)
-                        .build());
+        // Idempotency gate: COMPLETED 또는 PENDING 모두 skip (이중 지급 방지)
+        Optional<Settlement> existing = settlementRepository.findByChallengeId(challengeId);
+        if (existing.isPresent()) {
+            SettlementStatus status = existing.get().getStatus();
+            if (status == SettlementStatus.COMPLETED || status == SettlementStatus.PENDING) {
+                log.info("Settlement already in progress or completed for challengeId={}", challengeId);
+                return;
+            }
+        }
+
+        // PENDING row 선점: unique constraint가 동시 호출을 직렬화하는 포인트
+        Settlement settlement;
+        try {
+            settlement = existing.orElseGet(() -> settlementRepository.save(
+                    Settlement.builder().challengeId(challengeId).status(SettlementStatus.PENDING).build()
+            ));
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Concurrent settlement attempt for challengeId={}, skipping", challengeId);
+            return;
+        }
 
         try {
             List<Team> teams = teamRepository.findByChallengeId(challengeId);
@@ -112,7 +123,7 @@ public class SettlementService {
                     }
                 }
             } else {
-                // WIN/LOSE: 승팀 참여자에게 totalPool 균등 지급
+                // WIN/LOSE: 승팀 CONFIRMED 참여자에게 totalPool 지급
                 Team winnerTeam = (resultA == TeamResult.WIN) ? teamA : teamB;
                 Team loserTeam = (resultA == TeamResult.LOSE) ? teamA : teamB;
                 winnerTeamId = winnerTeam.getId();
@@ -124,10 +135,21 @@ public class SettlementService {
                         .toList();
 
                 if (!winnerParticipants.isEmpty()) {
+                    // 나머지 코인은 첫 번째 승자에게 추가 지급 (잔액 소실 방지)
                     perWinnerPayout = totalPool / winnerParticipants.size();
-                    for (ChallengeParticipant p : winnerParticipants) {
-                        coinService.credit(p.getUserId(), perWinnerPayout,
+                    long remainder = totalPool % winnerParticipants.size();
+                    for (int i = 0; i < winnerParticipants.size(); i++) {
+                        long payout = (i == 0) ? perWinnerPayout + remainder : perWinnerPayout;
+                        coinService.credit(winnerParticipants.get(i).getUserId(), payout,
                                 CoinTransactionReason.SETTLEMENT_WIN, challengeId);
+                    }
+                } else {
+                    // 승팀 전원 LEFT → CONFIRMED 참여자에게 예치금 환불
+                    for (ChallengeParticipant p : allParticipants) {
+                        if (p.getStatus() == ParticipantStatus.CONFIRMED) {
+                            coinService.credit(p.getUserId(), challenge.getDepositCoins(),
+                                    CoinTransactionReason.DEPOSIT_REFUND, challengeId);
+                        }
                     }
                 }
             }
@@ -148,10 +170,8 @@ public class SettlementService {
 
         } catch (Exception e) {
             log.error("Settlement failed for challengeId={}", challengeId, e);
-            settlement.fail();
-            settlementRepository.save(settlement);
-            // NOTE: rethrow so @Transactional triggers rollback.
-            // Known trade-off: settlement.fail() save is also rolled back.
+            // REQUIRES_NEW 별도 트랜잭션으로 FAILED 상태 저장 — 외부 롤백에 영향받지 않음
+            failureRecorder.recordFailure(challengeId);
             throw e;
         }
     }

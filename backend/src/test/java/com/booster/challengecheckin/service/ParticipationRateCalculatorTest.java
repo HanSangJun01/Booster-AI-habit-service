@@ -26,11 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * 이슈: ParticipationRateCalculator.authoritativeRate()에서
- * ci.getTeamId().equals(teamId) 호출 시 ci.getTeamId()가 null이면 NPE 발생.
- * V8 마이그레이션 이후 team_id nullable 허용으로 인한 버그.
- */
 @ExtendWith(MockitoExtension.class)
 class ParticipationRateCalculatorTest {
 
@@ -43,19 +38,17 @@ class ParticipationRateCalculatorTest {
     private ParticipationRateCalculator calculator;
 
     /**
-     * 버그 재현: teamId가 null인 체크인 row가 포함될 때
-     * ci.getTeamId().equals(teamId)에서 NullPointerException 발생.
-     * fix 후에는 teamId.equals(ci.getTeamId())로 null-safe하게 처리된다.
+     * 버그 재현: teamId가 null인 체크인 row가 포함될 때 NPE 발생.
+     * 수정 전: ci.getTeamId().equals(teamId) → NPE.
+     * 수정 후: teamId.equals(ci.getTeamId()) → false (null-safe) → 통과.
      */
     @Test
     void authoritativeRate_withNullTeamIdCheckIn_shouldNotThrowNPE() {
-        // given
         Long challengeId = 200L;
         Long teamId = 1L;
 
         Challenge challenge = mock(Challenge.class);
         when(challenge.getId()).thenReturn(challengeId);
-        // 1일 챌린지: 어제 시작, 오늘 종료
         when(challenge.getStartedAt()).thenReturn(LocalDateTime.now().minusDays(1));
         when(challenge.getDurationDays()).thenReturn(1);
         when(challenge.getEndedAt()).thenReturn(LocalDateTime.now().plusHours(1));
@@ -85,15 +78,46 @@ class ParticipationRateCalculatorTest {
                 .status(CheckInStatus.SUCCESS)
                 .build();
 
-        when(checkInRepository.findByChallengeIdAndCheckInDate(eq(challengeId), any(LocalDate.class)))
+        when(checkInRepository.findByChallengeIdAndCheckInDateBetween(eq(challengeId), any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(List.of(checkInWithNullTeam, normalCheckIn));
 
-        // when & then
-        // 수정 전: ci.getTeamId().equals(teamId) → NPE → assertDoesNotThrow FAILS (버그 재현)
-        // 수정 후: teamId.equals(ci.getTeamId()) → false (null-safe) → 통과
-        BigDecimal result = assertDoesNotThrow(() -> calculator.authoritativeRate(challengeId, teamId));
-
         // null teamId row는 필터링, normalCheckIn만 카운트 → 1/1 = 1.0000
+        BigDecimal result = assertDoesNotThrow(() -> calculator.authoritativeRate(challengeId, teamId));
         assertEquals(new BigDecimal("1.0000"), result);
+    }
+
+    /**
+     * N+1 재현: 3일 챌린지에서 날짜마다 DB 쿼리를 발생시키는 문제.
+     * 수정 전: findByChallengeIdAndCheckInDate 3번 호출 (durationDays에 비례).
+     * 수정 후: findByChallengeIdAndCheckInDateBetween 1번 호출, findByChallengeIdAndCheckInDate 0번.
+     */
+    @Test
+    void authoritativeRate_shouldFetchAllCheckInsInOneQuery_notPerDay() {
+        Long challengeId = 300L;
+        Long teamId = 5L;
+        LocalDate startDate = LocalDate.now().minusDays(3);
+
+        Challenge challenge = mock(Challenge.class);
+        when(challenge.getId()).thenReturn(challengeId);
+        when(challenge.getStartedAt()).thenReturn(startDate.atStartOfDay());
+        when(challenge.getDurationDays()).thenReturn(3);
+        when(challenge.getEndedAt()).thenReturn(LocalDate.now().atStartOfDay());
+        when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
+
+        ChallengeParticipant member = ChallengeParticipant.builder()
+                .userId(20L)
+                .status(ParticipantStatus.CONFIRMED)
+                .build();
+        when(participantRepository.findByTeamId(teamId)).thenReturn(List.of(member));
+
+        when(checkInRepository.findByChallengeIdAndCheckInDateBetween(eq(challengeId), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of());
+
+        calculator.authoritativeRate(challengeId, teamId);
+
+        // N+1 제거 확인: per-day 쿼리 0번, 전체 기간 단일 조회 1번
+        verify(checkInRepository, never()).findByChallengeIdAndCheckInDate(any(), any());
+        verify(checkInRepository, times(1))
+                .findByChallengeIdAndCheckInDateBetween(eq(challengeId), any(LocalDate.class), any(LocalDate.class));
     }
 }

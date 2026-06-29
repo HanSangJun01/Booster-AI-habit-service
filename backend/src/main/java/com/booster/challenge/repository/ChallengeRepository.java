@@ -32,4 +32,6 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
                                   Pageable pageable);
 
     List<Challenge> findByStatusAndEndedAtBefore(ChallengeStatus status, LocalDateTime threshold);
+
+    List<Challenge> findByStatus(ChallengeStatus status);
 }

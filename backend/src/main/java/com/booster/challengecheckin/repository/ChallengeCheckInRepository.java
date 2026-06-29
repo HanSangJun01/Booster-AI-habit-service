@@ -18,5 +18,7 @@ public interface ChallengeCheckInRepository extends JpaRepository<ChallengeCheck
 
     List<ChallengeCheckIn> findByChallengeIdAndCheckInDate(Long challengeId, LocalDate date);
 
+    List<ChallengeCheckIn> findByChallengeIdAndCheckInDateBetween(Long challengeId, LocalDate from, LocalDate to);
+
     long countByParticipantIdAndStatus(Long participantId, CheckInStatus status);
 }
