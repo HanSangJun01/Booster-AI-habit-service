@@ -24,19 +24,23 @@ public class ChallengeEndScheduler {
 
     @Scheduled(fixedDelay = 60_000)
     public void markEndedChallenges() {
-        log.debug("ChallengeEndScheduler running");
-        List<Challenge> toEnd = challengeRepository.findByStatusAndEndedAtBefore(
-                ChallengeStatus.ACTIVE, LocalDateTime.now());
+        try {
+            log.debug("ChallengeEndScheduler running");
+            List<Challenge> toEnd = challengeRepository.findByStatusAndEndedAtBefore(
+                    ChallengeStatus.ACTIVE, LocalDateTime.now());
 
-        for (Challenge c : toEnd) {
-            try {
-                c.markEnded();
-                challengeRepository.save(c);
-                log.info("Challenge ended, triggering settlement: challengeId={}", c.getId());
-                settlementService.settleChallenge(c.getId());
-            } catch (Exception e) {
-                log.error("Failed to end/settle challengeId={}", c.getId(), e);
+            for (Challenge c : toEnd) {
+                try {
+                    c.markEnded();
+                    challengeRepository.save(c);
+                    log.info("Challenge ended, triggering settlement: challengeId={}", c.getId());
+                    settlementService.settleChallenge(c.getId());
+                } catch (Throwable e) {
+                    log.error("Failed to end/settle challengeId={}", c.getId(), e);
+                }
             }
+        } catch (Throwable e) {
+            log.error("markEndedChallenges crashed", e);
         }
     }
 
@@ -44,19 +48,23 @@ public class ChallengeEndScheduler {
     // markEndedChallenges()와 별도 주기(5분)로 실행하여 FAILED 고착 방지.
     @Scheduled(fixedDelay = 300_000)
     public void retryFailedSettlements() {
-        List<Challenge> endedChallenges = challengeRepository.findByStatus(ChallengeStatus.ENDED);
-        for (Challenge c : endedChallenges) {
-            boolean needsRetry = settlementRepository.findByChallengeId(c.getId())
-                    .map(s -> s.getStatus() == SettlementStatus.FAILED)
-                    .orElse(true);
-            if (needsRetry) {
-                log.info("Retrying settlement for ENDED challengeId={}", c.getId());
-                try {
-                    settlementService.settleChallenge(c.getId());
-                } catch (Exception e) {
-                    log.error("Retry settlement failed for challengeId={}", c.getId(), e);
+        try {
+            List<Challenge> endedChallenges = challengeRepository.findByStatus(ChallengeStatus.ENDED);
+            for (Challenge c : endedChallenges) {
+                boolean needsRetry = settlementRepository.findByChallengeId(c.getId())
+                        .map(s -> s.getStatus() == SettlementStatus.FAILED)
+                        .orElse(true);
+                if (needsRetry) {
+                    log.info("Retrying settlement for ENDED challengeId={}", c.getId());
+                    try {
+                        settlementService.settleChallenge(c.getId());
+                    } catch (Throwable e) {
+                        log.error("Retry settlement failed for challengeId={}", c.getId(), e);
+                    }
                 }
             }
+        } catch (Throwable e) {
+            log.error("retryFailedSettlements crashed", e);
         }
     }
 }
