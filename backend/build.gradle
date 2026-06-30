@@ -42,11 +42,39 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.security:spring-security-test'
 	testImplementation 'com.h2database:h2'
+
+	// [BS-30 동시성 검증] A축 트랜잭션/레이스 버그를 진짜 PostgreSQL에서 RED로 고정하기 위한
+	// Testcontainers. 프로덕션 코드에는 영향 없음(test 스코프 한정).
+	// testcontainers-bom 최신(1.21.3)으로 고정. (Docker 접속 문제의 실제 해결은 하단 test 태스크의
+	// 'api.version' 고정이며, BOM/도커자바 버전은 최신 엔진 호환 여유분으로 함께 올려둔다.)
+	testImplementation platform('org.testcontainers:testcontainers-bom:1.21.3')
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+// [BS-30 동시성 검증 전용] 최신 Docker Engine(API 1.54)과 통신하려면 docker-java 3.5.x 필요.
+// test 컴파일/런타임 구성에만 강제하여 프로덕션 의존성에는 영향 없음.
+configurations.matching { it.name in ['testImplementation', 'testRuntimeClasspath', 'testCompileClasspath'] }.configureEach {
+	resolutionStrategy {
+		force 'com.github.docker-java:docker-java-core:3.5.1'
+		force 'com.github.docker-java:docker-java-api:3.5.1'
+		force 'com.github.docker-java:docker-java-transport:3.5.1'
+		force 'com.github.docker-java:docker-java-transport-zerodep:3.5.1'
+	}
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
+
+	// [BS-30 동시성 검증 전용 / 환경 우회]
+	// 이 개발 머신의 Docker Engine 최대 API 버전은 1.54다. docker-java(Testcontainers 내장)는
+	// 협상 없이 더 높은 API 버전으로 /info 를 호출해 엔진이 HTTP 400 을 반환 → Testcontainers 가
+	// "Could not find a valid Docker environment" 로 실패한다. docker-java 가 읽는 'api.version'
+	// 시스템 프로퍼티로 호환 버전(1.44, 엔진 min 1.40 이상)을 고정해 해결한다. (test JVM 한정 — 프로덕션 무관)
+	systemProperty 'api.version', '1.44'
 }
