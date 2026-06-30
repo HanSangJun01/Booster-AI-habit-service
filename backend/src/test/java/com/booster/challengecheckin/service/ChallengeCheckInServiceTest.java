@@ -19,12 +19,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
-
 import java.time.LocalDate;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -56,6 +53,9 @@ class ChallengeCheckInServiceTest {
 
     @Mock
     private ChallengeRepository challengeRepository;
+
+    @Mock
+    private CheckInInsertHelper checkInInsertHelper;
 
     @InjectMocks
     private ChallengeCheckInService checkInService;
@@ -139,10 +139,10 @@ class ChallengeCheckInServiceTest {
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
-    // ── 이슈 5: recordCheckIn - DataIntegrityViolationException 발생 시 멱등 처리 ──
+    // ── 이슈 5: recordCheckIn - 동시 중복 insert 시 CheckInInsertHelper에 위임 ──
 
     @Test
-    void recordCheckIn_whenDuplicateInsert_shouldHandleGracefully() {
+    void recordCheckIn_whenDuplicateInsert_shouldDelegateToHelperAndPropagateConflict() {
         ChallengeParticipant participant = confirmedParticipantWithTeam();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
@@ -153,23 +153,20 @@ class ChallengeCheckInServiceTest {
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
 
-        // 처음 조회 시 existing 없음
+        // 처음 조회 시 existing 없음 → insertOrFetch 호출됨
         when(checkInRepository.findByParticipantIdAndCheckInDate(any(), eq(today)))
                 .thenReturn(Optional.empty());
 
-        // save 시 unique constraint 위반 시뮬레이션
-        when(checkInRepository.save(any(ChallengeCheckIn.class)))
-                .thenThrow(new DataIntegrityViolationException("unique constraint"));
+        // helper가 해결 불가한 충돌 상황 시뮬레이션
+        when(checkInInsertHelper.insertOrFetch(any(), any(), any()))
+                .thenThrow(new IllegalStateException("Check-in conflict unresolvable"));
 
-        // DataIntegrityViolationException 전파(500)이 아닌 재조회로 처리
-        // After fix: 재조회 fallback이 없으면 IllegalStateException 발생
-        // (500 대신 명확한 예외로 변환됨을 확인)
-        assertThrows(RuntimeException.class,
+        // DataIntegrityViolationException(rollback-only → 500) 대신 IllegalStateException으로 전파
+        assertThrows(IllegalStateException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
 
-        // DataIntegrityViolationException(500) 대신 제어된 예외가 나와야 함 — 재조회 시도 확인
-        // 재조회는 findByParticipantIdAndCheckInDate가 2번 호출되어야 함 (최초 + conflict 후 재조회)
-        verify(checkInRepository, atLeast(2))
-                .findByParticipantIdAndCheckInDate(any(), eq(today));
+        // save가 서비스에서 직접 호출되지 않고 helper에 위임됨을 확인
+        verify(checkInInsertHelper).insertOrFetch(any(), eq(participant.getId()), eq(today));
+        verify(checkInRepository, never()).save(any(ChallengeCheckIn.class));
     }
 }

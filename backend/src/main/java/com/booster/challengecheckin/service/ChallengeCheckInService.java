@@ -21,7 +21,6 @@ import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,6 +47,7 @@ public class ChallengeCheckInService {
     private final VerificationSubmissionRepository submissionRepository;
     private final GpsVerificationResultRepository gpsResultRepository;
     private final VerificationDecisionRepository decisionRepository;
+    private final CheckInInsertHelper checkInInsertHelper;
 
     public CheckInResponse recordCheckIn(Long userId, Long challengeId, double submittedLat, double submittedLng) {
         log.info("CheckIn requested: userId={}, challengeId={}", userId, challengeId);
@@ -87,20 +87,16 @@ public class ChallengeCheckInService {
         if (existing.isPresent()) {
             checkIn = existing.get();
         } else {
-            try {
-                checkIn = checkInRepository.save(
-                        ChallengeCheckIn.builder()
-                                .participantId(participant.getId())
-                                .challengeId(challengeId)
-                                .teamId(participant.getTeamId())
-                                .checkInDate(today)
-                                .status(CheckInStatus.PENDING)
-                                .build());
-            } catch (DataIntegrityViolationException e) {
-                // 동시 요청으로 unique constraint 위반 시 기존 레코드 재조회 (멱등 처리)
-                checkIn = checkInRepository.findByParticipantIdAndCheckInDate(participant.getId(), today)
-                        .orElseThrow(() -> new IllegalStateException("Check-in conflict unresolvable"));
-            }
+            checkIn = checkInInsertHelper.insertOrFetch(
+                    ChallengeCheckIn.builder()
+                            .participantId(participant.getId())
+                            .challengeId(challengeId)
+                            .teamId(participant.getTeamId())
+                            .checkInDate(today)
+                            .status(CheckInStatus.PENDING)
+                            .build(),
+                    participant.getId(),
+                    today);
         }
 
         // 5. VerificationSubmission 생성
