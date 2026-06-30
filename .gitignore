@@ -14,3 +14,12 @@ build/
 # OMC local runtime
 .omc/
 **/.omc/
+
+# Claude agent worktrees
+.claude/worktrees/
+
+# SQL / debug logs
+*-sql.log
+
+# Monitoring baselines (generated artifacts)
+docs/monitoring/baselines/
