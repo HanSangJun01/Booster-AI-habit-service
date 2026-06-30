@@ -50,11 +50,13 @@ public class ParticipationRateCalculator {
         LocalDate endDate = startDate.plusDays(durationDays - 1);
         LocalDateTime challengeEndedAt = challenge.getEndedAt();
 
-        // 전체 기간 체크인을 한 번에 조회하여 N+1 제거
-        Map<LocalDate, List<ChallengeCheckIn>> checkInsByDate =
-                checkInRepository.findByChallengeIdAndCheckInDateBetween(challenge.getId(), startDate, endDate)
-                        .stream()
-                        .collect(Collectors.groupingBy(ChallengeCheckIn::getCheckInDate));
+        // 기간 전체 체크인을 1쿼리로 조회 후 날짜별 SUCCESS 건수 집계 (날짜별 반복 조회 N+1 제거)
+        Map<LocalDate, Long> successCountByDate = checkInRepository
+                .findByChallengeIdAndCheckInDateBetween(challenge.getId(), startDate, endDate)
+                .stream()
+                .filter(ci -> teamId.equals(ci.getTeamId())
+                        && ci.getStatus() == CheckInStatus.SUCCESS)
+                .collect(Collectors.groupingBy(ChallengeCheckIn::getCheckInDate, Collectors.counting()));
 
         long totalNumerator = 0L;
         long totalDenominator = 0L;
@@ -81,11 +83,7 @@ public class ParticipationRateCalculator {
                 continue;
             }
 
-            long successCount = checkInsByDate.getOrDefault(currentDate, List.of())
-                    .stream()
-                    .filter(ci -> teamId.equals(ci.getTeamId())
-                            && ci.getStatus() == CheckInStatus.SUCCESS)
-                    .count();
+            long successCount = successCountByDate.getOrDefault(currentDate, 0L);
 
             totalNumerator += successCount;
             totalDenominator += activeMemberCount;
