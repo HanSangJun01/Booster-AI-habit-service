@@ -168,8 +168,11 @@ class RecoveryScenarioBugTest {
         assertThat(userRepository.findById(userId).orElseThrow().getTotalAttendance())
                 .as("D1~D5(5) + D7(1) = 6. 복귀가 오늘을 또 카운트하면 7(버그).")
                 .isEqualTo(6);
+        // 이 창(스케줄러 전 ~60초)에서 오늘 일반 인증이 먼저 streak을 갭리셋(1)했고, F8 수정은
+        // '이중 카운트 방지'만 보장한다 → 복귀가 또 +1 하면 안 됨(2가 아니라 1).
+        // [알려진 한계] 정합 이상값은 6(D1~D5 + 복귀보정). 그 완전 교정은 "미해결 미인증이 있으면
+        // 일반 인증 자체를 차단(force-recover)" 하는 제품 모델 결정에 종속 → F2 후속 결정으로 보류.
         assertThat(streakRepository.findById(userId).orElseThrow().getCurrentStreak())
-                .as("오늘 일반 인증이 이미 streak을 정했으므로 복귀가 또 +1 하면 안 된다(2가 아니라 1).")
                 .isEqualTo(1);
         assertThat(personalCheckInRepository.findByUserIdAndDate(userId, d1.plusDays(5)).orElseThrow().getStatus())
                 .as("미인증일(D6)은 복귀로 SUCCESS 보정")

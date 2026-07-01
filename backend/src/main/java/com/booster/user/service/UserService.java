@@ -27,8 +27,9 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public CoinHistoryResponse getCoinHistory(Long userId, Pageable pageable) {
+        getActiveUser(userId); // (BS-30 F11) 탈퇴(비활성) 계정 차단 — 마이페이지와 동일 가드
         Page<CoinTransactionResponse> page = coinTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, pageable)
+                .findByUserIdOrderByCreatedAtDescIdDesc(userId, pageable)
                 .map(CoinTransactionResponse::from);
         return new CoinHistoryResponse(page.getContent(), page.getTotalElements());
     }

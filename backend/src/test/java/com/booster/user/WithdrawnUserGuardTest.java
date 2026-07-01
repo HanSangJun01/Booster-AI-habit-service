@@ -76,6 +76,20 @@ class WithdrawnUserGuardTest {
     }
 
     /**
+     * [BS-30 F11] 탈퇴 유저가 코인 내역 조회 시도 → 거부되어야 한다(마이페이지와 동일 가드).
+     */
+    @Test
+    void withdrawnUser_cannotReadCoinHistory() {
+        Long userId = newUserWithLocation();
+        userService.withdraw(userId);
+
+        assertThatThrownBy(() -> userService.getCoinHistory(
+                userId, org.springframework.data.domain.PageRequest.of(0, 20)))
+                .as("탈퇴 계정의 코인 내역 조회는 거부되어야 한다")
+                .isInstanceOf(BusinessException.class);
+    }
+
+    /**
      * [BS-30 7차 F3] 탈퇴 유저가 위치 수정 시도 → 거부되어야 한다.
      */
     @Test
