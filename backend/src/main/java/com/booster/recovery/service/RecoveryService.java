@@ -116,22 +116,29 @@ public class RecoveryService {
 
         // 2-1) (F2 팀 결정) 복귀 = '오늘(복귀일)의 인증'으로 완전 간주 → 오늘 SUCCESS 레코드 생성/보정.
         // 이게 없으면 복귀일이 다음 날 다시 미인증으로 잡혀 무한 복귀 루프가 된다.
+        // (BS-30 F8) 단, 스케줄러가 미션을 만들기 전 창(00:00~00:01)에서 오늘 '일반 인증'이 먼저
+        // 들어왔을 수 있다. 그 경우 오늘은 이미 인증됨 → 복귀는 미인증일만 보정하고 '오늘 크레딧'
+        // (오늘 레코드/출석/스트릭)은 중복 지급하지 않는다(이중 카운트 방지).
         LocalDate today = LocalDate.now(clock);
-        personalCheckInRepository.findByUserIdAndDate(userId, today).ifPresentOrElse(
-                ci -> ci.markSuccess(now),
-                () -> personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now)));
+        boolean todayAlreadyDone = personalCheckInRepository.findByUserIdAndDate(userId, today)
+                .map(PersonalCheckIn::isSuccess).orElse(false);
+        if (!todayAlreadyDone) {
+            personalCheckInRepository.findByUserIdAndDate(userId, today).ifPresentOrElse(
+                    ci -> ci.markSuccess(now),
+                    () -> personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now)));
+        }
 
-        // 3) 코인 차감(-50, 클램핑)
+        // 3) 코인 차감(-50, 클램핑) — 복귀 페널티는 항상 부과
         long charged = coinService.charge(userId, successPenalty,
                 CoinTransactionReason.RECOVERY_SUCCESS, mission.getId());
 
-        // 4) 출석 +1 (오늘의 인증 1회분)
-        user.increaseAttendance();
-
-        // 5) 스트릭: 복귀일을 인증으로 간주해 +1(미인증일이 SUCCESS로 메워져 갭 없음).
+        // 4~5) 오늘 크레딧: 오늘이 이미 인증된 날이면 출석/스트릭 중복 지급 생략
         Streak streak = streakRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
-        streak.recordRecoverySuccess(today);
+        if (!todayAlreadyDone) {
+            user.increaseAttendance();          // 오늘의 인증 1회분
+            streak.recordRecoverySuccess(today); // 복귀일을 인증으로 간주해 +1
+        }
 
         return new RecoveryResultResponse(mission.getId(), mission.getStatus(),
                 mission.getCompletedAt(), streak.getCurrentStreak(), user.getCoinBalance(), charged);

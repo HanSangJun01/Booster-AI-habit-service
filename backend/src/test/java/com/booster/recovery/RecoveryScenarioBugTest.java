@@ -14,6 +14,7 @@ import com.booster.recovery.repository.RecoveryMissionRepository;
 import com.booster.recovery.service.RecoveryService;
 import com.booster.shared.common.BusinessException;
 import com.booster.streak.repository.StreakRepository;
+import com.booster.user.repository.UserRepository;
 import com.booster.support.MutableClock;
 import com.booster.support.TestClockConfig;
 import jakarta.persistence.EntityManager;
@@ -51,6 +52,7 @@ class RecoveryScenarioBugTest {
     @Autowired PersonalCheckInRepository personalCheckInRepository;
     @Autowired RecoveryMissionRepository recoveryMissionRepository;
     @Autowired StreakRepository streakRepository;
+    @Autowired UserRepository userRepository;
     @Autowired MutableClock clock;
     @PersistenceContext EntityManager em;
 
@@ -132,6 +134,46 @@ class RecoveryScenarioBugTest {
                 .as("복귀 대상일에는 별도 일반 인증이 불가해야 한다")
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo("RECOVERY_DAY_NO_CHECKIN"));
+    }
+
+    /**
+     * [BS-30 F8] 스케줄러가 복귀 미션을 만들기 전 창(00:00~00:01)에서 오늘 일반 인증이 먼저 들어온 뒤
+     * 복귀를 수행해도, 오늘 크레딧(출석/스트릭)이 이중으로 지급되면 안 된다.
+     */
+    @Test
+    void checkInBeforeMissionCreated_thenRecovery_doesNotDoubleCountToday() {
+        Long userId = newUserWithLocation("f8-");
+        LocalDate d1 = LocalDate.of(2035, 3, 1);
+
+        for (int i = 0; i < 5; i++) { // D1~D5 → streak 5, 출석 5
+            clock.setDate(d1.plusDays(i));
+            personalCheckInService.checkIn(userId, 37.0, 127.0);
+        }
+
+        // D6 미인증. D7: 스케줄러 전 창 → 미션 없어 일반 인증이 먼저 통과(갭 → streak 1, 출석 6)
+        LocalDate d7 = d1.plusDays(6);
+        clock.setDate(d7);
+        personalCheckInService.checkIn(userId, 37.0, 127.0);
+
+        // 이제 스케줄러가 D6 복귀 미션 생성(deadline D7)
+        PersonalCheckIn pending = personalCheckInRepository.save(
+                PersonalCheckIn.recoveryPending(userId, d1.plusDays(5)));
+        OffsetDateTime deadline = d7.atTime(23, 59, 59).atZone(MutableClock.KST).toOffsetDateTime();
+        em.persist(RecoveryMission.createPending(userId, pending.getId(), deadline));
+        em.flush();
+
+        // 복귀 수행 → 오늘(D7)은 이미 인증됨 → 오늘 크레딧 중복 없음(미인증일만 보정)
+        recoveryService.performRecovery(userId, 37.0, 127.0);
+
+        assertThat(userRepository.findById(userId).orElseThrow().getTotalAttendance())
+                .as("D1~D5(5) + D7(1) = 6. 복귀가 오늘을 또 카운트하면 7(버그).")
+                .isEqualTo(6);
+        assertThat(streakRepository.findById(userId).orElseThrow().getCurrentStreak())
+                .as("오늘 일반 인증이 이미 streak을 정했으므로 복귀가 또 +1 하면 안 된다(2가 아니라 1).")
+                .isEqualTo(1);
+        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, d1.plusDays(5)).orElseThrow().getStatus())
+                .as("미인증일(D6)은 복귀로 SUCCESS 보정")
+                .isEqualTo(PersonalCheckInStatus.SUCCESS);
     }
 
     /**
