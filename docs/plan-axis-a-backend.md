@@ -230,7 +230,14 @@ Haversine(현재위도경도, 등록위도경도) <= 등록반경(meters)
 2. PersonalCheckIn.status → SUCCESS (미인증일 보정, `deadlineAt`의 날짜 기준)
 3. CoinTransaction(type=RECOVERY_SUCCESS, amount=-50, balanceAfter=coinBalance-50) 생성, coinBalance -50
 4. User.totalAttendance +1 (복귀 성공도 출석으로 집계)
+   - **[확정] 출석 카운터 정책 (2026-07-01 팀 결정)**: 복귀 성공은 출석을 **정확히 +1**만 집계한다
+     (복귀일 1회분). 미인증일(missed_date)이 SUCCESS로 보정되어도 그날치 출석은 소급 가산하지 않는다.
+     따라서 `totalAttendance`는 SUCCESS 레코드 일수보다 복귀 횟수만큼 적을 수 있다(의도).
+     테스트 락: `C2ConcurrentRecoveryTest`(복귀 성공 시 attendance == 1).
 5. Streak 유지: currentStreak 변화 없음, lastSuccessDate = 복귀 미션 수행일(오늘 KST)
+   - **[확정] 마일스톤 정책 (2026-07-01 팀 결정)**: 복귀 경로는 스트릭 7배수 마일스톤(+100)을
+     **지급하지 않는다**. `%7` 보상은 오직 정상 인증(`checkIn`)에서만 지급한다(복귀는 -50 패널티 경로).
+     구현: `RecoveryService.performRecovery`에 STREAK_REWARD 지급 로직 없음.
 6. 복귀는 오늘 날짜의 PersonalCheckIn을 새로 생성하지 않음 (단, 오늘의 일반 인증은 별개로 허용):
    - 복귀 미션으로 보정된 PersonalCheckIn(missed_date).status = SUCCESS 상태
    - 복귀 수행일(today) PersonalCheckIn이 없어도 오늘의 일반 인증은 허용
@@ -397,6 +404,8 @@ GET /api/dashboard/home
 | 항목 | 현재 가정 / 결정 | 확정 필요 |
 |------|-----------------|----------|
 | **[확정] 스트릭 보상 반복 지급** | 반복 지급 확정: 7·14·21일마다 +100 (`reward-repeat=true`, 2026-07-01 팀 결정) | — 해소됨 |
+| **[확정] 복귀일 마일스톤** | 복귀 경로는 7배수 +100 마일스톤 미지급. `%7` 보상은 정상 인증에만 (2026-07-01 팀 결정) | — 해소됨 |
+| **[확정] 복귀 출석 카운터** | 복귀 성공은 출석 +1만. SUCCESS 일수보다 복귀 횟수만큼 적을 수 있음(의도, `C2ConcurrentRecoveryTest` 락) | — 해소됨 |
 | **[결정] 개인 GPS 위치** | `PersonalLocation` 독립 테이블 | ERD 필드명·인덱스 확정 시 |
 | **[결정] 코인 회계 정책** | effective amount 기록 | ERD에 nominalAmount 컬럼 추가 여부 |
 | 탈퇴 후 동일 이메일 재가입 | 불가 (soft delete 이메일 유지) | ERD 확정 시 |
