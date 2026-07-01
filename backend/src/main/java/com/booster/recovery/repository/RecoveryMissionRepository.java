@@ -39,6 +39,7 @@ public interface RecoveryMissionRepository extends JpaRepository<RecoveryMission
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from RecoveryMission m "
             + "where m.status = com.booster.recovery.domain.RecoveryStatus.PENDING "
-            + "and m.deadlineAt <= :threshold")
+            + "and m.deadlineAt <= :threshold "
+            + "order by m.id asc")
     List<RecoveryMission> findOverduePendingForUpdate(@Param("threshold") OffsetDateTime threshold);
 }

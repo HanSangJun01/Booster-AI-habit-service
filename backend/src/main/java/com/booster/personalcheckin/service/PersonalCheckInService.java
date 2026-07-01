@@ -81,6 +81,10 @@ public class PersonalCheckInService {
         // performRecovery 도 (mission→)User→Streak 순으로 락을 잡아 락 순서가 일치 → 데드락 없음.
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        // (BS-30 7차 C#6) 락 상태에서 active 재확인 → 초기 언락 가드 이후 탈퇴 커밋되는 TOCTOU 차단.
+        if (!user.isActive()) {
+            throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
+        }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
         if (existing != null) {

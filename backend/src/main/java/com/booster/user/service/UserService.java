@@ -36,7 +36,13 @@ public class UserService {
     /** 회원 탈퇴(soft delete). B축 챌린지 연동(activeUntil 마킹)은 통합 Phase에서 처리. */
     @Transactional
     public void withdraw(Long userId) {
-        getActiveUser(userId).deactivate();
+        // (BS-30 7차 C#5) 비관락으로 로드 → 인증/복귀의 락 기반 active 재확인과 직렬화(무락 write 제거).
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        if (!user.isActive()) {
+            throw BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다.");
+        }
+        user.deactivate();
     }
 
     private User getActiveUser(Long userId) {

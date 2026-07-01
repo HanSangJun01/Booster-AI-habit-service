@@ -97,6 +97,14 @@ public class RecoveryService {
             throw BusinessException.badRequest("GPS_OUT_OF_RANGE", "등록된 위치 반경을 벗어났습니다.");
         }
 
+        // (BS-30 7차 C#6) User 를 비관락으로 로드하고 active 를 '락 상태에서' 재확인 → 초기 언락 가드와
+        // 이 지점 사이에 탈퇴가 커밋되는 TOCTOU 를 닫는다(락으로 withdraw 와 직렬화).
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        if (!user.isActive()) {
+            throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
+        }
+
         // 1) 미션 완료
         mission.complete(now);
 
@@ -111,8 +119,6 @@ public class RecoveryService {
                 CoinTransactionReason.RECOVERY_SUCCESS, mission.getId());
 
         // 4) 출석 +1
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
         user.increaseAttendance();
 
         // 5) 스트릭 유지(증가 없음), lastSuccessDate = 수행일
@@ -141,11 +147,22 @@ public class RecoveryService {
                 continue; // 락 획득 사이 다른 트랜잭션이 이미 처리 → 건너뜀(방어)
             }
             mission.fail();
-            personalCheckInRepository.findById(mission.getPersonalCheckInId())
-                    .ifPresent(PersonalCheckIn::markFailed);
+            PersonalCheckIn missed = personalCheckInRepository.findById(mission.getPersonalCheckInId())
+                    .orElse(null);
+            if (missed != null) {
+                missed.markFailed();
+            }
             coinService.charge(mission.getUserId(), failurePenalty,
                     CoinTransactionReason.RECOVERY_FAILURE, mission.getId());
-            streakRepository.findById(mission.getUserId()).ifPresent(Streak::reset);
+            // (BS-30 7차 F1) 미인증일 이후 유저가 이미 새 스트릭을 쌓았다면(lastSuccessDate > missedDate)
+            // 그 스트릭을 만료 처리로 지우면 안 된다. 미인증일까지의 스트릭만 초기화한다.
+            LocalDate missedDate = (missed != null) ? missed.getDate() : null;
+            streakRepository.findById(mission.getUserId()).ifPresent(s -> {
+                LocalDate last = s.getLastSuccessDate();
+                if (last == null || missedDate == null || !last.isAfter(missedDate)) {
+                    s.reset();
+                }
+            });
             processed++;
         }
         if (processed > 0) {
