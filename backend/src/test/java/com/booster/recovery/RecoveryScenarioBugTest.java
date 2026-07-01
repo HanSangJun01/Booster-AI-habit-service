@@ -94,6 +94,44 @@ class RecoveryScenarioBugTest {
     }
 
     /**
+     * [BS-30 7차 F6 — RED] 복귀만 하고 당일 일반인증을 안 한 날(구멍)이 성공일로 오인되면 안 된다.
+     * 시나리오: D1~D6 인증(streak 6) → D7 미인증 → D8에 D7 복귀 수행(당일 인증 안 함) →
+     *          D9 인증. D8은 실제로 구멍이므로 D9 인증은 연속이 끊겨 streak=1, 보상 없음이어야 한다.
+     * 버그(수정 전): keepAlive가 lastSuccessDate를 D8로 당겨 → D9가 연속으로 오인 → streak 7 + 부당 보상.
+     */
+    @Test
+    void recoverWithoutCheckIn_thenNextDay_doesNotWronglyReachMilestone() {
+        Long userId = newUserWithLocation("f6-");
+        LocalDate d1 = LocalDate.of(2035, 3, 1);
+
+        // D1~D6 연속 인증 → streak 6
+        for (int i = 0; i < 6; i++) {
+            clock.setDate(d1.plusDays(i));
+            personalCheckInService.checkIn(userId, 37.0, 127.0);
+        }
+
+        // D7 미인증. D8 아침 스케줄러가 D7 복귀 미션 생성.
+        LocalDate d8 = d1.plusDays(7);
+        clock.setDate(d8);
+        recoveryService.generatePendingForYesterday();
+        // D8에 D7 복귀만 수행(당일 일반 인증은 안 함) → D8은 구멍으로 남음
+        recoveryService.performRecovery(userId, 37.0, 127.0);
+
+        // D9 아침 스케줄러가 D8 미인증 복귀 미션 생성. 그리고 D9 일반 인증.
+        LocalDate d9 = d1.plusDays(8);
+        clock.setDate(d9);
+        recoveryService.generatePendingForYesterday();
+        CheckInResponse d9resp = personalCheckInService.checkIn(userId, 37.0, 127.0);
+
+        assertThat(d9resp.currentStreak())
+                .as("D8이 구멍이므로 D9 인증은 연속이 끊겨 streak=1이어야 한다(복귀가 D8을 성공일로 오인하면 안 됨)")
+                .isEqualTo(1);
+        assertThat(d9resp.rewardGranted())
+                .as("끊긴 스트릭이 7일 마일스톤에 도달해 부당 보상이 지급되면 안 된다")
+                .isFalse();
+    }
+
+    /**
      * [B4 — 재분류: 명세상 의도된 동작 / GREEN 특성화 테스트]
      *
      * A축 계획서 Phase 3 명시:
