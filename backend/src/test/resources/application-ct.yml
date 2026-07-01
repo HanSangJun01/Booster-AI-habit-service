@@ -1,0 +1,24 @@
+# [BS-30 동시성 검증 전용 프로파일 "ct" = concurrency-testcontainers]
+# 기존 단위테스트 프로파일("test", H2)과 완전히 분리한다. 이 프로파일은 진짜 PostgreSQL
+# (Testcontainers)에서만 동작하며, datasource URL/user/pw 는 ConcurrencyTestBase 의
+# @DynamicPropertySource 로 런타임 주입된다. 여기서는 그 외 동작만 고정한다.
+spring:
+  jpa:
+    hibernate:
+      # 스키마는 Flyway(V6~V8)가 생성. Hibernate 는 생성/검증하지 않는다.
+      ddl-auto: none
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+# 액추에이터/프로메테우스는 동시성 테스트에 불필요 → 노출 최소화(컨텍스트 기동만 보장).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

@@ -69,13 +69,21 @@ public class RecoveryService {
     /** 복귀 미션 GPS 인증 수행(성공 처리). */
     @Transactional
     public RecoveryResultResponse performRecovery(Long userId, double currentLat, double currentLng) {
+        // (BS-30 B3) 탈퇴(비활성) 계정 차단
+        if (!userRepository.existsByIdAndActiveTrue(userId)) {
+            throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
+        }
+
+        // (BS-30 C2) PENDING 미션을 비관락으로 획득 → 동시 수행 시 정확히 1회만 성공
         RecoveryMission mission = recoveryMissionRepository
-                .findFirstByUserIdAndStatusOrderByDeadlineAtAsc(userId, RecoveryStatus.PENDING)
+                .findPendingByUserForUpdate(userId).stream().findFirst()
                 .orElseThrow(() -> BusinessException.notFound(
                         "NO_RECOVERY_MISSION", "대기 중인 복귀 미션이 없습니다."));
 
         OffsetDateTime now = OffsetDateTime.now(clock);
-        if (now.isAfter(mission.getDeadlineAt())) {
+        // (BS-30 C6) 경계 일치: 수행 조건은 "현재 < deadline"(strict). deadline==now 는 만료로 간주하여
+        // 스케줄러(만료: deadline<=now)만 처리하게 한다 → 성공(-50)과 실패(-100) 이중차감 방지.
+        if (!now.isBefore(mission.getDeadlineAt())) {
             throw BusinessException.badRequest("RECOVERY_EXPIRED", "복귀 미션 데드라인이 지났습니다.");
         }
 
@@ -123,21 +131,27 @@ public class RecoveryService {
     @Transactional
     public int expireOverdueMissions() {
         OffsetDateTime now = OffsetDateTime.now(clock);
+        // (BS-30 C6/C7) 비관락으로 만료 대상 획득 → 스케줄러 중복 실행/수행 경계 충돌 시 이중 처리 방지.
         List<RecoveryMission> overdue = recoveryMissionRepository
-                .findByStatusAndDeadlineAtLessThanEqual(RecoveryStatus.PENDING, now);
+                .findOverduePendingForUpdate(now);
 
+        int processed = 0;
         for (RecoveryMission mission : overdue) {
+            if (!mission.isPending()) {
+                continue; // 락 획득 사이 다른 트랜잭션이 이미 처리 → 건너뜀(방어)
+            }
             mission.fail();
             personalCheckInRepository.findById(mission.getPersonalCheckInId())
                     .ifPresent(PersonalCheckIn::markFailed);
             coinService.charge(mission.getUserId(), failurePenalty,
                     CoinTransactionReason.RECOVERY_FAILURE, mission.getId());
             streakRepository.findById(mission.getUserId()).ifPresent(Streak::reset);
+            processed++;
         }
-        if (!overdue.isEmpty()) {
-            log.info("[RecoveryScheduler] expired {} overdue missions", overdue.size());
+        if (processed > 0) {
+            log.info("[RecoveryScheduler] expired {} overdue missions", processed);
         }
-        return overdue.size();
+        return processed;
     }
 
     /**
@@ -161,8 +175,10 @@ public class RecoveryService {
             if (alreadyHasRecord.contains(userId)) {
                 continue;
             }
-            // 어제 이전에 가입한 사용자만 대상(가입일 당일/이후 미인증은 책임 없음)
-            if (user.getJoinedAt().atZoneSameInstant(clock.getZone()).toLocalDate().isAfter(yesterday)) {
+            // (BS-30 B2) 어제 '이전'에 가입한 사용자만 대상. 가입일이 어제이거나 이후면 제외
+            // (가입 당일 미인증은 책임 없음). 기존 isAfter(yesterday)는 가입일==어제를 포함하지 못하는 off-by-one.
+            LocalDate joinedDate = user.getJoinedAt().atZoneSameInstant(clock.getZone()).toLocalDate();
+            if (!joinedDate.isBefore(yesterday)) {
                 continue;
             }
             PersonalCheckIn pending = personalCheckInRepository.save(

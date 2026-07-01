@@ -12,12 +12,19 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.OffsetDateTime;
 
+/**
+ * ★동시성: {@code @DynamicUpdate} — 변경된 컬럼만 UPDATE 한다. 이게 없으면 checkIn 이
+ * total_attendance 만 바꿔도 flush 시 coin_balance 까지 (읽었던 옛 값으로) 덮어써서,
+ * 동시에 커밋된 CoinService 의 코인 차감을 통째로 날리는 lost update 가 발생한다(BS-30 C1).
+ */
 @Entity
 @Table(name = "users")
+@DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)

@@ -36,11 +36,33 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.security:spring-security-test'
 	testImplementation 'com.h2database:h2'
+
+	// 동시성/트랜잭션 회귀 테스트용 Testcontainers (test 스코프 한정, 프로덕션 무관).
+	// 단일 유저 동시요청 레이스는 H2로 재현이 불안정해 진짜 PostgreSQL이 필요하다.
+	testImplementation platform('org.testcontainers:testcontainers-bom:1.21.3')
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:junit-jupiter'
+	testImplementation 'org.testcontainers:postgresql'
+
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+// 최신 Docker Engine(API 1.54)과 통신하려면 docker-java 3.5.x 필요. test 구성에만 강제.
+configurations.matching { it.name in ['testImplementation', 'testRuntimeClasspath', 'testCompileClasspath'] }.configureEach {
+	resolutionStrategy {
+		force 'com.github.docker-java:docker-java-core:3.5.1'
+		force 'com.github.docker-java:docker-java-api:3.5.1'
+		force 'com.github.docker-java:docker-java-transport:3.5.1'
+		force 'com.github.docker-java:docker-java-transport-zerodep:3.5.1'
+	}
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
+
+	// 이 개발 머신 Docker Engine 최대 API 버전(1.54) 협상 이슈 우회. docker-java가 읽는
+	// 'api.version'을 호환 버전(1.44)으로 고정. test JVM 한정 — 프로덕션 무관.
+	systemProperty 'api.version', '1.44'
 }
