@@ -79,9 +79,16 @@ public class Streak {
         this.lastSuccessDate = date;
     }
 
-    /** 복귀 미션 성공 시 스트릭 유지(증가 없음), lastSuccessDate만 수행일로 갱신. */
-    public void keepAlive(LocalDate date) {
-        this.lastSuccessDate = date;
+    /**
+     * 복귀 미션 성공 시 스트릭 유지(증가 없음), lastSuccessDate를 '복구한 날(미인증일)'로 갱신.
+     * (BS-30 7차 F6) 단조 갱신: 이미 더 나중 성공일이 있으면 뒤로 당기지 않는다.
+     * 복구일이 아니라 '오늘(수행일)'로 당기면, 복귀만 하고 당일 인증을 안 한 날(구멍)을 성공일로
+     * 착각해 다음 인증이 연속으로 오인되어 부당 마일스톤 보상이 지급된다.
+     */
+    public void keepAlive(LocalDate recoveredDate) {
+        if (this.lastSuccessDate == null || this.lastSuccessDate.isBefore(recoveredDate)) {
+            this.lastSuccessDate = recoveredDate;
+        }
     }
 
     /** 복귀 실패: 스트릭 초기화. */

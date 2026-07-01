@@ -121,10 +121,11 @@ public class RecoveryService {
         // 4) 출석 +1
         user.increaseAttendance();
 
-        // 5) 스트릭 유지(증가 없음), lastSuccessDate = 수행일
+        // 5) 스트릭 유지(증가 없음), lastSuccessDate = '복구한 날(미인증일)' 기준(단조).
+        // (BS-30 7차 F6) 수행일(오늘)로 당기면, 복귀만 하고 당일 인증 안 한 날(구멍)을 성공일로 착각한다.
         Streak streak = streakRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
-        streak.keepAlive(LocalDate.now(clock));
+        streak.keepAlive(missed.getDate());
 
         return new RecoveryResultResponse(mission.getId(), mission.getStatus(),
                 mission.getCompletedAt(), streak.getCurrentStreak(), user.getCoinBalance(), charged);
