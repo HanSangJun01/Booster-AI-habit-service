@@ -36,21 +36,34 @@ public class DashboardService {
         Streak streak = streakRepository.findById(userId).orElseGet(() -> Streak.init(userId));
         LocalDate today = LocalDate.now(clock);
 
-        String todayStatus = personalCheckInRepository.findByUserIdAndDate(userId, today)
+        LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate weekEnd = weekStart.plusDays(6);
+        LocalDate monthStart = today.withDayOfMonth(1);
+        LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
+
+        // [BS-30 최적화 ③] 오늘 상태 / 주간 성공수 / 월 캘린더를 3개 쿼리로 나눠 치던 것을,
+        // 주·월을 아우르는 합집합 범위 [min(monthStart,weekStart), max(monthEnd,weekEnd)] 1회 조회 후
+        // 메모리에서 계산한다(주가 두 달에 걸쳐도 각 범위로 정확히 분리).
+        LocalDate from = monthStart.isBefore(weekStart) ? monthStart : weekStart;
+        LocalDate to = monthEnd.isAfter(weekEnd) ? monthEnd : weekEnd;
+        List<PersonalCheckIn> checkIns =
+                personalCheckInRepository.findByUserIdAndDateBetween(userId, from, to);
+
+        String todayStatus = checkIns.stream()
+                .filter(c -> c.getDate().isEqual(today))
                 .map(c -> c.getStatus().name())
+                .findFirst()
                 .orElse("NOT_CHECKED");
 
         // 이번 주(월~일, ISO) SUCCESS 일수
-        LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-        LocalDate weekEnd = weekStart.plusDays(6);
-        long weeklySuccessCount = personalCheckInRepository.countByUserIdAndStatusAndDateBetween(
-                userId, PersonalCheckInStatus.SUCCESS, weekStart, weekEnd);
+        long weeklySuccessCount = checkIns.stream()
+                .filter(c -> c.getStatus() == PersonalCheckInStatus.SUCCESS)
+                .filter(c -> !c.getDate().isBefore(weekStart) && !c.getDate().isAfter(weekEnd))
+                .count();
 
         // 이번 달 캘린더(레코드 있는 날짜만; 없으면 클라이언트가 NOT_CHECKED로 간주)
-        LocalDate monthStart = today.withDayOfMonth(1);
-        LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
-        List<DashboardResponse.CalendarDay> days = personalCheckInRepository
-                .findByUserIdAndDateBetween(userId, monthStart, monthEnd).stream()
+        List<DashboardResponse.CalendarDay> days = checkIns.stream()
+                .filter(c -> !c.getDate().isBefore(monthStart) && !c.getDate().isAfter(monthEnd))
                 .sorted(java.util.Comparator.comparing(PersonalCheckIn::getDate))
                 .map(c -> new DashboardResponse.CalendarDay(c.getDate(), c.getStatus().name()))
                 .toList();
