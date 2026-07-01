@@ -204,7 +204,7 @@ Haversine(현재위도경도, 등록위도경도) <= 등록반경(meters)
 ### 목표
 복귀 미션 흐름을 완성한다.
 성공 시 -50코인 + 스트릭 유지, 실패(데드라인 초과) 시 -100코인 + 스트릭 초기화.
-복귀 성공 후 당일 추가 인증 불가.
+복귀는 미인증일(missed_date)의 PersonalCheckIn만 SUCCESS로 보정하며, 복귀 수행일(오늘)의 레코드를 새로 생성하지 않는다. 단, 오늘의 일반 인증은 별개로 허용된다(이중 카운트 없음).
 
 ### 구현 대상
 
@@ -231,7 +231,7 @@ Haversine(현재위도경도, 등록위도경도) <= 등록반경(meters)
 3. CoinTransaction(type=RECOVERY_SUCCESS, amount=-50, balanceAfter=coinBalance-50) 생성, coinBalance -50
 4. User.totalAttendance +1 (복귀 성공도 출석으로 집계)
 5. Streak 유지: currentStreak 변화 없음, lastSuccessDate = 복귀 미션 수행일(오늘 KST)
-6. 당일(복귀 미션 수행일) PersonalCheckIn 추가 불가:
+6. 복귀는 오늘 날짜의 PersonalCheckIn을 새로 생성하지 않음 (단, 오늘의 일반 인증은 별개로 허용):
    - 복귀 미션으로 보정된 PersonalCheckIn(missed_date).status = SUCCESS 상태
    - 복귀 수행일(today) PersonalCheckIn이 없어도 오늘의 일반 인증은 허용
    - 단, 복귀가 오늘 날짜의 PersonalCheckIn을 생성하지는 않으므로 이중 카운트 없음
