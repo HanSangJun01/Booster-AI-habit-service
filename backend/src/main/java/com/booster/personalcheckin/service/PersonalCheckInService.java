@@ -53,13 +53,19 @@ public class PersonalCheckInService {
     public CheckInResponse checkIn(Long userId, double currentLat, double currentLng) {
         LocalDate today = LocalDate.now(clock);
 
-        // (BS-30 B3) 탈퇴(비활성) 계정 차단
-        if (!userRepository.existsByIdAndActiveTrue(userId)) {
+        // (BS-30 C1/C5/C#6) User 를 비관락으로 '먼저' 로드해 coin/attendance/streak 갱신을 사용자 단위로
+        // 직렬화하고, active 를 락 상태에서 확인한다(TOCTOU 차단). performRecovery 와 (mission→)User→Streak
+        // 락 순서가 일치해 데드락 없음.
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        if (!user.isActive()) {
             throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
         }
 
-        // (F2 팀 결정) 오늘이 복귀 대상일(오늘 마감인 복귀 미션 존재)이면 일반 인증 불가.
-        // 복귀 수행이 곧 '오늘의 인증'으로 간주되므로 별도 인증을 막아 이중 카운트/순서 의존(F7)을 차단한다.
+        // (F2 팀 결정: force-recover) 오늘이 복귀 대상일(오늘 마감인 복귀 미션 존재)이면 일반 인증 불가 →
+        // 복귀 수행이 곧 그날의 인증이다(이중 카운트/순서 의존 F7 차단). 스케줄러(00:01) 이후 전 구간에 적용.
+        // ※ 00:00~00:01 창은 미션 생성 전이라 예외적으로 통과할 수 있으나, 그 경우의 이중 카운트는 F8 처리로 방지.
+        //   (창까지 코드로 막으려면 미션 없는 상태를 '미인증'으로 예측해야 해 휴면/신규 유저를 오차단 → 채택 안 함.)
         OffsetDateTime dayStart = today.atStartOfDay(clock.getZone()).toOffsetDateTime();
         OffsetDateTime dayEnd = today.atTime(23, 59, 59).atZone(clock.getZone()).toOffsetDateTime();
         if (recoveryMissionRepository.existsByUserIdAndDeadlineAtBetween(userId, dayStart, dayEnd)) {
@@ -84,17 +90,6 @@ public class PersonalCheckInService {
                 currentLat, currentLng);
         if (!within) {
             throw BusinessException.badRequest("GPS_OUT_OF_RANGE", "등록된 위치 반경을 벗어났습니다.");
-        }
-
-        // (BS-30 C1/C5) User 를 비관락으로 '먼저' 로드해 coin/attendance/streak 갱신을 사용자 단위로
-        // 직렬화한다. 락 없이 findById 하면 보상 라운드에서 stale 잔액 위에 grant 를 얹어 동시 charge 를
-        // 통째로 덮어쓰거나(C1), 동시 performRecovery 와 겹쳐 streak +1 이 소실된다(C5).
-        // performRecovery 도 (mission→)User→Streak 순으로 락을 잡아 락 순서가 일치 → 데드락 없음.
-        User user = userRepository.findByIdForUpdate(userId)
-                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
-        // (BS-30 7차 C#6) 락 상태에서 active 재확인 → 초기 언락 가드 이후 탈퇴 커밋되는 TOCTOU 차단.
-        if (!user.isActive()) {
-            throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
