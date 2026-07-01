@@ -18,7 +18,7 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
         default_batch_fetch_size: 100
-        generate_statistics: true
+        generate_statistics: false
       jakarta.persistence.query.timeout: 30000
   flyway:
     enabled: true
@@ -28,12 +28,10 @@ server:
   port: 8080
 
 logging:
-  file:
-    name: ../backend-sql.log
   level:
     com.booster: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.stat: DEBUG
+    org.hibernate.SQL: WARN
+    org.hibernate.stat: WARN
 
 management:
   endpoints:
