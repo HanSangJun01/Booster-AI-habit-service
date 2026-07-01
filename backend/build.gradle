@@ -45,8 +45,6 @@ dependencies {
 
 	// [BS-30 동시성 검증] A축 트랜잭션/레이스 버그를 진짜 PostgreSQL에서 RED로 고정하기 위한
 	// Testcontainers. 프로덕션 코드에는 영향 없음(test 스코프 한정).
-	// testcontainers-bom 최신(1.21.3)으로 고정. (Docker 접속 문제의 실제 해결은 하단 test 태스크의
-	// 'api.version' 고정이며, BOM/도커자바 버전은 최신 엔진 호환 여유분으로 함께 올려둔다.)
 	testImplementation platform('org.testcontainers:testcontainers-bom:1.21.3')
 	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
 	testImplementation 'org.testcontainers:junit-jupiter'

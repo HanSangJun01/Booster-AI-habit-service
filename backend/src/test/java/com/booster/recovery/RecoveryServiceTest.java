@@ -112,6 +112,36 @@ class RecoveryServiceTest {
                 .orElseThrow().getStatus()).isEqualTo(PersonalCheckInStatus.FAILED);
     }
 
+    /**
+     * [BS-30 7차 F1] 미인증일 이후 유저가 새로 쌓은 스트릭은 만료 처리로 지워지면 안 된다.
+     * 시나리오: 04-10 미인증(복귀 미션 만료) 상태에서, 유저가 04-12~14 새로 연속 인증(streak=3, last=04-14).
+     * 04-15에 스케줄러가 04-10 미션을 만료시켜도 04-14 스트릭은 유지되어야 한다.
+     * 현재(수정 전): 무조건 reset → currentStreak=0 (RED).
+     */
+    @Test
+    void expireOverdue_doesNotResetStreakRebuiltAfterMissedDay() {
+        Long userId = newUserWithLocation();
+        LocalDate today = LocalDate.of(2035, 4, 15);
+        clock.setDate(today);
+        LocalDate missedDate = LocalDate.of(2035, 4, 10);
+
+        // 미인증일(04-10) 이후 새 스트릭: 04-12,13,14 연속 → currentStreak=3, lastSuccessDate=04-14
+        Streak streak = streakRepository.findById(userId).orElseThrow();
+        streak.recordSuccess(LocalDate.of(2035, 4, 12));
+        streak.recordSuccess(LocalDate.of(2035, 4, 13));
+        streak.recordSuccess(LocalDate.of(2035, 4, 14));
+
+        OffsetDateTime pastDeadline = missedDate.plusDays(1).atTime(23, 59, 59)
+                .atZone(MutableClock.KST).toOffsetDateTime();
+        createPendingMission(userId, missedDate, pastDeadline);
+
+        recoveryService.expireOverdueMissions();
+
+        assertThat(streakRepository.findById(userId).orElseThrow().getCurrentStreak())
+                .as("미인증일(04-10) 이후 새로 쌓은 스트릭(04-14, streak=3)은 만료 처리로 지워지면 안 된다")
+                .isEqualTo(3);
+    }
+
     @Test
     void failurePenalty_clampedToBalance() {
         Long userId = newUserWithLocation();

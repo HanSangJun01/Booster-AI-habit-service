@@ -76,6 +76,35 @@ class WithdrawnUserGuardTest {
     }
 
     /**
+     * [BS-30 7차 F3] 탈퇴 유저가 위치 수정 시도 → 거부되어야 한다.
+     */
+    @Test
+    void withdrawnUser_cannotUpdateLocation() {
+        Long userId = newUserWithLocation();
+        userService.withdraw(userId);
+
+        assertThatThrownBy(() -> personalLocationService.update(
+                userId, new LocationRequest(37.0, 127.0, 100, "x")))
+                .as("탈퇴 계정의 위치 수정은 거부되어야 한다")
+                .isInstanceOf(BusinessException.class);
+    }
+
+    /**
+     * [BS-30 7차 F3] 탈퇴 유저가 위치 최초 등록 시도 → 거부되어야 한다.
+     */
+    @Test
+    void withdrawnUser_cannotRegisterLocation() {
+        String email = "b3reg-" + SEQ.incrementAndGet() + "@test.com";
+        Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
+        userService.withdraw(userId);
+
+        assertThatThrownBy(() -> personalLocationService.register(
+                userId, new LocationRequest(37.0, 127.0, 100, "home")))
+                .as("탈퇴 계정의 위치 등록은 거부되어야 한다")
+                .isInstanceOf(BusinessException.class);
+    }
+
+    /**
      * [B3] 복귀 미션 보유 유저가 탈퇴 후 performRecovery 시도.
      * 기대: 비활성 계정이므로 BusinessException으로 거부되어야 한다.
      * 현재: active 검사가 없어 복귀가 정상 수행됨 → 예외 미발생 (RED).
