@@ -4,6 +4,12 @@ spring:
     username: ${DB_USERNAME:booster}
     password: ${DB_PASSWORD:booster}
     driver-class-name: org.postgresql.Driver
+    # [BS-30 최적화 ②] 커넥션풀 크기 명시. 기본 10으로는 500VU 부하에서 Hikari pending 189 관측.
+    # DB max_connections(기본 100)와 인스턴스 수를 함께 고려(pool × 인스턴스 ≤ max_connections).
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:30}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: 3000
   jpa:
     hibernate:
       ddl-auto: validate
