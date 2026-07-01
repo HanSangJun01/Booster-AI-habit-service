@@ -73,7 +73,7 @@ class RecoveryServiceTest {
     }
 
     @Test
-    void performRecovery_success_keepsStreakAndCharges50() {
+    void performRecovery_countsAsTodayCheckIn_incrementsStreakAndCharges50() {
         Long userId = newUserWithLocation();
         setStreak(userId, 3);
         LocalDate today = LocalDate.of(2035, 4, 10);
@@ -86,8 +86,13 @@ class RecoveryServiceTest {
         assertThat(resp.status()).isEqualTo(RecoveryStatus.COMPLETED);
         assertThat(resp.chargedAmount()).isEqualTo(50L);
         assertThat(resp.coinBalance()).isEqualTo(450L); // 500 - 50
-        assertThat(resp.currentStreak()).isEqualTo(3);   // 스트릭 유지
+        // (F2) 복귀 = 오늘의 인증으로 간주 → 스트릭 +1 (3 → 4)
+        assertThat(resp.currentStreak()).isEqualTo(4);
+        // 미인증일(어제)은 SUCCESS로 보정
         assertThat(personalCheckInRepository.findByUserIdAndDate(userId, today.minusDays(1))
+                .orElseThrow().getStatus()).isEqualTo(PersonalCheckInStatus.SUCCESS);
+        // 복귀일(오늘)도 SUCCESS 레코드로 남는다(그날 인증으로 간주)
+        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, today)
                 .orElseThrow().getStatus()).isEqualTo(PersonalCheckInStatus.SUCCESS);
     }
 

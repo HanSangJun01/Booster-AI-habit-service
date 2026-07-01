@@ -114,18 +114,24 @@ public class RecoveryService {
                         "CHECK_IN_NOT_FOUND", "복귀 대상 체크인을 찾을 수 없습니다."));
         missed.markSuccess(now);
 
+        // 2-1) (F2 팀 결정) 복귀 = '오늘(복귀일)의 인증'으로 완전 간주 → 오늘 SUCCESS 레코드 생성/보정.
+        // 이게 없으면 복귀일이 다음 날 다시 미인증으로 잡혀 무한 복귀 루프가 된다.
+        LocalDate today = LocalDate.now(clock);
+        personalCheckInRepository.findByUserIdAndDate(userId, today).ifPresentOrElse(
+                ci -> ci.markSuccess(now),
+                () -> personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now)));
+
         // 3) 코인 차감(-50, 클램핑)
         long charged = coinService.charge(userId, successPenalty,
                 CoinTransactionReason.RECOVERY_SUCCESS, mission.getId());
 
-        // 4) 출석 +1
+        // 4) 출석 +1 (오늘의 인증 1회분)
         user.increaseAttendance();
 
-        // 5) 스트릭 유지(증가 없음), lastSuccessDate = '복구한 날(미인증일)' 기준(단조).
-        // (BS-30 7차 F6) 수행일(오늘)로 당기면, 복귀만 하고 당일 인증 안 한 날(구멍)을 성공일로 착각한다.
+        // 5) 스트릭: 복귀일을 인증으로 간주해 +1(미인증일이 SUCCESS로 메워져 갭 없음).
         Streak streak = streakRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
-        streak.keepAlive(missed.getDate());
+        streak.recordRecoverySuccess(today);
 
         return new RecoveryResultResponse(mission.getId(), mission.getStatus(),
                 mission.getCompletedAt(), streak.getCurrentStreak(), user.getCoinBalance(), charged);

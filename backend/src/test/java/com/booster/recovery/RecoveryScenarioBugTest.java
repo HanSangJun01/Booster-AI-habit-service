@@ -10,7 +10,10 @@ import com.booster.personalcheckin.service.PersonalCheckInService;
 import com.booster.personallocation.dto.LocationRequest;
 import com.booster.personallocation.service.PersonalLocationService;
 import com.booster.recovery.domain.RecoveryMission;
+import com.booster.recovery.repository.RecoveryMissionRepository;
 import com.booster.recovery.service.RecoveryService;
+import com.booster.shared.common.BusinessException;
+import com.booster.streak.repository.StreakRepository;
 import com.booster.support.MutableClock;
 import com.booster.support.TestClockConfig;
 import jakarta.persistence.EntityManager;
@@ -27,11 +30,13 @@ import java.time.OffsetDateTime;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * [BS-30 시나리오 고정]
- * - B2 (RED): 가입일 off-by-one — 가입일==어제 유저에게 부당하게 복귀 미션 생성.
- * - B4 (GREEN, 재분류): 복귀는 오늘 레코드를 만들지 않고 오늘 일반 인증은 허용 — A축 계획서 Phase 3 명세상 의도된 동작.
+ * - B2: 가입일 off-by-one — 가입일==어제 유저에게 부당하게 복귀 미션 생성.
+ * - F2(팀 결정): 복귀 = 그날 인증으로 완전 간주(복귀일 SUCCESS 레코드 생성 + 스트릭 +1),
+ *   복귀 대상일의 별도 일반 인증은 불가. 무한 복귀 루프/순서 의존(F7) 없음.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -44,6 +49,8 @@ class RecoveryScenarioBugTest {
     @Autowired RecoveryService recoveryService;
     @Autowired PersonalCheckInService personalCheckInService;
     @Autowired PersonalCheckInRepository personalCheckInRepository;
+    @Autowired RecoveryMissionRepository recoveryMissionRepository;
+    @Autowired StreakRepository streakRepository;
     @Autowired MutableClock clock;
     @PersistenceContext EntityManager em;
 
@@ -94,94 +101,78 @@ class RecoveryScenarioBugTest {
     }
 
     /**
-     * [BS-30 7차 F6 — RED] 복귀만 하고 당일 일반인증을 안 한 날(구멍)이 성공일로 오인되면 안 된다.
-     * 시나리오: D1~D6 인증(streak 6) → D7 미인증 → D8에 D7 복귀 수행(당일 인증 안 함) →
-     *          D9 인증. D8은 실제로 구멍이므로 D9 인증은 연속이 끊겨 streak=1, 보상 없음이어야 한다.
-     * 버그(수정 전): keepAlive가 lastSuccessDate를 D8로 당겨 → D9가 연속으로 오인 → streak 7 + 부당 보상.
+     * [F2 — 팀 결정: 복귀 당일 일반 인증 불가 / 복귀 = 그날 인증으로 완전 간주]
+     * 복귀 수행 시: (1) 미인증일 SUCCESS 보정, (2) 복귀일(오늘)도 SUCCESS 레코드 생성(그날 인증 간주),
+     * (3) 복귀일의 별도 일반 인증은 차단된다.
      */
     @Test
-    void recoverWithoutCheckIn_thenNextDay_doesNotWronglyReachMilestone() {
-        Long userId = newUserWithLocation("f6-");
-        LocalDate d1 = LocalDate.of(2035, 3, 1);
-
-        // D1~D6 연속 인증 → streak 6
-        for (int i = 0; i < 6; i++) {
-            clock.setDate(d1.plusDays(i));
-            personalCheckInService.checkIn(userId, 37.0, 127.0);
-        }
-
-        // D7 미인증. D8 아침 스케줄러가 D7 복귀 미션 생성.
-        LocalDate d8 = d1.plusDays(7);
-        clock.setDate(d8);
-        recoveryService.generatePendingForYesterday();
-        // D8에 D7 복귀만 수행(당일 일반 인증은 안 함) → D8은 구멍으로 남음
-        recoveryService.performRecovery(userId, 37.0, 127.0);
-
-        // D9 아침 스케줄러가 D8 미인증 복귀 미션 생성. 그리고 D9 일반 인증.
-        LocalDate d9 = d1.plusDays(8);
-        clock.setDate(d9);
-        recoveryService.generatePendingForYesterday();
-        CheckInResponse d9resp = personalCheckInService.checkIn(userId, 37.0, 127.0);
-
-        assertThat(d9resp.currentStreak())
-                .as("D8이 구멍이므로 D9 인증은 연속이 끊겨 streak=1이어야 한다(복귀가 D8을 성공일로 오인하면 안 됨)")
-                .isEqualTo(1);
-        assertThat(d9resp.rewardGranted())
-                .as("끊긴 스트릭이 7일 마일스톤에 도달해 부당 보상이 지급되면 안 된다")
-                .isFalse();
-    }
-
-    /**
-     * [B4 — 재분류: 명세상 의도된 동작 / GREEN 특성화 테스트]
-     *
-     * A축 계획서 Phase 3 명시:
-     *   "복귀가 오늘 날짜의 PersonalCheckIn을 생성하지는 않으므로 이중 카운트 없음" +
-     *   "복귀 수행일(today) PersonalCheckIn이 없어도 오늘의 일반 인증은 허용".
-     *
-     * 따라서 복귀 수행 시:
-     *   (1) 미인증일(missed)만 SUCCESS로 보정한다.
-     *   (2) 오늘(D)에 대한 PersonalCheckIn은 만들지 않는다(이중 카운트 방지).
-     *   (3) 오늘(D)의 일반 인증은 여전히 허용되어 D 레코드를 SUCCESS로 만든다.
-     *
-     * 이 테스트는 그 '의도된 동작'을 고정한다(GREEN).
-     * (이전엔 "복귀=오늘출석"으로 오판하여 RED 테스트를 두었으나, Phase 3 명세 확인 후 정정.
-     *  "복귀만 반복 시 매일 -50" 현상은 유저가 오늘 일반 인증을 하지 않은 결과로, 명세상 의도이며 버그 아님.)
-     */
-    @Test
-    void recovery_doesNotCreateTodayRecord_butNormalCheckInStillAllowed() {
-        Long userId = newUserWithLocation("b4-");
+    void recovery_countsAsTodayCheckIn_andBlocksSeparateCheckIn() {
+        Long userId = newUserWithLocation("f2-");
         LocalDate day = LocalDate.of(2035, 7, 10); // 복귀 수행일 D
         LocalDate missed = day.minusDays(1);       // D-1 미인증
 
         clock.setDate(day);
-
-        // D-1 미인증에 대한 복귀 미션(pending) 세팅
         PersonalCheckIn pending = personalCheckInRepository.save(
                 PersonalCheckIn.recoveryPending(userId, missed));
         OffsetDateTime deadline = day.atTime(23, 59, 59).atZone(MutableClock.KST).toOffsetDateTime();
         em.persist(RecoveryMission.createPending(userId, pending.getId(), deadline));
         em.flush();
 
-        // D일에 복귀 수행
         recoveryService.performRecovery(userId, 37.0, 127.0);
 
-        // (1) 미인증일(D-1)은 SUCCESS로 보정됨
+        // (1) 미인증일(D-1)은 SUCCESS로 보정
         assertThat(personalCheckInRepository.findByUserIdAndDate(userId, missed).orElseThrow().getStatus())
-                .as("복귀 성공 시 미인증일은 SUCCESS로 보정되어야 한다")
                 .isEqualTo(PersonalCheckInStatus.SUCCESS);
+        // (2) 복귀일(D)도 SUCCESS 레코드로 남는다(그날 인증으로 간주)
+        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, day).orElseThrow().getStatus())
+                .as("복귀는 복귀일(D)의 인증으로 간주되어 D 레코드가 SUCCESS여야 한다")
+                .isEqualTo(PersonalCheckInStatus.SUCCESS);
+        // (3) 복귀일의 별도 일반 인증은 차단
+        assertThatThrownBy(() -> personalCheckInService.checkIn(userId, 37.0, 127.0))
+                .as("복귀 대상일에는 별도 일반 인증이 불가해야 한다")
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo("RECOVERY_DAY_NO_CHECKIN"));
+    }
 
-        // (2) 오늘(D) 레코드는 생성되지 않음 (이중 카운트 방지 — 명세대로)
-        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, day))
-                .as("복귀는 오늘(D) PersonalCheckIn을 생성하지 않는다 (Phase 3 명세)")
+    /**
+     * [F2/F7] 복귀가 복귀일을 '인증'으로 닫으므로, 그날이 다음날 다시 미인증으로 잡히는
+     * 무한 복귀 루프가 없고, 복귀일 스트릭이 정상 연속으로 이어진다.
+     * D1~D6 인증(streak 6) → D7 미인증 → D8 복귀(D7 보정 + D8 인증 간주, streak 7) →
+     * D9 스케줄러는 D8을 미인증으로 잡지 않음 → D9 일반 인증 정상(streak 8).
+     */
+    @Test
+    void recoveryClosesRecoveryDay_noInfiniteChain_streakContinues() {
+        Long userId = newUserWithLocation("f7-");
+        LocalDate d1 = LocalDate.of(2035, 3, 1);
+
+        for (int i = 0; i < 6; i++) { // D1~D6 → streak 6
+            clock.setDate(d1.plusDays(i));
+            personalCheckInService.checkIn(userId, 37.0, 127.0);
+        }
+
+        // D7 미인증. D8: 스케줄러가 D7 복귀 미션 생성 → D8 복귀 수행
+        LocalDate d8 = d1.plusDays(7);
+        clock.setDate(d8);
+        recoveryService.generatePendingForYesterday();
+        recoveryService.performRecovery(userId, 37.0, 127.0);
+
+        // 복귀일 D8은 SUCCESS로 닫히고 streak는 7로 이어진다
+        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, d8).orElseThrow().getStatus())
+                .isEqualTo(PersonalCheckInStatus.SUCCESS);
+        assertThat(streakRepository.findById(userId).orElseThrow().getCurrentStreak()).isEqualTo(7);
+
+        // D9: 스케줄러가 D8을 미인증으로 잡지 않아야 한다(무한 루프 없음) → D8 PENDING 미션 없음
+        LocalDate d9 = d1.plusDays(8);
+        clock.setDate(d9);
+        recoveryService.generatePendingForYesterday();
+        assertThat(recoveryMissionRepository.findFirstByUserIdAndStatusOrderByDeadlineAtAsc(
+                userId, com.booster.recovery.domain.RecoveryStatus.PENDING))
+                .as("복귀로 닫힌 D8은 다시 미인증 복귀 대상이 되면 안 된다")
                 .isEmpty();
 
-        // (3) 오늘(D)의 일반 인증은 여전히 허용되어 D 레코드를 SUCCESS로 만든다
-        CheckInResponse resp = personalCheckInService.checkIn(userId, 37.0, 127.0);
-        assertThat(resp.status())
-                .as("복귀를 했어도 오늘의 일반 인증은 허용되어야 한다 (Phase 3 명세)")
-                .isEqualTo(PersonalCheckInStatus.SUCCESS);
-        assertThat(personalCheckInRepository.findByUserIdAndDate(userId, day))
-                .as("오늘 일반 인증 후에는 D 레코드가 SUCCESS로 존재해야 한다")
-                .isPresent();
+        // D9 일반 인증은 정상 허용되고 streak가 8로 이어진다
+        CheckInResponse d9resp = personalCheckInService.checkIn(userId, 37.0, 127.0);
+        assertThat(d9resp.status()).isEqualTo(PersonalCheckInStatus.SUCCESS);
+        assertThat(d9resp.currentStreak()).isEqualTo(8);
     }
 }

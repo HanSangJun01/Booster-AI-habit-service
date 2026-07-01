@@ -22,6 +22,14 @@ public interface RecoveryMissionRepository extends JpaRepository<RecoveryMission
             RecoveryStatus status, OffsetDateTime threshold);
 
     /**
+     * (F2) 복귀일 판별: 데드라인이 오늘 범위에 드는 미션이 있으면 오늘은 '복귀 대상일'이다.
+     * 미션 데드라인 = 복귀일 23:59:59 이므로, [오늘 00:00, 오늘 23:59:59]에 걸리는 미션 존재 여부로
+     * 오늘이 복귀 대상일인지 판정한다(PENDING=복귀해야 함 / COMPLETED=이미 복귀함 → 별도 인증 불가).
+     */
+    boolean existsByUserIdAndDeadlineAtBetween(
+            Long userId, OffsetDateTime start, OffsetDateTime end);
+
+    /**
      * (BS-30 C2) 복귀 수행용 — 사용자의 PENDING 미션을 비관적 쓰기락으로 조회.
      * 동시 2건이 같은 미션을 잡으면 하나만 락을 획득하고, 다른 하나는 대기 후 재평가에서
      * status=PENDING 이 더 이상 참이 아니어서 빈 결과를 받는다(READ_COMMITTED) → 정확히 1회 처리.

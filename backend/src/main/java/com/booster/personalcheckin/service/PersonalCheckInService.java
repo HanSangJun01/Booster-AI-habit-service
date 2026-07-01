@@ -8,6 +8,7 @@ import com.booster.personalcheckin.dto.TodayStatusResponse;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personallocation.domain.PersonalLocation;
 import com.booster.personallocation.repository.PersonalLocationRepository;
+import com.booster.recovery.repository.RecoveryMissionRepository;
 import com.booster.shared.common.BusinessException;
 import com.booster.shared.gps.GpsVerificationEvaluator;
 import com.booster.streak.domain.Streak;
@@ -36,6 +37,7 @@ public class PersonalCheckInService {
     private final PersonalLocationRepository personalLocationRepository;
     private final StreakRepository streakRepository;
     private final UserRepository userRepository;
+    private final RecoveryMissionRepository recoveryMissionRepository;
     private final CoinService coinService;
     private final GpsVerificationEvaluator gpsEvaluator;
     private final Clock clock;
@@ -54,6 +56,15 @@ public class PersonalCheckInService {
         // (BS-30 B3) 탈퇴(비활성) 계정 차단
         if (!userRepository.existsByIdAndActiveTrue(userId)) {
             throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
+        }
+
+        // (F2 팀 결정) 오늘이 복귀 대상일(오늘 마감인 복귀 미션 존재)이면 일반 인증 불가.
+        // 복귀 수행이 곧 '오늘의 인증'으로 간주되므로 별도 인증을 막아 이중 카운트/순서 의존(F7)을 차단한다.
+        OffsetDateTime dayStart = today.atStartOfDay(clock.getZone()).toOffsetDateTime();
+        OffsetDateTime dayEnd = today.atTime(23, 59, 59).atZone(clock.getZone()).toOffsetDateTime();
+        if (recoveryMissionRepository.existsByUserIdAndDeadlineAtBetween(userId, dayStart, dayEnd)) {
+            throw BusinessException.conflict("RECOVERY_DAY_NO_CHECKIN",
+                    "복귀 미션 대상일에는 복귀로 인증됩니다. 별도 일반 인증은 불가합니다.");
         }
 
         PersonalLocation location = personalLocationRepository.findById(userId)
