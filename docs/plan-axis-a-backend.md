@@ -164,9 +164,9 @@ Haversine(현재위도경도, 등록위도경도) <= 등록반경(meters)
 3. Streak.maxStreak 갱신 (현재 > 최고면 업데이트)
 4. User.totalAttendance +1
 5. currentStreak % 7 == 0 이면: CoinTransaction(type=STREAK_REWARD, amount=+100) 생성, coinBalance +100
-   - **[미결]** 스트릭 보상 반복 지급 여부: 현재 `% 7 == 0` 구현은 7일, 14일, 21일마다 지급.
-     스펙에서 "7일 연속 달성 시 +100코인" 표현이 단회인지 반복인지 명시되지 않음.
-     → **제품 책임자 확인 필요**. 단회라면 `currentStreak == 7`으로 변경.
+   - **[확정] 반복 지급**: 7일, 14일, 21일마다 +100코인 지급(팀 결정, 2026-07-01).
+     구현: `booster.streak.reward-repeat=true`(기본값) + `reward-interval-days=7` →
+     `currentStreak % 7 == 0`. 단회로 바꾸려면 `STREAK_REWARD_REPEAT=false`로 오버라이드.
 
 **스케줄러 (매일 KST 00:01 실행) — 처리 순서 필수 준수**
 
@@ -396,7 +396,7 @@ GET /api/dashboard/home
 
 | 항목 | 현재 가정 / 결정 | 확정 필요 |
 |------|-----------------|----------|
-| **[미결] 스트릭 보상 반복 지급** | `% 7 == 0` → 7·14·21일마다 지급 | 제품 책임자 확인 필요 (단회 vs 반복) |
+| **[확정] 스트릭 보상 반복 지급** | 반복 지급 확정: 7·14·21일마다 +100 (`reward-repeat=true`, 2026-07-01 팀 결정) | — 해소됨 |
 | **[결정] 개인 GPS 위치** | `PersonalLocation` 독립 테이블 | ERD 필드명·인덱스 확정 시 |
 | **[결정] 코인 회계 정책** | effective amount 기록 | ERD에 nominalAmount 컬럼 추가 여부 |
 | 탈퇴 후 동일 이메일 재가입 | 불가 (soft delete 이메일 유지) | ERD 확정 시 |
