@@ -114,18 +114,31 @@ public class RecoveryService {
                         "CHECK_IN_NOT_FOUND", "복귀 대상 체크인을 찾을 수 없습니다."));
         missed.markSuccess(now);
 
-        // 3) 코인 차감(-50, 클램핑)
+        // 2-1) (F2 팀 결정) 복귀 = '오늘(복귀일)의 인증'으로 완전 간주 → 오늘 SUCCESS 레코드 생성/보정.
+        // 이게 없으면 복귀일이 다음 날 다시 미인증으로 잡혀 무한 복귀 루프가 된다.
+        // (BS-30 F8) 단, 스케줄러가 미션을 만들기 전 창(00:00~00:01)에서 오늘 '일반 인증'이 먼저
+        // 들어왔을 수 있다. 그 경우 오늘은 이미 인증됨 → 복귀는 미인증일만 보정하고 '오늘 크레딧'
+        // (오늘 레코드/출석/스트릭)은 중복 지급하지 않는다(이중 카운트 방지).
+        LocalDate today = LocalDate.now(clock);
+        boolean todayAlreadyDone = personalCheckInRepository.findByUserIdAndDate(userId, today)
+                .map(PersonalCheckIn::isSuccess).orElse(false);
+        if (!todayAlreadyDone) {
+            personalCheckInRepository.findByUserIdAndDate(userId, today).ifPresentOrElse(
+                    ci -> ci.markSuccess(now),
+                    () -> personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now)));
+        }
+
+        // 3) 코인 차감(-50, 클램핑) — 복귀 페널티는 항상 부과
         long charged = coinService.charge(userId, successPenalty,
                 CoinTransactionReason.RECOVERY_SUCCESS, mission.getId());
 
-        // 4) 출석 +1
-        user.increaseAttendance();
-
-        // 5) 스트릭 유지(증가 없음), lastSuccessDate = '복구한 날(미인증일)' 기준(단조).
-        // (BS-30 7차 F6) 수행일(오늘)로 당기면, 복귀만 하고 당일 인증 안 한 날(구멍)을 성공일로 착각한다.
+        // 4~5) 오늘 크레딧: 오늘이 이미 인증된 날이면 출석/스트릭 중복 지급 생략
         Streak streak = streakRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
-        streak.keepAlive(missed.getDate());
+        if (!todayAlreadyDone) {
+            user.increaseAttendance();          // 오늘의 인증 1회분
+            streak.recordRecoverySuccess(today); // 복귀일을 인증으로 간주해 +1
+        }
 
         return new RecoveryResultResponse(mission.getId(), mission.getStatus(),
                 mission.getCompletedAt(), streak.getCurrentStreak(), user.getCoinBalance(), charged);

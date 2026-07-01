@@ -17,9 +17,9 @@ import java.time.OffsetDateTime;
  * 사용자별 연속 인증 기록. user_id를 PK로 공유(1:1).
  * bs-25: currentStreak / maxStreak / lastSuccessDate.
  *
- * <p>★동시성: {@code @DynamicUpdate} — 변경된 컬럼만 UPDATE. 이게 없으면 복귀의 keepAlive
- * (lastSuccessDate 만 변경)가 flush 시 current_streak 까지 옛 값으로 덮어써, 동시에 커밋된
- * checkIn 의 +1 을 날리는 lost update 가 발생한다(BS-30 C5).
+ * <p>★동시성: {@code @DynamicUpdate} — 변경된 컬럼만 UPDATE 해 서로 다른 컬럼을 만지는 트랜잭션이
+ * flush 시 상대 컬럼을 옛 값으로 덮어쓰는 lost update 를 줄인다. 근본 보호는 쓰기 진입 시 User 행
+ * 비관락으로 사용자 단위 직렬화(BS-30 C1/C5).
  */
 @Entity
 @Table(name = "streaks")
@@ -60,8 +60,7 @@ public class Streak {
      * 인증 성공 기록. 연속성 인지:
      * <ul>
      *   <li>직전 성공일이 하루 이상 비어 있으면(갭) currentStreak 을 1로 새로 시작한다.</li>
-     *   <li>최초/연속/당일 재기록은 +1 누적(복귀 keepAlive 로 lastSuccessDate 가 당일로 당겨진
-     *       경우도 갭이 아니므로 정상 누적).</li>
+     *   <li>최초/연속/당일 재기록은 +1 누적.</li>
      * </ul>
      * (BS-30 B1) 갭을 무시하고 무조건 +1 하면 끊긴 스트릭이 7일 마일스톤에 도달해 보상이
      * 부당 지급된다. 결정: 잠정/끊긴 스트릭에는 보상 보류 → 연속성으로 강제한다.
@@ -80,14 +79,18 @@ public class Streak {
     }
 
     /**
-     * 복귀 미션 성공 시 스트릭 유지(증가 없음), lastSuccessDate를 '복구한 날(미인증일)'로 갱신.
-     * (BS-30 7차 F6) 단조 갱신: 이미 더 나중 성공일이 있으면 뒤로 당기지 않는다.
-     * 복구일이 아니라 '오늘(수행일)'로 당기면, 복귀만 하고 당일 인증을 안 한 날(구멍)을 성공일로
-     * 착각해 다음 인증이 연속으로 오인되어 부당 마일스톤 보상이 지급된다.
+     * 복귀 성공 = '복귀한 날의 인증'으로 완전 간주(F2 팀 결정: 복귀 당일 별도 인증 불가).
+     * 미인증일이 SUCCESS로 보정되어 갭이 메워졌으므로 연속성 검사 없이 +1 하고, lastSuccessDate를
+     * 복귀일로 전진한다(단조). 이로써 복귀일이 다음 날 다시 미인증으로 잡히는 무한 복귀 루프가 없고,
+     * 같은 날 인증-vs-복귀 순서 의존(F7)도 사라진다(복귀일 일반 인증은 서비스에서 차단).
      */
-    public void keepAlive(LocalDate recoveredDate) {
-        if (this.lastSuccessDate == null || this.lastSuccessDate.isBefore(recoveredDate)) {
-            this.lastSuccessDate = recoveredDate;
+    public void recordRecoverySuccess(LocalDate recoveryDay) {
+        this.currentStreak += 1;
+        if (this.currentStreak > this.maxStreak) {
+            this.maxStreak = this.currentStreak;
+        }
+        if (this.lastSuccessDate == null || this.lastSuccessDate.isBefore(recoveryDay)) {
+            this.lastSuccessDate = recoveryDay;
         }
     }
 

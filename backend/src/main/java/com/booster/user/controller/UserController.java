@@ -26,11 +26,16 @@ public class UserController {
         return ResponseEntity.ok(userService.getMyPage(userId));
     }
 
+    /** 코인 내역 페이징. size 상한 100. (BS-30 F9) 잘못된 page/size로 500 나지 않도록 클램프. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     @GetMapping("/coins")
     public ResponseEntity<CoinHistoryResponse> coins(@AuthenticationPrincipal Long userId,
                                                      @RequestParam(defaultValue = "0") int page,
                                                      @RequestParam(defaultValue = "20") int size) {
-        Pageable pageable = PageRequest.of(page, size);
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        Pageable pageable = PageRequest.of(safePage, safeSize);
         return ResponseEntity.ok(userService.getCoinHistory(userId, pageable));
     }
 

@@ -149,7 +149,7 @@ public abstract class ConcurrencyTestBase {
     /** 코인 단일 진실 원천 불변식 좌변: SUM(coin_transactions.amount). */
     protected long ledgerSum(Long userId) {
         return coinTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, Pageable.unpaged())
+                .findByUserIdOrderByCreatedAtDescIdDesc(userId, Pageable.unpaged())
                 .getContent().stream()
                 .mapToLong(CoinTransaction::getAmount)
                 .sum();
@@ -158,7 +158,7 @@ public abstract class ConcurrencyTestBase {
     /** 특정 사유의 코인 거래 행 수. */
     protected long countTxOfType(Long userId, CoinTransactionReason type) {
         return coinTransactionRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, Pageable.unpaged())
+                .findByUserIdOrderByCreatedAtDescIdDesc(userId, Pageable.unpaged())
                 .getContent().stream()
                 .filter(t -> t.getType() == type)
                 .count();
