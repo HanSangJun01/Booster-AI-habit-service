@@ -40,15 +40,21 @@
    └─ → 실패 시 즉시 종료 (이후 시나리오 건너뜀)
 
 2. DB 초기화 (1~2분)
-   ├─ 기존 테스트 데이터 DELETE
-   │  ├─ verification_decisions
-   │  ├─ gps_verification_results
-   │  ├─ verification_submissions
-   │  ├─ settlements
-   │  ├─ challenge_check_ins
-   │  ├─ challenge_participants
-   │  └─ challenges (시나리오* 제목만)
-   └─ → 멱등성 실패 방지 (이전 실행의 데이터 영향 제거)
+   ├─ 기존 '시나리오%' 테스트 데이터만 DELETE (전역 삭제 금지 — 실데이터 보존)
+   │  ※ 물리 FK(전부 NO ACTION)라 자식→부모 순서로 삭제. 특히 teams 미삭제 시
+   │    challenges 삭제가 teams→challenges FK 위반 → psql -c 단일 트랜잭션 전체 롤백
+   │    → 데이터 누적 버그 (ON_ERROR_STOP=1로 감지). chat/cheer는 FK 없으나 orphan 방지로 함께 삭제
+   │  ├─ verification_decisions    (시나리오 체크인에 연결된 행만)
+   │  ├─ gps_verification_results  (시나리오 체크인에 연결된 행만)
+   │  ├─ verification_submissions  (시나리오 체크인에 연결된 행만)
+   │  ├─ challenge_check_ins       (challenge_id = 시나리오 챌린지)
+   │  ├─ chat_messages             (team_id = 시나리오 팀)
+   │  ├─ cheer_emojis              (challenge_id = 시나리오 챌린지)
+   │  ├─ settlements               (challenge_id = 시나리오 챌린지)
+   │  ├─ teams                     (challenge_id = 시나리오 챌린지)
+   │  ├─ challenge_participants    (challenge_id = 시나리오 챌린지)
+   │  └─ challenges                (title LIKE '시나리오%')
+   └─ → 삭제 후 시나리오 챌린지 잔존 수를 검증(누적 재발 가드). 비-시나리오 실데이터 보존.
 
 3. 시나리오 A: Challenge 생성·탐색 (2~3분)
    ├─ 10개 챌린지 생성 (POST /api/challenges)
@@ -57,8 +63,8 @@
 
 4. 시나리오 B: 참여 신청 (1~2분)
    ├─ 챌린지 ID 추출 (A에서 생성한 첫 챌린지)
-   ├─ 사용자 1~5 참여 신청 (POST /api/challenges/{id}/participants)
-   ├─ CONFIRMED 참여자 수 검증 (5명 기대)
+   ├─ 사용자 1~10 참여 신청 (POST /api/challenges/{id}/participants)
+   ├─ CONFIRMED 참여자 수 검증 (10명 기대 → 팀 자동 구성 트리거)
    ├─ 챌린지 상태 ACTIVE로 전환 (체크인·k6 사전조건)
    └─ → 기준선: 쓰기 트랜잭션 응답시간, DB INSERT+UPDATE 부하
 
@@ -84,10 +90,12 @@
    │  └─ 엣지케이스 4xx 정상 반환율 > 95%
    └─ → 측정: HikariCP 커넥션 풀 동작, GC 일시정지, 응답시간 분포
 
-7. 시나리오 D: 정산 스케줄러 (1~2분)
-   ├─ 챌린지 강제 종료 (status=ENDED, ended_at=NOW-1min)
-   ├─ 정산 스케줄러 대기 (30초)
-   ├─ 정산 결과 조회 (/api/challenges/{id}/result)
+7. 시나리오 D: 정산 스케줄러 (가변)
+   ├─ 챌린지 강제 종료 (ended_at=NOW-1min → 스케줄러가 ACTIVE→ENDED 전환)
+   ├─ 정산 결과 폴링 (5초 간격, 최대 180초 — 고정 sleep 아님)
+   │   · COMPLETED 확인 즉시 [PASS] (더 안 기다림)
+   │   · 타임아웃까지 미완료일 때만 [WARN] → false WARN 없음
+   │   · 튜닝: SETTLE_TIMEOUT, SETTLE_INTERVAL 환경변수
    └─ → 검증: SettlementService 멱등성, 정산 프로세스 동작
 
 8. 시나리오 F: 비즈니스 로직 값 검증
@@ -102,9 +110,11 @@
    └─ 있으면 EXPLAIN ANALYZE로 Index Scan 확인
 
 10. 시나리오 H: GPS 경계값 테스트
+    ├─ 전용 챌린지에 10명 참여 → 팀 자동 구성 (체크인은 팀 배정 참여자만 허용)
+    ├─ userId=6을 기준 좌표(서울시청, radius=100m)로 등록
     ├─ H-1: 반경 44m (이내) → SUCCESS 기대
     ├─ H-2: 반경 222m (초과) → FAILED 기대
-    └─ → 기대값 불일치 시 [WARN] 출력
+    └─ → 팀 미배정 또는 기대값 불일치 시 [WARN] 출력
 
 11. 결과 자동 기록 (1~2분)
     ├─ k6 summary 파싱
@@ -183,8 +193,8 @@ bash monitoring/scripts/run-all-scenarios.sh
 
 **동작**:
 1. 환경 사전 조건 확인 (smoke)
-2. DB 초기화
-3. 시나리오 A~E 순차 실행
+2. DB 초기화 (시나리오 데이터만)
+3. 시나리오 순차 실행 (A → B → C → E(k6) → D → F → G → H)
 4. 결과 파일 자동 생성
 
 **출력 예시**:
@@ -218,10 +228,18 @@ bash monitoring/scripts/run-all-scenarios.sh
 ### 개별 시나리오 실행
 
 ```bash
-# 1. DB 초기화만
-docker exec booster-postgres psql -U booster -d booster -c "
-DELETE FROM challenge_check_ins WHERE id > 0;
-DELETE FROM challenge_participants WHERE id > 0;
+# 1. DB 초기화만 (시나리오 데이터로 한정 — 전역 삭제 금지)
+#    verification_submissions → challenge_check_ins → challenge_participants → challenges,
+#    teams → challenges 가 물리 FK(NO ACTION)이므로 반드시 자식→부모 순서로 삭제.
+#    (시나리오 C 실행 후 verification 체인을 먼저 지우지 않으면 challenge_check_ins 삭제가 FK 위반)
+docker exec booster-postgres psql -U booster -d booster -v ON_ERROR_STOP=1 -c "
+DELETE FROM verification_decisions WHERE submission_id IN (SELECT vs.id FROM verification_submissions vs JOIN challenge_check_ins cc ON vs.check_in_id=cc.id JOIN challenges c ON cc.challenge_id=c.id WHERE c.title LIKE '시나리오%');
+DELETE FROM gps_verification_results WHERE submission_id IN (SELECT vs.id FROM verification_submissions vs JOIN challenge_check_ins cc ON vs.check_in_id=cc.id JOIN challenges c ON cc.challenge_id=c.id WHERE c.title LIKE '시나리오%');
+DELETE FROM verification_submissions WHERE check_in_id IN (SELECT cc.id FROM challenge_check_ins cc JOIN challenges c ON cc.challenge_id=c.id WHERE c.title LIKE '시나리오%');
+DELETE FROM challenge_check_ins WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM settlements WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM teams WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM challenge_participants WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
 DELETE FROM challenges WHERE title LIKE '시나리오%';
 "
 
@@ -284,15 +302,15 @@ DB Connections (active) → 1~2개 정도
 
 **테스트 흐름**:
 1. 시나리오 A에서 생성한 챌린지 ID 추출
-2. 사용자 1~5 각각 참여 신청
+2. 사용자 1~10 각각 참여 신청
    - `POST /api/challenges/{id}/participants`
    - 각 요청마다 트랜잭션 시작 → 코인 차감 → GPS 저장 → COMMIT
-3. CONFIRMED 상태로 전환 (AUTO approval)
+3. CONFIRMED 상태로 전환 (AUTO approval) → 10명 도달 시 팀 자동 구성
 4. 챌린지 상태를 ACTIVE로 변경
 
 **기대 결과**:
 - 참여 신청 응답시간 < 250ms
-- 5명 모두 CONFIRMED 상태 (스크립트에서 검증)
+- 10명 모두 CONFIRMED 상태 (스크립트에서 검증)
 - 5xx 에러 0건
 - HikariCP active 커넥션: 1~2개 (트랜잭션 중)
 
@@ -952,9 +970,9 @@ curl 'http://localhost:9090/api/v1/query?query=http_req_duration'
 # 백엔드 헬스 체크
 curl http://localhost:8080/actuator/health | jq .
 
-# DB 초기화
+# DB 초기화 (시나리오 데이터로 한정)
 docker exec booster-postgres psql -U booster -d booster -c \
-  "DELETE FROM challenge_check_ins WHERE id > 0;"
+  "DELETE FROM challenge_check_ins WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');"
 
 # k6 단독 실행 (env var 수동 지정)
 k6 run \

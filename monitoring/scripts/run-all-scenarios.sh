@@ -90,7 +90,9 @@ IMPORT_RESULT=$(curl -sf -X POST "$GRAFANA/api/dashboards/import" \
   -H "Content-Type: application/json" \
   -d "$IMPORT_PAYLOAD" 2>&1)
 
-if echo "$IMPORT_RESULT" | grep -q '"status":"success"'; then
+# 최신 Grafana /api/dashboards/import 응답은 {"imported":true,...} 형식.
+# 구형 {"status":"success"}와 신형 "imported":true 모두 성공으로 인식.
+if echo "$IMPORT_RESULT" | grep -qE '"status":"success"|"imported":\s*true'; then
   DASHBOARD_URL=$(echo "$IMPORT_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('importedUrl',''))" 2>/dev/null)
   ok "대시보드 Import 완료"
   echo -e "  ${GREEN}→ http://localhost:3000${DASHBOARD_URL}${NC}"
@@ -111,17 +113,49 @@ sleep 5
 # ══════════════════════════════════════════════════════════════════════
 log "시나리오 준비: DB 테스트 데이터 초기화..."
 
-psql_exec "
-DELETE FROM verification_decisions WHERE id > 0;
-DELETE FROM gps_verification_results WHERE id > 0;
-DELETE FROM verification_submissions WHERE id > 0;
-DELETE FROM settlements WHERE id > 0;
+# 시나리오 데이터만 삭제 (WHERE id>0 전역 삭제 금지 — 실데이터 보존).
+# 물리 FK(전부 NO ACTION, CASCADE 없음): participants→challenges, teams→challenges,
+# check_ins→participants, verification_submissions→check_ins, gps_results/decisions→submissions.
+# 특히 teams 미삭제 시 challenges 삭제가 teams→challenges FK 위반 →
+# psql -c 단일 트랜잭션 전체 롤백 → 데이터 누적 버그가 발생하므로 자식→부모 순서로 삭제한다.
+# chat_messages/cheer_emojis는 물리 FK가 없으나(누락 시 orphan 행) 정합성을 위해 함께 삭제한다.
+INIT_ERR=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "
+DELETE FROM verification_decisions WHERE submission_id IN (
+  SELECT vs.id FROM verification_submissions vs
+  JOIN challenge_check_ins cc ON vs.check_in_id = cc.id
+  JOIN challenges c ON cc.challenge_id = c.id
+  WHERE c.title LIKE '시나리오%');
+DELETE FROM gps_verification_results WHERE submission_id IN (
+  SELECT vs.id FROM verification_submissions vs
+  JOIN challenge_check_ins cc ON vs.check_in_id = cc.id
+  JOIN challenges c ON cc.challenge_id = c.id
+  WHERE c.title LIKE '시나리오%');
+DELETE FROM verification_submissions WHERE check_in_id IN (
+  SELECT cc.id FROM challenge_check_ins cc
+  JOIN challenges c ON cc.challenge_id = c.id
+  WHERE c.title LIKE '시나리오%');
 DELETE FROM challenge_check_ins WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM chat_messages WHERE team_id IN (
+  SELECT id FROM teams WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%'));
+DELETE FROM cheer_emojis WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM settlements WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
+DELETE FROM teams WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
 DELETE FROM challenge_participants WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
 DELETE FROM challenges WHERE title LIKE '시나리오%';
-" 2>/dev/null || warn "초기화 중 일부 테이블 건너뜀 (첫 실행 시 정상)"
+" 2>&1) || true
 
-ok "DB 초기화 완료"
+# ON_ERROR_STOP=1 이므로 FK 위반 등 실패 시 비어있지 않은 ERROR가 잡힌다.
+if echo "$INIT_ERR" | grep -qiE "ERROR|FATAL"; then
+  warn "DB 초기화 실패 (롤백됨): $(echo "$INIT_ERR" | grep -iE 'ERROR|FATAL' | head -1)"
+fi
+
+# 잔존 시나리오 데이터 검증 — 누적 버그(롤백) 재발 방지 가드
+REMAIN=$(psql_exec "SELECT COUNT(*) FROM challenges WHERE title LIKE '시나리오%';" | tr -d ' \n')
+if [ "${REMAIN:-0}" != "0" ]; then
+  warn "[WARN] 초기화 후에도 시나리오 챌린지 ${REMAIN}개 잔존 — cleanup 순서/FK 확인 필요"
+fi
+
+ok "DB 초기화 완료 (잔존 시나리오 챌린지: ${REMAIN:-0})"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════
@@ -211,9 +245,9 @@ done
 ok "시나리오 B 완료 — Grafana에서 POST 응답시간·DB 커넥션 확인"
 
 # 참여자 상태 검증 (CONFIRMED 10명 확인)
-CONFIRMED_COUNT=$(psql_exec "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id=$CHALLENGE_ID AND status='CONFIRMED';" | tr -d ' ')
-log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 10"
-if [ "$CONFIRMED_COUNT" -ne 10 ]; then
+CONFIRMED_COUNT=$(psql_exec "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id=$CHALLENGE_ID AND status='CONFIRMED';" | tr -d ' \n')
+log "참여자 CONFIRMED 수: ${CONFIRMED_COUNT:-0} / 10"
+if [ "${CONFIRMED_COUNT:-0}" -ne 10 ]; then
   warn "참여자 중 CONFIRMED가 10명이 아닙니다. 팀 구성이 실패할 수 있습니다."
 fi
 
@@ -334,10 +368,10 @@ k6 run \
 # 팀 구성 동시성 결과 검증 (k6 teamFormationConcurrency 시나리오 완료 후)
 if [ "${FORMATION_CHALLENGE_ID:-0}" != "0" ]; then
   log "팀 구성 동시성 결과 확인 중..."
-  TEAM_COUNT=$(psql_exec "SELECT COUNT(*) FROM teams WHERE challenge_id=$FORMATION_CHALLENGE_ID;" | tr -d ' ')
-  if [ "$TEAM_COUNT" -eq 2 ]; then
+  TEAM_COUNT=$(psql_exec "SELECT COUNT(*) FROM teams WHERE challenge_id=$FORMATION_CHALLENGE_ID;" | tr -d ' \n')
+  if [ "${TEAM_COUNT:-0}" -eq 2 ]; then
     ok "[PASS] 팀 구성 동시성 — A팀+B팀 정확히 2개 생성 (race condition 없음)"
-  elif [ "$TEAM_COUNT" -eq 0 ]; then
+  elif [ "${TEAM_COUNT:-0}" -eq 0 ]; then
     warn "[WARN] 팀 미구성 — 10명 참여 완료 여부 확인 필요"
   else
     warn "[FAIL] race condition 감지 — 팀 ${TEAM_COUNT}개 생성됨 (2개여야 함)"
@@ -354,12 +388,31 @@ log "챌린지 $CHALLENGE_ID 강제 종료 (ended_at을 과거로 설정, 스케
 
 psql_exec "UPDATE challenges SET ended_at=NOW()-INTERVAL '1 minute' WHERE id=$CHALLENGE_ID;" || warn "챌린지 ended_at 업데이트 실패"
 
-log "정산 스케줄러 대기 중 (70초, 스케줄러 주기 60초 기준)..."
+# 고정 sleep 대신 폴링 — 정산이 COMPLETED로 나오면 즉시 통과.
+# (스케줄러 주기 60초 + 위상 어긋남 + 정산 처리 시간으로 완료 시점이 가변적이므로
+#  고정 대기는 flaky false WARN을 유발한다.)
+SETTLE_TIMEOUT="${SETTLE_TIMEOUT:-180}"   # 최대 대기(초): 스케줄러 주기 60s + 지연/재시도 여유
+SETTLE_INTERVAL="${SETTLE_INTERVAL:-5}"   # 폴링 간격(초)
+log "정산 스케줄러 폴링 중 (최대 ${SETTLE_TIMEOUT}초, ${SETTLE_INTERVAL}초 간격)..."
 echo "  백엔드 로그에서 'Settlement' 키워드를 확인하세요."
-sleep 70
+SETTLE_RESULT='{}'
+SETTLE_DONE=0
+_elapsed=0
+while [ "$_elapsed" -lt "$SETTLE_TIMEOUT" ]; do
+  SETTLE_RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
+  if echo "$SETTLE_RESULT" | grep -q '"status":"COMPLETED"'; then
+    SETTLE_DONE=1
+    break
+  fi
+  sleep "$SETTLE_INTERVAL"
+  _elapsed=$((_elapsed + SETTLE_INTERVAL))
+done
 
-RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
-ok "시나리오 D 완료 — 정산 결과: $RESULT"
+if [ "$SETTLE_DONE" -eq 1 ]; then
+  ok "[PASS] 시나리오 D 완료 — 정산 COMPLETED (${_elapsed}초 경과): $SETTLE_RESULT"
+else
+  warn "[WARN] 시나리오 D — ${SETTLE_TIMEOUT}초 내 정산 미완료 (스케줄러/백엔드 로그 확인): $SETTLE_RESULT"
+fi
 
 echo ""
 
@@ -450,15 +503,25 @@ GPS_CHALLENGE_RESP=$(curl -sf -X POST "$API/api/challenges" \
 GPS_CHALLENGE_ID=$(echo "$GPS_CHALLENGE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('id','0'))" 2>/dev/null)
 
 if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
-  # userId=6 참여 신청 (GPS: 서울시청, radius=100m)
-  curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/participants" \
-    -H "Content-Type: application/json" \
-    -H "X-User-Id: 6" \
-    -d '{"personalStatement":"GPS테스트","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
-    > /dev/null 2>&1
+  # 체크인은 '팀 배정된 참여자'만 허용되므로 10명을 채워 팀 자동 구성을 트리거한다.
+  # (참여자 1명만으로는 team_id=NULL → 체크인 409 'no team assignment' → GPS 판정 미검증)
+  # userId=6은 기준 좌표(서울시청, radius=100m)로 등록 → H-1/H-2 GPS 경계 판정 대상.
+  for uid in 1 2 3 4 5 6 7 8 9 10; do
+    curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/participants" \
+      -H "Content-Type: application/json" \
+      -H "X-User-Id: $uid" \
+      -d '{"personalStatement":"GPS테스트","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
+      > /dev/null 2>&1
+  done
 
-  # ACTIVE 전환
+  # 10명 참여 시 팀 자동 구성 + ACTIVE 전환됨. 안전을 위해 상태 명시적 보정.
   psql_exec "UPDATE challenges SET status='ACTIVE', started_at=NOW()-INTERVAL '1 minute' WHERE id=$GPS_CHALLENGE_ID;" || true
+
+  # userId=6 팀 배정 확인 — 미배정 시 GPS 판정을 검증할 수 없으므로 경고
+  H_TEAM=$(psql_exec "SELECT COUNT(team_id) FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=6;" | tr -d ' \n')
+  if [ "${H_TEAM:-0}" = "0" ]; then
+    warn "[WARN] userId=6 팀 미배정 — 팀 구성 실패로 GPS 경계 검증(H) 불가"
+  fi
 
   # H-1: 반경 내 체크인 (≈44m north — 100m 이내)
   log "H-1: 반경 내 체크인 테스트 (37.56690, 126.9780 — 약 44m)..."
