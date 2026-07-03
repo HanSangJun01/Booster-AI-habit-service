@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../core/api_client.dart';
+import '../../services/challenge_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 
@@ -9,14 +11,49 @@ class PersonalCreateScreen extends StatefulWidget {
 }
 
 class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
-  int title = 0;
+  final _titleCtrl = TextEditingController();
   int period = 1; // 14일
   int freq = 2; // 3회
-  int radius = 1; // 100m
+  bool _loading = false;
 
   final _periods = ['7일', '14일', '21일', '30일'];
+  final _periodDays = [7, 14, 21, 30];
   final _freqs = ['1회', '2회', '3회', '4회', '5회', '6회', '7회'];
-  final _radii = ['50m', '100m', '200m'];
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      showBoosterToast(context, '챌린지 제목을 입력해주세요');
+      return;
+    }
+    setState(() => _loading = true);
+    final now = DateTime.now();
+    final end = now.add(Duration(days: _periodDays[period]));
+    try {
+      final created = await ChallengeService.createChallenge(
+        title: title,
+        startDate: _formatDate(now),
+        endDate: _formatDate(end),
+        weeklyTarget: freq + 1, // freq 인덱스(0~6) → "1회"~"7회"
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(created);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _formatDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   String get _exemptText {
     final n = freq + 1;
@@ -45,8 +82,8 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         TextField(
+                          controller: _titleCtrl,
                           maxLength: 30,
-                          onChanged: (v) => setState(() => title = v.length),
                           decoration: _inputDeco('챌린지 제목을 입력하세요'),
                         ),
                       ],
@@ -106,6 +143,7 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
+                          width: double.infinity,
                           height: 150,
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
@@ -136,12 +174,6 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
                                     fontSize: 14, fontWeight: FontWeight.w700)),
                           ],
                         ),
-                        const SizedBox(height: 14),
-                        const Text('인증 반경',
-                            style: TextStyle(
-                                fontSize: 13.5, fontWeight: FontWeight.w700, color: BC.ink2)),
-                        const SizedBox(height: 9),
-                        _chipRow(_radii, radius, (i) => setState(() => radius = i)),
                       ],
                     ),
                   ),
@@ -152,9 +184,10 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
               child: PrimaryButton(
-                label: '챌린지 만들기',
+                label: _loading ? '만드는 중...' : '챌린지 만들기',
                 trailingIcon: Icons.chevron_right_rounded,
-                onTap: () => Navigator.of(context).pop(true),
+                onTap: _submit,
+                enabled: !_loading,
               ),
             ),
           ],

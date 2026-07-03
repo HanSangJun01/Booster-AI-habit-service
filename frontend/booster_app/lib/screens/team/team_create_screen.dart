@@ -1,7 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/api_client.dart';
+import '../../core/session.dart';
+import '../../models/team.dart';
+import '../../services/team_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import 'team_battle_screen.dart';
+import 'team_waiting_screen.dart';
 
 class TeamCreateScreen extends StatefulWidget {
   const TeamCreateScreen({super.key});
@@ -10,15 +17,29 @@ class TeamCreateScreen extends StatefulWidget {
 }
 
 class _TeamCreateScreenState extends State<TeamCreateScreen> {
-  int step = 0; // 0 기본, 1 공개설정
-  int size = 2; // 3:3 / 4:4 / 5:5
-  int freq = 2; // 주 N회 (3회)
-  int deposit = 1; // 100/300/500
-  bool isPublic = true;
+  // 정원은 10명 고정 — 10명이 차면 서버가 랜덤으로 5:5 팀을 구성한다
+  // (docs/.omc/specs/deep-interview-booster.md, MVP 정책). 사용자가 팀
+  // 인원을 고르는 옵션이 아니다.
+  static const _capacity = 10;
 
-  final _sizes = ['3 : 3', '4 : 4', '5 : 5'];
+  int step = 0; // 0 기본, 1 공개설정
+  int freq = 2; // 주 N회 (3회)
+  bool isPublic = true;
+  bool _creating = false;
+
+  final _nameCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  final _depositCtrl = TextEditingController(text: '300');
+
   final _freqs = ['1회', '2회', '3회', '4회', '5회', '6회', '7회'];
-  final _deposits = ['100', '300', '500'];
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _descCtrl.dispose();
+    _depositCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,9 +60,18 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
                   ? PrimaryButton(
                       label: '다음',
                       trailingIcon: Icons.chevron_right_rounded,
-                      onTap: () => setState(() => step = 1))
+                      onTap: () {
+                        if (_nameCtrl.text.trim().isEmpty) {
+                          showBoosterToast(context, '팀 이름을 입력해주세요');
+                          return;
+                        }
+                        setState(() => step = 1);
+                      })
                   : PrimaryButton(
-                      label: isPublic ? '팀 만들기' : '방 코드 생성하기',
+                      label: _creating
+                          ? '만드는 중...'
+                          : (isPublic ? '팀 만들기' : '방 코드 생성하기'),
+                      enabled: !_creating,
                       onTap: _onCreate),
             ),
           ],
@@ -108,40 +138,71 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
       children: [
         _card('1. 팀 이름',
             child: TextField(
+              controller: _nameCtrl,
               maxLength: 20,
               decoration: _deco('팀 이름을 입력하세요'),
             )),
         _card('2. 소개글',
             sub: '어떤 팀인지 짧게 소개해 주세요.',
             child: TextField(
+              controller: _descCtrl,
               maxLines: 3,
               maxLength: 60,
               decoration: _deco('예) 매일 30분 운동 인증하는 팀이에요!'),
             )),
-        _card('3. 팀 인원',
-            sub: '양 팀 인원을 같게 맞춰 배틀해요.',
-            child: _chipRow(_sizes, size, (i) => setState(() => size = i))),
-        _card('4. 주 몇 회',
+        _card('3. 주 몇 회',
             sub: '일주일에 몇 번 인증할까요?',
             child: _chipRow(_freqs, freq, (i) => setState(() => freq = i))),
-        _card('5. 인증 방법',
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                  color: BC.oSoft, borderRadius: BorderRadius.circular(13)),
-              child: Row(children: const [
-                Icon(Icons.location_on_rounded, color: BC.oMain, size: 20),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('GPS 위치 인증 · 팀 챌린지는 반경 제한 없이 등록 위치에서 인증해요.',
-                      style: TextStyle(
-                          fontSize: 13, color: BC.ink2, fontWeight: FontWeight.w600, height: 1.4)),
+        _card('4. 인증 방법',
+            sub: 'GPS 위치 인증 · 팀 챌린지는 반경 제한 없이 등록 위치에서 인증해요.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  height: 150,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFD3D7DE)),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(Icons.location_on_rounded, color: BC.oMain, size: 28),
+                      SizedBox(height: 6),
+                      Text('지도에서 위치 선택',
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF8A8A92))),
+                    ],
+                  ),
                 ),
-              ]),
+                const SizedBox(height: 12),
+                Row(
+                  children: const [
+                    Icon(Icons.location_on_rounded, size: 17, color: BC.oMain),
+                    SizedBox(width: 8),
+                    Text('서울 서초구 반포한강공원',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ],
             )),
-        _card('6. 예치코인',
-            sub: '참여 시 각자 거는 코인이에요. (코인)',
-            child: _chipRow(_deposits, deposit, (i) => setState(() => deposit = i))),
+        _card('5. 예치코인',
+            sub: '참여 시 각자 거는 코인이에요.',
+            child: TextField(
+              controller: _depositCtrl,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: _deco('코인 수를 입력하세요').copyWith(
+                suffixText: '코인',
+                suffixStyle: const TextStyle(
+                    color: BC.oMain, fontWeight: FontWeight.w700, fontSize: 14),
+              ),
+            )),
       ],
     );
   }
@@ -211,13 +272,36 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
     );
   }
 
-  void _onCreate() {
-    if (isPublic) {
-      Navigator.of(context).pop();
-      showBoosterToast(context, '공개 팀을 만들었어요! 팀원을 모아보세요.');
-    } else {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const OwnerCodeScreen(code: '7K2Q')));
+  Future<void> _onCreate() async {
+    final depositValue = int.tryParse(_depositCtrl.text.trim());
+    if (depositValue == null || depositValue <= 0) {
+      showBoosterToast(context, '예치코인을 입력해주세요');
+      return;
+    }
+    setState(() => _creating = true);
+    try {
+      final team = await TeamService.createTeam(
+        name: _nameCtrl.text.trim(),
+        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+        capacity: _capacity,
+        weeklyTarget: freq + 1,
+        deposit: depositValue,
+        isPublic: isPublic,
+      );
+      if (!mounted) return;
+      if (isPublic) {
+        Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => TeamWaitingScreen(team: team)));
+      } else {
+        // TODO: 방 코드 발급 API가 없어 임시 코드를 그대로 사용.
+        Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => OwnerCodeScreen(code: '7K2Q', team: team)));
+      }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _creating = false);
     }
   }
 
@@ -238,12 +322,47 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
 }
 
 /// 방장 화면 — 방 코드 공유 + 모집 현황 + 챌린지 시작
-class OwnerCodeScreen extends StatelessWidget {
+class OwnerCodeScreen extends StatefulWidget {
   final String code;
-  const OwnerCodeScreen({super.key, required this.code});
+  final Team team;
+  const OwnerCodeScreen({super.key, required this.code, required this.team});
+
+  @override
+  State<OwnerCodeScreen> createState() => _OwnerCodeScreenState();
+}
+
+class _OwnerCodeScreenState extends State<OwnerCodeScreen> {
+  late Team _team;
+
+  @override
+  void initState() {
+    super.initState();
+    _team = widget.team;
+    Session.upsertTeam(_team);
+  }
+
+  void _debugFillTeam() {
+    setState(() {
+      _team = Team(
+        teamId: _team.teamId,
+        name: _team.name,
+        description: _team.description,
+        ownerId: _team.ownerId,
+        memberCount: _team.capacity ?? 10,
+        capacity: _team.capacity,
+        weeklyTarget: _team.weeklyTarget,
+        deposit: _team.deposit,
+        isPublic: _team.isPublic,
+      );
+    });
+    Session.upsertTeam(_team);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final code = widget.code;
+    final cur = _team.memberCount;
+    final cap = _team.capacity ?? 10;
     return Scaffold(
       backgroundColor: BC.bg,
       body: SafeArea(
@@ -318,11 +437,12 @@ class OwnerCodeScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16)),
                     child: Column(
                       children: [
-                        Row(children: const [
-                          Text('1 / 10명',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                          Spacer(),
-                          Text('방장(나) 포함',
+                        Row(children: [
+                          Text('$cur / $cap명',
+                              style: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w700)),
+                          const Spacer(),
+                          const Text('방장(나) 포함',
                               style: TextStyle(
                                   fontSize: 13, color: BC.ink2, fontWeight: FontWeight.w600)),
                         ]),
@@ -340,7 +460,17 @@ class OwnerCodeScreen extends StatelessWidget {
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700)),
                           ),
-                          for (int i = 0; i < 9; i++)
+                          for (int i = 0; i < cur - 1; i++)
+                            Container(
+                              width: 34,
+                              height: 34,
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(
+                                  color: Color(0xFFF0997B), shape: BoxShape.circle),
+                              child: const Icon(Icons.person_rounded,
+                                  size: 16, color: Colors.white),
+                            ),
+                          for (int i = 0; i < cap - cur; i++)
                             Container(
                               width: 34,
                               height: 34,
@@ -355,6 +485,23 @@ class OwnerCodeScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (kDebugMode && !_team.isFull) ...[
+                    const SizedBox(height: 14),
+                    GestureDetector(
+                      onTap: _debugFillTeam,
+                      child: Container(
+                        height: 46,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                            color: BC.blueSoft,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: BC.blue, width: 1.2)),
+                        child: const Text('[테스트] 팀원 다 모인 것으로 처리',
+                            style: TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w700, color: BC.blue)),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -362,15 +509,19 @@ class OwnerCodeScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
               child: PrimaryButton(
                 label: '챌린지 시작하기',
-                enabled: false,
-                onTap: () {},
+                enabled: _team.isFull,
+                onTap: () {
+                  Navigator.of(context).pushReplacement(MaterialPageRoute(
+                      builder: (_) => TeamBattleScreen(teamName: _team.name)));
+                },
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 14),
-              child: Text('인원이 모이면 시작할 수 있어요',
-                  style: TextStyle(fontSize: 12, color: BC.ink3)),
-            ),
+            if (!_team.isFull)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: Text('인원이 모이면 시작할 수 있어요',
+                    style: TextStyle(fontSize: 12, color: BC.ink3)),
+              ),
           ],
         ),
       ),

@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
+import '../../core/api_client.dart';
+import '../../core/session.dart';
+import '../../models/team.dart';
+import '../../services/team_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
-import 'team_battle_screen.dart';
+import 'team_waiting_screen.dart';
 
 class TeamDetailScreen extends StatefulWidget {
   final String name;
   final String desc;
   final List<String> tags;
   final String members; // "8/10"
+  /// 탐색 목록(team_explore_screen.dart)이 아직 하드코딩 데이터라 실제
+  /// teamId가 없을 수 있다 — null이면 참여 API를 호출하지 않고 로컬로만 처리한다.
+  final int? teamId;
   const TeamDetailScreen({
     super.key,
     required this.name,
     required this.desc,
     required this.tags,
     required this.members,
+    this.teamId,
   });
 
   @override
@@ -22,12 +30,49 @@ class TeamDetailScreen extends StatefulWidget {
 
 class _TeamDetailScreenState extends State<TeamDetailScreen> {
   bool joined = false;
+  bool _joining = false;
 
   static const _avatarColors = [
     Color(0xFFFF6A38), Color(0xFFF0997B), Color(0xFFFFB088), Color(0xFFFF8A5B),
     Color(0xFFE8723E), Color(0xFFFFA06E), Color(0xFFF08050), Color(0xFFFF7A45),
   ];
   static const _names = ['김', '이', '박', '최', '정', '강', '윤', '한'];
+
+  Future<void> _join() async {
+    setState(() => _joining = true);
+    try {
+      if (widget.teamId != null) {
+        await TeamService.joinTeam(widget.teamId!);
+      } else {
+        // 탐색 목록이 하드코딩 데이터라 실제 teamId가 없는 경우 — API 호출 없이
+        // 참여한 것처럼만 로컬 처리한다.
+        await Future.delayed(const Duration(milliseconds: 600));
+      }
+      if (!mounted) return;
+      final parts = widget.members.split('/');
+      final cur = int.tryParse(parts.first) ?? 0;
+      final cap = int.tryParse(parts.last) ?? 10;
+      setState(() => joined = true);
+      final team = Team(
+        teamId: widget.teamId ?? Session.nextMockTeamId(),
+        name: widget.name,
+        description: widget.desc,
+        ownerId: 0,
+        memberCount: cur + 1, // 참여로 인원 +1 낙관적 반영
+        capacity: cap,
+      );
+      // 뒤로가기 후 팀 홈 화면이 다시 조회할 때(백엔드 미연결 시) 이 상태를
+      // 그대로 보여주기 위해 캐시해둔다 — Session.myTeams 주석 참고.
+      Session.upsertTeam(team);
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => TeamWaitingScreen(team: team)));
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _joining = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -268,18 +313,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                               fontWeight: FontWeight.w800)),
                     )
                   : PrimaryButton(
-                      label: '500코인 걸고 참여하기',
+                      label: _joining ? '참여하는 중...' : '500코인 걸고 참여하기',
                       leadingIcon: Icons.monetization_on_rounded,
-                      onTap: () {
-                        setState(() => joined = true);
-                        showBoosterToast(context, '참여 완료! 배틀이 곧 시작돼요.');
-                        Future.delayed(const Duration(milliseconds: 700), () {
-                          if (mounted) {
-                            Navigator.of(context).push(MaterialPageRoute(
-                                builder: (_) => TeamBattleScreen(teamName: widget.name)));
-                          }
-                        });
-                      },
+                      enabled: !_joining,
+                      onTap: _join,
                     ),
             ),
           ],

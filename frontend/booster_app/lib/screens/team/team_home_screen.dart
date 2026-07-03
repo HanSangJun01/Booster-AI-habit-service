@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import '../../core/api_client.dart';
+import '../../models/team.dart';
+import '../../services/team_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
 import 'team_explore_screen.dart';
-import 'team_detail_screen.dart';
 import 'team_create_screen.dart';
+import 'team_waiting_screen.dart';
+import 'team_battle_screen.dart';
 
 class TeamHomeScreen extends StatefulWidget {
   const TeamHomeScreen({super.key});
@@ -13,15 +17,76 @@ class TeamHomeScreen extends StatefulWidget {
 }
 
 class _TeamHomeScreenState extends State<TeamHomeScreen> {
-  bool hasTeams = true;
+  bool _loading = true;
+  List<Team> _myTeams = [];
+  bool _didInitialLoad = false;
+  int? _lastActiveTabIndex;
 
-  void _goExplore() => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => const TeamExploreScreen()));
-  void _goCreate() => Navigator.of(context)
-      .push(MaterialPageRoute(builder: (_) => const TeamCreateScreen()));
-  void _goDetail(String name, String desc, List<String> tags, String members) =>
-      Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => TeamDetailScreen(name: name, desc: desc, tags: tags, members: members)));
+  @override
+  void initState() {
+    super.initState();
+    _loadTeam();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MainScaffold는 탭을 IndexedStack으로 유지해서, 다른 탭에서 상태가
+    // 바뀌어도 이 화면의 initState가 다시 안 불린다. 팀 탭(index 1)이
+    // "새로 활성화"될 때마다 다시 불러와서 최신 상태를 본다.
+    const teamTabIndex = 1;
+    final current = MainNavScope.of(context).current;
+    if (_didInitialLoad && current == teamTabIndex && _lastActiveTabIndex != teamTabIndex) {
+      _loadTeam();
+    }
+    _lastActiveTabIndex = current;
+    _didInitialLoad = true;
+  }
+
+  Future<void> _loadTeam() async {
+    setState(() => _loading = true);
+    try {
+      final teams = await TeamService.fetchMyTeams();
+      if (!mounted) return;
+      setState(() {
+        _myTeams = teams;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // TeamService.fetchMyTeams()는 서버 연결 실패만 내부에서 흡수하고, 실제
+      // 에러(statusCode 있음)는 여기까지 그대로 올라온다 — 조용히 감추지 않고
+      // 토스트로 드러낸다.
+      if (e.statusCode != null) showBoosterToast(context, e.message);
+      setState(() {
+        _myTeams = [];
+        _loading = false;
+      });
+    }
+  }
+
+  void _goExplore() async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const TeamExploreScreen()));
+    if (mounted) _loadTeam();
+  }
+
+  void _goCreate() async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const TeamCreateScreen()));
+    if (mounted) _loadTeam();
+  }
+
+  void _goTeam(Team team) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => team.isFull
+          ? TeamBattleScreen(teamName: team.name)
+          : TeamWaitingScreen(team: team),
+    ));
+    // 대기 화면에서 팀원 승인/강퇴 등으로 인원수가 바뀌었을 수 있어, 돌아오면
+    // 다시 조회해서 카드에 최신 인원수를 반영한다.
+    if (mounted) _loadTeam();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +97,11 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
         child: Column(
           children: [
             const BoosterHeader(),
-            Expanded(child: hasTeams ? _populated() : _empty()),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: BC.oMain))
+                  : (_myTeams.isEmpty ? _empty() : _populated(_myTeams)),
+            ),
             const BoosterBottomNav(),
           ],
         ),
@@ -40,47 +109,23 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
     );
   }
 
-  Widget _demoToggle() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(children: [
-        const Text('[데모] 상태',
-            style: TextStyle(fontSize: 12, color: BC.ink3, fontWeight: FontWeight.w600)),
-        const SizedBox(width: 10),
-        for (final e in [('내 팀 있음', true), ('팀 없음', false)]) ...[
-          GestureDetector(
-            onTap: () => setState(() => hasTeams = e.$2),
-            child: Container(
-              margin: const EdgeInsets.only(right: 7),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: hasTeams == e.$2 ? BC.oMain : Colors.white,
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(
-                    color: hasTeams == e.$2 ? BC.oMain : BC.line, width: 1.5),
-              ),
-              child: Text(e.$1,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: hasTeams == e.$2 ? Colors.white : BC.ink3)),
-            ),
-          ),
-        ],
-      ]),
-    );
-  }
-
   // ───────────── 내 팀 있음 ─────────────
-  Widget _populated() {
+  // 사용자는 여러 팀에 동시에 참여할 수 있다(docs/erd/MVP_ERD.md 참고) —
+  // 팀이 있어도 새 팀을 탐색/생성할 수 있도록 액션은 항상 보여준다.
+  Widget _populated(List<Team> teams) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
       children: [
-        _demoToggle(),
         const Text('내 팀', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
         const SizedBox(height: 13),
-        _teamCard('다 같이 헬스', '매일 30분 운동하기!', ['운동', '헬스', '매일 인증'], '8/10'),
-        _teamCard('아침러닝 챌린지', '건강한 하루의 시작', ['러닝', '아침운동', '습관'], '6/10'),
+        for (final team in teams)
+          _teamCard(
+            team.name,
+            team.description ?? '',
+            team.isFull ? '배틀 진행 중' : '팀원 모집 중',
+            '${team.memberCount}/${team.capacity ?? 10}',
+            onTap: () => _goTeam(team),
+          ),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -93,9 +138,33 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
     );
   }
 
-  Widget _teamCard(String name, String desc, List<String> tags, String members) {
+  Widget _actionBox(IconData icon, String label, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () => _goDetail(name, desc, tags, members),
+      onTap: onTap,
+      child: Container(
+        height: 84,
+        decoration: BoxDecoration(color: BC.oSoft, borderRadius: BorderRadius.circular(16)),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(color: BC.oMain, shape: BoxShape.circle),
+              child: Icon(icon, color: Colors.white, size: 22),
+            ),
+            const SizedBox(width: 11),
+            Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _teamCard(String name, String desc, String statusTag, String members,
+      {required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(14),
@@ -131,10 +200,9 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
                   const SizedBox(height: 5),
                   Text(desc, style: const TextStyle(fontSize: 13.5, color: BC.ink2)),
                   const SizedBox(height: 9),
-                  Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: tags.map((t) => MiniTag(t)).toList()),
+                  MiniTag(statusTag,
+                      bg: statusTag == '배틀 진행 중' ? BC.oSoft : BC.blueSoft,
+                      fg: statusTag == '배틀 진행 중' ? BC.oMain : BC.blue),
                   const SizedBox(height: 11),
                   Row(
                     children: [
@@ -162,41 +230,14 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
     );
   }
 
-  Widget _actionBox(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 84,
-        decoration: BoxDecoration(color: BC.oSoft, borderRadius: BorderRadius.circular(16)),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: const BoxDecoration(color: BC.oMain, shape: BoxShape.circle),
-              child: Icon(icon, color: Colors.white, size: 22),
-            ),
-            const SizedBox(width: 11),
-            Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          ],
-        ),
-      ),
-    );
-  }
-
   // ───────────── 팀 없음(빈 상태) ─────────────
   Widget _empty() {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
       children: [
-        _demoToggle(),
         const Text('팀에 참여해서 함께\n더 큰 동기부여를 받아보세요!',
             style: TextStyle(
                 fontSize: 22, fontWeight: FontWeight.w800, height: 1.35)),
-        const SizedBox(height: 8),
-        const Text('팀은 한 곳만 참여할 수 있어요.',
-            style: TextStyle(fontSize: 14, color: BC.ink3)),
         const SizedBox(height: 18),
         Center(
           child: Container(

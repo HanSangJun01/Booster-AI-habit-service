@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'theme/booster_theme.dart';
-import 'screens/main_scaffold.dart';
+import 'screens/auth/login_screen.dart';
 
 void main() => runApp(const BoosterApp());
 
@@ -12,7 +12,7 @@ class BoosterApp extends StatelessWidget {
       title: 'Booster',
       debugShowCheckedModeBanner: false,
       theme: BoosterTheme.light(),
-      home: const MainScaffold(),
+      home: const LoginScreen(),
     );
   }
 }

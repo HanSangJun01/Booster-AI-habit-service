@@ -35,7 +35,8 @@ class CoinDot extends StatelessWidget {
 /// 코인 잔액 알약
 class CoinPill extends StatelessWidget {
   final String amount;
-  const CoinPill({super.key, this.amount = '12,450'});
+  // TODO: 사용자 전체 코인 잔액 API가 아직 없어 임시 고정값(1,000) 표시.
+  const CoinPill({super.key, this.amount = '1,000'});
 
   @override
   Widget build(BuildContext context) {
@@ -324,6 +325,70 @@ class MiniTag extends StatelessWidget {
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
         child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
       );
+}
+
+/// 로그인/회원가입 등에서 쓰는 라벨 + 입력 필드
+class BoosterTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String? hint;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final Widget? suffixIcon;
+  final String? Function(String?)? validator;
+  const BoosterTextField({
+    super.key,
+    required this.controller,
+    required this.label,
+    this.hint,
+    this.obscureText = false,
+    this.keyboardType,
+    this.suffixIcon,
+    this.validator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: const BorderSide(color: BC.line, width: 1.5),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w700, color: BC.ink2)),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          obscureText: obscureText,
+          keyboardType: keyboardType,
+          validator: validator,
+          style: const TextStyle(
+              fontSize: 15, color: BC.ink, fontWeight: FontWeight.w600),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: BC.ink3, fontWeight: FontWeight.w500),
+            filled: true,
+            fillColor: Colors.white,
+            suffixIcon: suffixIcon,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            border: border,
+            enabledBorder: border,
+            focusedBorder: border.copyWith(
+                borderSide: const BorderSide(color: BC.oMain, width: 1.8)),
+            errorBorder: border.copyWith(
+                borderSide: const BorderSide(color: Color(0xFFE5484D), width: 1.5)),
+            focusedErrorBorder: border.copyWith(
+                borderSide: const BorderSide(color: Color(0xFFE5484D), width: 1.8)),
+            errorStyle: const TextStyle(
+                fontSize: 11.5, color: Color(0xFFE5484D), fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// 가벼운 토스트

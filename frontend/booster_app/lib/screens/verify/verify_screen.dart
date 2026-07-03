@@ -1,8 +1,23 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../core/api_client.dart';
+import '../../models/challenge.dart';
+import '../../models/check_in.dart';
+import '../../models/team.dart';
+import '../../services/challenge_service.dart';
+import '../../services/team_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
+
+/// 팀 하나의 인증 카드에 필요한 데이터 묶음. 팀에 진행 중인 챌린지가 아직
+/// 없으면(정원 미달 등) challenge가 null이고 checkIns는 비어 있다.
+class _TeamChallengeInfo {
+  final Team team;
+  final Challenge? challenge;
+  final List<CheckIn> checkIns;
+  _TeamChallengeInfo({required this.team, required this.challenge, required this.checkIns});
+}
 
 class VerifyScreen extends StatefulWidget {
   const VerifyScreen({super.key});
@@ -11,9 +26,94 @@ class VerifyScreen extends StatefulWidget {
 }
 
 class _VerifyScreenState extends State<VerifyScreen> {
-  bool personalDone = false;
+  bool _loading = true;
+  Challenge? _challenge;
+  List<CheckIn> _checkIns = [];
+  List<_TeamChallengeInfo> _teamInfos = [];
+  bool _didInitialLoad = false;
+  int? _lastActiveTabIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MainScaffold는 탭을 IndexedStack으로 유지해서, 인증 탭을 한 번 연 뒤엔
+    // 다른 탭(팀 생성 등)에서 상태가 바뀌어도 initState가 다시 안 불린다.
+    // 인증 탭(index 2)이 "새로 활성화"될 때마다 다시 불러와서 최신 상태를 본다.
+    const verifyTabIndex = 2;
+    final current = MainNavScope.of(context).current;
+    if (_didInitialLoad && current == verifyTabIndex && _lastActiveTabIndex != verifyTabIndex) {
+      _load();
+    }
+    _lastActiveTabIndex = current;
+    _didInitialLoad = true;
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final challenge = await ChallengeService.fetchActiveChallenge();
+      final checkIns = challenge == null
+          ? <CheckIn>[]
+          : await ChallengeService.fetchCheckIns(challenge.challengeId);
+      final teams = await TeamService.fetchMyTeams();
+      final teamInfos = <_TeamChallengeInfo>[];
+      for (final team in teams) {
+        final teamChallenge = await ChallengeService.fetchActiveChallengeForTeam(team.teamId);
+        final teamCheckIns = teamChallenge == null
+            ? <CheckIn>[]
+            : await ChallengeService.fetchCheckIns(teamChallenge.challengeId);
+        teamInfos.add(_TeamChallengeInfo(
+            team: team, challenge: teamChallenge, checkIns: teamCheckIns));
+      }
+      if (!mounted) return;
+      setState(() {
+        _challenge = challenge;
+        _checkIns = checkIns;
+        _teamInfos = teamInfos;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode != null) showBoosterToast(context, e.message);
+      setState(() {
+        _challenge = null;
+        _checkIns = [];
+        _teamInfos = [];
+        _loading = false;
+      });
+    }
+  }
+
+  String get _today {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+  }
+
+  bool get _doneToday => _checkIns.any((c) => c.checkInDate == _today);
+
+  int get _currentStreak {
+    final success = _checkIns.where((c) => c.isSuccess).map((c) => c.date).toSet();
+    var day = DateTime.now();
+    var streak = 0;
+    while (success.contains(DateTime(day.year, day.month, day.day))) {
+      streak++;
+      day = day.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  int get _totalSuccessCount => _checkIns.where((c) => c.isSuccess).length;
 
   Future<void> _startGpsVerify() async {
+    final challenge = _challenge;
+    if (challenge == null) return;
     final ok = await showModalBottomSheet<bool>(
       context: context,
       isDismissible: false,
@@ -22,9 +122,81 @@ class _VerifyScreenState extends State<VerifyScreen> {
       barrierColor: Colors.black.withOpacity(.5),
       builder: (_) => const _GpsVerifySheet(),
     );
-    if (ok == true && mounted) {
-      setState(() => personalDone = true);
-      showBoosterToast(context, '오늘 인증을 완료했어요! 🔥');
+    if (ok != true || !mounted) return;
+
+    try {
+      final checkIn = await ChallengeService.createCheckIn(challenge.challengeId);
+      final passed = await ChallengeService.submitGpsVerification(checkIn.checkInId);
+      if (!mounted) return;
+      setState(() {
+        _checkIns = [
+          ..._checkIns,
+          CheckIn(
+            checkInId: checkIn.checkInId,
+            checkInDate: checkIn.checkInDate,
+            status: passed ? 'SUCCESS' : 'FAILED',
+          ),
+        ];
+      });
+      showBoosterToast(
+          context, passed ? '오늘 인증을 완료했어요! 🔥' : '인증 반경을 벗어났어요. 다시 시도해주세요.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    }
+  }
+
+  bool _doneTodayFor(List<CheckIn> checkIns) => checkIns.any((c) => c.checkInDate == _today);
+
+  int _currentStreakFor(List<CheckIn> checkIns) {
+    final success = checkIns.where((c) => c.isSuccess).map((c) => c.date).toSet();
+    var day = DateTime.now();
+    var streak = 0;
+    while (success.contains(DateTime(day.year, day.month, day.day))) {
+      streak++;
+      day = day.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  Future<void> _startTeamGpsVerify(_TeamChallengeInfo info) async {
+    final challenge = info.challenge;
+    if (challenge == null) return;
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(.5),
+      builder: (_) => const _GpsVerifySheet(),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      final checkIn = await ChallengeService.createCheckIn(challenge.challengeId);
+      final passed = await ChallengeService.submitGpsVerification(checkIn.checkInId);
+      if (!mounted) return;
+      setState(() {
+        final idx = _teamInfos.indexWhere((i) => i.team.teamId == info.team.teamId);
+        if (idx == -1) return;
+        _teamInfos[idx] = _TeamChallengeInfo(
+          team: info.team,
+          challenge: challenge,
+          checkIns: [
+            ...info.checkIns,
+            CheckIn(
+              checkInId: checkIn.checkInId,
+              checkInDate: checkIn.checkInDate,
+              status: passed ? 'SUCCESS' : 'FAILED',
+            ),
+          ],
+        );
+      });
+      showBoosterToast(
+          context, passed ? '오늘 팀 인증을 완료했어요! 🔥' : '인증 반경을 벗어났어요. 다시 시도해주세요.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
     }
   }
 
@@ -38,28 +210,33 @@ class _VerifyScreenState extends State<VerifyScreen> {
           children: [
             const BoosterHeader(),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                children: [
-                  const Text('오늘의 인증',
-                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  const Text('참여 중인 챌린지에서 인증을 완료해 보세요.',
-                      style: TextStyle(fontSize: 13.5, color: BC.ink2)),
-                  const SizedBox(height: 22),
-                  _sectionTitle(Icons.person_rounded, BC.oMain, BC.oSoft, '개인 챌린지', '1'),
-                  const SizedBox(height: 12),
-                  _personalCard(),
-                  const SizedBox(height: 24),
-                  _sectionTitle(Icons.groups_rounded, BC.blue, BC.blueSoft, '팀 챌린지', '2'),
-                  const SizedBox(height: 12),
-                  _teamCard('다 같이 헬스', 53, 47, 'Team Blue', BC.blue, '🔥 우리 팀이 6%p 앞서고 있어요',
-                      true, '종료까지 2일'),
-                  const SizedBox(height: 12),
-                  _teamCard('아침 러닝 챌린지', 48, 52, 'Team Green', BC.green,
-                      '상대 팀이 4%p 앞서 있어요', false, '종료까지 5일'),
-                ],
-              ),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: BC.oMain))
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                      children: [
+                        const Text('오늘의 인증',
+                            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 6),
+                        const Text('참여 중인 챌린지에서 인증을 완료해 보세요.',
+                            style: TextStyle(fontSize: 13.5, color: BC.ink2)),
+                        const SizedBox(height: 22),
+                        _sectionTitle(Icons.person_rounded, BC.oMain, BC.oSoft, '개인 챌린지',
+                            _challenge == null ? '0' : '1'),
+                        const SizedBox(height: 12),
+                        _challenge == null ? _noPersonalChallenge() : _personalCard(_challenge!),
+                        if (_teamInfos.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          _sectionTitle(Icons.groups_rounded, BC.blue, BC.blueSoft, '팀 챌린지',
+                              '${_teamInfos.length}'),
+                          const SizedBox(height: 12),
+                          for (final info in _teamInfos) ...[
+                            _teamCard(info),
+                            const SizedBox(height: 12),
+                          ],
+                        ],
+                      ],
+                    ),
             ),
             const BoosterBottomNav(),
           ],
@@ -90,7 +267,24 @@ class _VerifyScreenState extends State<VerifyScreen> {
     );
   }
 
-  Widget _personalCard() {
+  Widget _noPersonalChallenge() {
+    return AppCard(
+      child: Column(
+        children: [
+          const Icon(Icons.add_circle_outline_rounded, size: 32, color: BC.ink3),
+          const SizedBox(height: 8),
+          const Text('진행 중인 개인 챌린지가 없어요',
+              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: BC.ink2)),
+          const SizedBox(height: 4),
+          const Text('홈 화면에서 챌린지를 먼저 만들어보세요.',
+              style: TextStyle(fontSize: 12.5, color: BC.ink3)),
+        ],
+      ),
+    );
+  }
+
+  Widget _personalCard(Challenge challenge) {
+    final done = _doneToday;
     return AppCard(
       padding: EdgeInsets.zero,
       child: ClipRRect(
@@ -107,12 +301,12 @@ class _VerifyScreenState extends State<VerifyScreen> {
                     children: [
                       Row(
                         children: [
-                          const Expanded(
-                            child: Text('매일 30분 운동하기',
-                                style:
-                                    TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                          Expanded(
+                            child: Text(challenge.title,
+                                style: const TextStyle(
+                                    fontSize: 17, fontWeight: FontWeight.w800)),
                           ),
-                          _statusPill(personalDone),
+                          _statusPill(done),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -137,14 +331,17 @@ class _VerifyScreenState extends State<VerifyScreen> {
                       const SizedBox(height: 14),
                       Row(
                         children: [
-                          _meta('연속 인증', '12', '일'),
+                          _meta('연속 인증', '$_currentStreak', '일'),
                           Container(
-                              width: 1, height: 34, color: BC.line, margin: const EdgeInsets.symmetric(horizontal: 14)),
-                          _meta('목표 달성률', '78', '%'),
+                              width: 1,
+                              height: 34,
+                              color: BC.line,
+                              margin: const EdgeInsets.symmetric(horizontal: 14)),
+                          _meta('누적 인증', '$_totalSuccessCount', '회'),
                         ],
                       ),
                       const SizedBox(height: 16),
-                      personalDone
+                      done
                           ? _doneButton()
                           : PrimaryButton(
                               label: '인증하기',
@@ -231,8 +428,40 @@ class _VerifyScreenState extends State<VerifyScreen> {
     );
   }
 
-  Widget _teamCard(String name, int ours, int theirs, String oppName, Color oppColor,
-      String lead, bool leading, String endsIn) {
+  // 참여율·상대팀 VS 대결 통계는 배틀/랭킹 관련 API가 없어서 아직 못 채운다.
+  // 체크인(인증) 자체는 개인 챌린지와 동일한 API로 실제 연동돼 있다.
+  Widget _teamCard(_TeamChallengeInfo info) {
+    final team = info.team;
+    final challenge = info.challenge;
+
+    if (challenge == null) {
+      return AppCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(team.name,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                ),
+                MiniTag(team.isFull ? '배틀 진행 중' : '팀원 모집 중',
+                    bg: team.isFull ? BC.oSoft : BC.blueSoft,
+                    fg: team.isFull ? BC.oMain : BC.blue),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              team.isFull ? '아직 팀 챌린지가 생성되지 않았어요.' : '팀원이 다 모이면 배틀과 함께 인증이 시작돼요.',
+              style: const TextStyle(fontSize: 13, color: BC.ink2),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final done = _doneTodayFor(info.checkIns);
+    final streak = _currentStreakFor(info.checkIns);
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,97 +469,52 @@ class _VerifyScreenState extends State<VerifyScreen> {
           Row(
             children: [
               Expanded(
-                child: Text(name,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(team.name,
+                        style: const TextStyle(fontSize: 13, color: BC.ink3)),
+                    Text(challenge.title,
+                        style:
+                            const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                  ],
+                ),
               ),
-              _statusPill(false),
+              _statusPill(done),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.local_fire_department_rounded, size: 16, color: BC.blue),
+              const SizedBox(width: 5),
+              Text('연속 인증 $streak일',
+                  style: const TextStyle(fontSize: 12.5, color: BC.ink2, fontWeight: FontWeight.w600)),
             ],
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              _teamSide('우리 팀', 'Team Orange', '$ours%', BC.oMain,
-                  Icons.local_fire_department_rounded, true),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('VS',
-                    style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w800, color: BC.ink3)),
-              ),
-              _teamSide('상대 팀', oppName, '$theirs%', oppColor,
-                  Icons.water_drop_rounded, false),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Row(
-              children: [
-                Expanded(flex: ours, child: Container(height: 10, color: BC.oMain)),
-                Expanded(flex: theirs, child: Container(height: 10, color: oppColor)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Text(lead,
-                    style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: leading ? BC.oMain : oppColor)),
-              ),
-              Text(endsIn,
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600, color: BC.ink3)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          GestureDetector(
-            onTap: () => showBoosterToast(context, '팀 챌린지 인증은 곧 제공될 예정이에요.'),
-            child: Container(
-              height: 50,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: BC.oSoft, borderRadius: BorderRadius.circular(14)),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.location_on_rounded, size: 19, color: BC.oMain),
-                  SizedBox(width: 7),
-                  Text('인증하기',
-                      style: TextStyle(
-                          color: BC.oMain, fontSize: 15, fontWeight: FontWeight.w800)),
-                ],
-              ),
-            ),
-          ),
+          done
+              ? _doneButton()
+              : GestureDetector(
+                  onTap: () => _startTeamGpsVerify(info),
+                  child: Container(
+                    height: 50,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                        color: BC.blueSoft, borderRadius: BorderRadius.circular(14)),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_on_rounded, size: 19, color: BC.blue),
+                        SizedBox(width: 7),
+                        Text('인증하기',
+                            style: TextStyle(
+                                color: BC.blue, fontSize: 15, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                  ),
+                ),
         ],
-      ),
-    );
-  }
-
-  Widget _teamSide(String role, String team, String pct, Color color, IconData icon, bool left) {
-    final col = Column(
-      crossAxisAlignment: left ? CrossAxisAlignment.start : CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text('$role · $team',
-            style: const TextStyle(fontSize: 11, color: BC.ink3, fontWeight: FontWeight.w600)),
-        Text(pct, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
-      ],
-    );
-    final badge = Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(color: color.withOpacity(.12), shape: BoxShape.circle),
-      child: Icon(icon, size: 18, color: color),
-    );
-    return Expanded(
-      child: Row(
-        mainAxisAlignment: left ? MainAxisAlignment.start : MainAxisAlignment.end,
-        children: left ? [badge, const SizedBox(width: 8), col] : [col, const SizedBox(width: 8), badge],
       ),
     );
   }
