@@ -372,6 +372,6 @@ docker exec booster-postgres psql -U booster -c \
 | `monitoring/scripts/run-all-scenarios.sh` | 전체 자동화 스크립트 (환경확인→DB시딩→시나리오A~H→k6→결과저장) |
 | `backend/src/main/resources/application.yml` | Actuator 노출 설정 |
 | `backend/src/main/resources/application-dev.yml` | SQL 가시성 (dev 프로파일, SQL DEBUG·슬로우쿼리 WARN) |
-| `docs/monitoring/guides/test-harness-guide.md` | 테스트 하네스 전체 가이드 (구조·시나리오·SQL 가시성·Grafana·k6 실행법·장애 원인 분류) |
+| `docs/monitoring/harness/test-harness-guide.md` | 테스트 하네스 전체 가이드 (구조·시나리오·SQL 가시성·Grafana·k6 실행법·장애 원인 분류) |
 | `backend/src/test/java/com/booster/arch/BAxisIsolationTest.java` | 흐름 분리 불변식 테스트 |
 | `backend/src/main/resources/db/migration/V6__align_with_spec.sql` | BS-30 스키마 정합성 |

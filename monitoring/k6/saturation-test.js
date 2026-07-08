@@ -14,7 +14,7 @@
 //   SCENARIO=S2 k6 run monitoring/k6/saturation-test.js
 //   SCENARIO=S4 k6 run monitoring/k6/saturation-test.js
 //
-// docs/monitoring/plans/saturation-scenario-matrix.md 참고.
+// docs/monitoring/saturation-cache/saturation-scenario-matrix.md 참고.
 
 import http from 'k6/http';
 import { check } from 'k6';

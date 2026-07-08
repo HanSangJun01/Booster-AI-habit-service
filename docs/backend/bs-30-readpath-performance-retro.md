@@ -48,7 +48,7 @@
   - `EXPLAIN`: 리더보드 GROUP BY는 이미 **Index Scan 0.3ms**(Seq Scan 아님). `(challenge_id,status)` 인덱스 추가해도 플래너가 안 씀 → **인덱스는 레버 아님**
   - 근본 원인 = `application.yml`에 `maximum-pool-size` 미설정 = **기본 10**
 - **판정**: **1차 병목 = HikariCP 풀(10) + 앱-사이드 커넥션 점유. Redis 시기상조.** 처방 = 풀 사이징 + 점유시간 단축.
-- 산출물: `docs/monitoring/saturation-redis-verdict.md`
+- 산출물: `docs/monitoring/saturation-cache/saturation-redis-verdict.md`
 
 ### 단계 ⑤ — 풀 + 점유시간 튜닝 실증 (예측 → 실측)
 - **질문들**: "포화→개선이 맞아?" / "점유시간이 왜 길어?" / "자바작업을 트랜잭션 밖에서 해?"
@@ -60,7 +60,7 @@
 
 ### 단계 ⑥ — 리포트 파일 관리 체계화 (메타)
 - **요구**: "성능 리포트를 계속 파일로 관리하고 싶다."
-- **구축**: `docs/monitoring/results/PERFORMANCE-LOG.md`(추적되는 누적 로그, 최신순, 작성법 내장) + `run-saturation.sh`/`log-run.sh`(실행/기록 분리 → 기존 결과 파일로 기록 로직 테스트 가능, 실제로 마커 버그를 이걸로 조기 발견).
+- **구축**: `docs/monitoring/saturation-cache/PERFORMANCE-LOG.md`(추적되는 누적 로그, 최신순, 작성법 내장) + `run-saturation.sh`/`log-run.sh`(실행/기록 분리 → 기존 결과 파일로 기록 로직 테스트 가능, 실제로 마커 버그를 이걸로 조기 발견).
 - **파고든 질문**: "이미 하고 있나?"(절반—baselines는 gitignore), "어떻게 자동 추가?", "왜 스크립트 2개?"(관심사 분리·테스트성), "각 파일에 뭐 들어있어?"(hikari 시계열/k6 집계/stdout), "이름이 왜 달라?"(도구별 규칙 + 조건 인코딩으로 덮어쓰기 방지).
 
 ### 단계 ⑦ — "B-axis 중요한 서비스가 뭐야?" → 관점 교정
@@ -179,8 +179,8 @@
 
 ### 자산 (재사용 가능)
 - 포화 테스트 하네스: `monitoring/scripts/seed-saturation.sql`, `seed-realistic-teamdetail.sql`, `monitoring/k6/saturation-test.js`, `team-detail-realistic.js`, `run-saturation.sh`/`log-run.sh`
-- 버전관리 성능 로그: `docs/monitoring/results/PERFORMANCE-LOG.md`
-- 판정 리포트: `docs/monitoring/saturation-redis-verdict.md`, 시나리오 매트릭스
+- 버전관리 성능 로그: `docs/monitoring/saturation-cache/PERFORMANCE-LOG.md`
+- 판정 리포트: `docs/monitoring/saturation-cache/saturation-redis-verdict.md`, 시나리오 매트릭스
 
 ---
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # log-run.sh <k6.json> <hikari.log> "<제목>"
 # 포화 실행 결과 파일(k6 JSON + HikariCP 로그)에서 관측값을 뽑아
-# docs/monitoring/results/PERFORMANCE-LOG.md 의 <!-- AUTO-LOG-INSERT --> 마커 바로 밑에 블록을 삽입한다.
+# docs/monitoring/saturation-cache/PERFORMANCE-LOG.md 의 <!-- AUTO-LOG-INSERT --> 마커 바로 밑에 블록을 삽입한다.
 # 테스트/다른 파일에 쓰려면 PERF_LOG 환경변수로 대상 경로를 덮어쓸 수 있다.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 K6JSON="$1"; HIKLOG="$2"; TITLE="$3"
-LOG="${PERF_LOG:-$ROOT/docs/monitoring/results/PERFORMANCE-LOG.md}"
+LOG="${PERF_LOG:-$ROOT/docs/monitoring/saturation-cache/PERFORMANCE-LOG.md}"
 
 python3 - "$K6JSON" "$HIKLOG" "$TITLE" "$LOG" "$ROOT" <<'PY'
 import json, sys, os

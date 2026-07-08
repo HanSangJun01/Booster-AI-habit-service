@@ -2,7 +2,7 @@
 
 > **최신 항목이 맨 위.** 측정 라운드마다 아래 "작성 방법"에 따라 새 블록을 상단에 추가한다.
 > 원시 출력(k6 json, HikariCP log)은 `docs/monitoring/baselines/`(gitignore)에 두고, 여기엔 **요약·결론만** 남긴다.
-> 상세 판정은 [`../saturation-redis-verdict.md`](../saturation-redis-verdict.md), 시나리오 설계는 [`../plans/saturation-scenario-matrix.md`](../plans/saturation-scenario-matrix.md) 참고.
+> 상세 판정은 [`saturation-redis-verdict.md`](saturation-redis-verdict.md), 시나리오 설계는 [`saturation-scenario-matrix.md`](saturation-scenario-matrix.md) 참고.
 
 ## 작성 방법
 - 새 측정을 하면 이 파일의 **`---` 구분선 바로 아래(가장 최근 항목 위)** 에 새 블록을 끼워넣는다.
@@ -143,5 +143,5 @@
 ---
 
 ## 이전 기준선 (2026-07-02, 지난 세션)
-- 1주차 성능 기준선 4종은 `docs/monitoring/history/week1-baseline.md`(추적됨) 및 `baselines/baseline-2026-07-02-*.md`(gitignore, 로컬 전용)에 있음.
+- 1주차 성능 기준선 4종은 `docs/monitoring/baseline-monitoring/week1-baseline.md`(추적됨) 및 `baselines/baseline-2026-07-02-*.md`(gitignore, 로컬 전용)에 있음.
 - 당시엔 참가자 10명 happy-path 단건 측정 위주 — 포화/병목 분석은 2026-07-08 라운드에서 처음 수행.
