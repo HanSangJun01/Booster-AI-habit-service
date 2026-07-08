@@ -8,12 +8,14 @@ import com.booster.challengecheckin.dto.TeamDetailResponse;
 import com.booster.challengecheckin.dto.TeamDetailResponse.TeamInfo;
 import com.booster.challengecheckin.dto.TeamMemberCheckInStatus;
 import com.booster.challengecheckin.repository.ChallengeCheckInRepository;
+import com.booster.config.CacheConfig;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.ResourceNotFoundException;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,7 +36,15 @@ public class TeamDetailViewService {
     private final ChallengeCheckInRepository checkInRepository;
     private final ChallengeRepository challengeRepository;
 
+    // 라이브 팀 비교 뷰 — (challengeId, userId)별 캐시. 자연 노화는 refreshAfterWrite(stale+비동기 갱신),
+    // 체크인 write는 TeamDetailCacheEvictor가 즉시 evict → 최신 반영.
+    @Cacheable(cacheNames = CacheConfig.TEAM_DETAIL, key = "#challengeId + '_' + #userId")
     public TeamDetailResponse getTeamComparison(Long challengeId, Long userId) {
+        return computeTeamComparison(challengeId, userId);
+    }
+
+    /** 실제 계산(비캐시). @Cacheable 미스 경로와 refreshAfterWrite CacheLoader가 공용으로 호출. */
+    public TeamDetailResponse computeTeamComparison(Long challengeId, Long userId) {
         // 1. 챌린지 조회
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
