@@ -32,7 +32,6 @@ public class TeamDetailViewService {
     private final TeamRepository teamRepository;
     private final ChallengeParticipantRepository participantRepository;
     private final ChallengeCheckInRepository checkInRepository;
-    private final ParticipationRateCalculator participationRateCalculator;
     private final ChallengeRepository challengeRepository;
 
     public TeamDetailResponse getTeamComparison(Long challengeId, Long userId) {
@@ -108,7 +107,7 @@ public class TeamDetailViewService {
         return new TeamInfo(
                 team.getId(),
                 team.getName(),
-                participationRateCalculator.currentRate(team.getId()),
+                team.getParticipationRate(),   // 이미 로딩된 team 엔티티의 선계산값 사용 (currentRate의 중복 findById 제거)
                 todayCheckedInCount,
                 participants.size(),
                 members
