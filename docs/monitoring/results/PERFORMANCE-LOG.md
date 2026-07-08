@@ -29,6 +29,38 @@
 
 <!-- AUTO-LOG-INSERT -->
 
+## 2026-07-08 — team-detail Caffeine 캐시 현실 재검증 + evict + refreshAfterWrite
+- **변경**: team-detail에 Caffeine 로컬 캐시(@Cacheable) + 체크인 시 챌린지 단위 evict(`TeamDetailCacheEvictor`) + `refreshAfterWrite(10s)`/`expireAfterWrite(60s)`(stampede 완화, LoadingCache+CacheLoader).
+- **조건**: 현실 데이터 RT_ 50챌린지(hot 10/normal 40, 10명 5:5, 부분 체크인). k6 mixed-key(`team-detail-realistic.js`) ramp 50→400. 무캐시 기준선은 S3(1,641 rps).
+- **원시**: `baselines/tdr-{hot,dist,dist-noref}-*`
+
+| 시나리오 | 히트율 | RPS | p95 | p99 | pending peak |
+|---|---|---|---|---|---|
+| 무캐시 (S3) | 0% | 1,641 | 303 | 566 | 169 |
+| hot (100키) | 99.91% | 26,030 | 12.2 | 19.2 | 0 |
+| dist (500키, expire만) | 99.66% | 22,512 | 17.0 | 31.1 | **144** |
+| dist (500키, +refresh) | 99.98% | 27,367 | 12.5 | 19.4 | **0** |
+
+- **캐시 효과**: 현실 mixed-key에서도 무캐시 대비 ~14~16배 RPS. 단 **포화 부하는 모든 키를 warm 유지**해 hot·dist 히트율 차이가 거의 없음(99.9%대) — 진짜 히트율 저하는 포화가 아닌 **실트래픽 분포(Zipfian·저RPS·cold-tail)** 로만 재현 가능. 이번 검증이 증명한 건 "용량"이지 "현실 히트율"이 아님.
+- **evict**: 체크인 후 재조회가 hard miss로 최신 반영(합계 +1, miss 카운터 +1) 확인. evict 비용 무시 가능(체크인 p50 14.3ms, evict 없던 것과 동일).
+- **stampede**: expireAfterWrite만일 때 dist에서 pending 144 순간 스파이크(만료 herd). `refreshAfterWrite`로 stale 반환+단일 비동기 갱신 → **pending 0, active 30→7, hard miss 9060→498**. 복잡한 분산락 불필요.
+
+**해석**: team-detail은 캐시가 정답(cheap fix로 안 오르던 상한을 ~16배로). evict로 정확성, refreshAfterWrite로 herd 제거까지 완성. 멀티 인스턴스 확장 시 evict 전파 위해 Redis 승격 검토.
+
+## 2026-07-08 — 포화 S3 (cache): Caffeine 로컬캐시 TTL10s
+- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-cache-k6.json` · `docs/monitoring/baselines/sat-S3-cache-hikari.log`
+
+| 관측값 | 값 |
+|---|---|
+| RPS | 29,171/s |
+| 총 요청 | 3,792,565 |
+| 에러율 | 0.00% |
+| p50 / p95 / p99 | 3.0 / 12.2 / 18.8 ms |
+| max (꼬리) | 158ms |
+| HikariCP active / pending peak | 30 / 140 |
+| 신규 connectionTimeout | 0 |
+
+
 ## 2026-07-08 — 포화 S3 (td-opt): team-detail 최적화(9→7쿼리+점유단축)
 - **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-td-opt-k6.json` · `docs/monitoring/baselines/sat-S3-td-opt-hikari.log`
 
