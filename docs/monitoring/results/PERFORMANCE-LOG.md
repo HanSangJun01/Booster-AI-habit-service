@@ -29,6 +29,52 @@
 
 <!-- AUTO-LOG-INSERT -->
 
+## 2026-07-08 — 포화 S3 (td-opt): team-detail 최적화(9→7쿼리+점유단축)
+- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-td-opt-k6.json` · `docs/monitoring/baselines/sat-S3-td-opt-hikari.log`
+
+| 관측값 | 값 |
+|---|---|
+| RPS | 1,568/s |
+| 총 요청 | 204,178 |
+| 에러율 | 0.00% |
+| p50 / p95 / p99 | 55.1 / 320.6 / 561.5 ms |
+| max (꼬리) | 2019ms |
+| HikariCP active / pending peak | 30 / 169 |
+| 신규 connectionTimeout | 0 |
+
+
+## 2026-07-08 — 포화 S3 (baseline): team-detail 코어 포화(풀30)
+- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-baseline-k6.json` · `docs/monitoring/baselines/sat-S3-baseline-hikari.log`
+
+| 관측값 | 값 |
+|---|---|
+| RPS | 1,641/s |
+| 총 요청 | 213,612 |
+| 에러율 | 0.00% |
+| p50 / p95 / p99 | 53.3 / 303.3 / 566.0 ms |
+| max (꼬리) | 1895ms |
+| HikariCP active / pending peak | 30 / 169 |
+| 신규 connectionTimeout | 0 |
+
+
+## 2026-07-08 — B-axis 코어 응답속도 스윕 (단건: 조회 + 체크인 write)
+- **변경**: 없음 (측정만). 현재 백엔드 = 풀30 + N+1수정 + 점유단축 반영본.
+- **조건**: warmed 단건, N=50(조회)/70(체크인 신규). challenge 145(hot). 체크인은 GPS 등록한 ACTIVE SAT 참가자 대상, 서로 다른 (challenge,user) 각 1회.
+- **원시**: 세션 curl 측정 (`scratchpad/sweep.sh`, `measure-checkin.sh`)
+
+| Phase | 오퍼레이션 | 유형 | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| P3 | 체크인 write (신규, GPS 3-INSERT) | write | 16.3 | 29.4 | 37.4 |
+| P3 | 체크인 write (멱등 반환) | write | 5.8 | 8.0 | 8.4 |
+| P3 | team-detail | read | 9.5 | 12.9 | 15.1 |
+| P1 | challenge 상세 | read | 4.3 | 7.8 | 8.0 |
+| P1 | challenge 목록 | read | 4.0 | 8.4 | 9.0 |
+| P3 | check-ins 조회 | read | 3.8 | 7.2 | 8.6 |
+| P4a | 정산 result | read | 2.9 | 7.1 | 8.8 |
+| P1/3 | teams | read | 2.4 | 5.7 | 6.9 |
+
+**해석**: 코어 최고비용 = 체크인 write 신규(GPS 3-INSERT ~16ms). 단, 하루 1회라 저동시성 → 포화보다 단건 레이턴시가 중요하고 16ms면 건강. 멱등 반환은 1/3(~6ms, BS-30 3중 멱등 방어 효과). 조회 중엔 team-detail이 최고비용(8쿼리). 전부 절대값은 건강(write<30ms, read<15ms). 참고: 리더보드는 `social`(P4b)로 B-axis 코어 범위 밖.
+
 ## 2026-07-08 — 리더보드 커넥션 풀 사이징 + 점유시간 단축 (포화 재측정)
 - **변경**: ① HikariCP `maximum-pool-size` 10→30 (`application.yml`) ② `LeaderboardService.getPersonalLeaderboard`를 `@Transactional(NOT_SUPPORTED)`로 전환(트랜잭션 밖 실행 → 커넥션 점유시간 단축)
 - **조건**: k6 포화 S1(HOT PERSONAL, `/145/leaderboards?type=PERSONAL`), think-time 0, ramp 50→800 VU ~2m40s. 데이터: challenge 145(참가자 10·체크인 1200). stub 프로파일.
