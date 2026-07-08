@@ -17,6 +17,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -33,9 +35,17 @@ public class LeaderboardService {
         List<ChallengeParticipant> participants =
                 participantRepository.findByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
 
+        // 참가자별 SUCCESS 체크인 수를 단일 GROUP BY 쿼리로 집계 (참가자마다 count 하던 N+1 제거)
+        Map<Long, Long> successCountByParticipant = checkInRepository
+                .countByChallengeIdAndStatusGroupByParticipant(challengeId, CheckInStatus.SUCCESS)
+                .stream()
+                .collect(Collectors.toMap(
+                        ChallengeCheckInRepository.ParticipantCheckInCount::getParticipantId,
+                        ChallengeCheckInRepository.ParticipantCheckInCount::getCount));
+
         List<LeaderboardEntry> entries = new ArrayList<>();
         for (ChallengeParticipant p : participants) {
-            long count = checkInRepository.countByParticipantIdAndStatus(p.getId(), CheckInStatus.SUCCESS);
+            long count = successCountByParticipant.getOrDefault(p.getId(), 0L);
             entries.add(LeaderboardEntry.builder()
                     .userId(p.getUserId())
                     .teamId(p.getTeamId())
