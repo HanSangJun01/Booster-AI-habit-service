@@ -7,12 +7,12 @@ set -e
 # ── 설정 ──────────────────────────────────────────────────────────────
 API="http://localhost:8080"
 GRAFANA="http://admin:admin@localhost:3000"
-DB_CONTAINER="booster-postgres"
-DB_USER="booster"
-DB_NAME="booster"
+DB_CONTAINER="${DB_CONTAINER:-booster-db}"
+DB_USER="${DB_USER:-booster}"
+DB_NAME="${DB_NAME:-booster}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DASHBOARD_JSON="$PROJECT_ROOT/monitoring/grafana/booster-baxis-dashboard-import.json"
+DASHBOARD_JSON="$PROJECT_ROOT/monitoring/grafana/dashboards/b-axis-overview.json"
 K6_SCRIPT="$PROJECT_ROOT/monitoring/k6/load-test.js"
 
 # ── 색상 출력 ──────────────────────────────────────────────────────────
@@ -59,6 +59,49 @@ if ! command -v k6 &>/dev/null; then
   fail "k6가 설치되지 않았습니다. 'brew install k6' 로 설치하세요."
 fi
 ok "k6 설치 확인"
+
+# jq 설치 확인 ([JWT 전환] 로그인 응답에서 accessToken/userId 파싱에 사용)
+if ! command -v jq &>/dev/null; then
+  fail "jq가 설치되지 않았습니다. 'brew install jq' 로 설치하세요."
+fi
+ok "jq 설치 확인"
+
+echo ""
+
+# ══════════════════════════════════════════════════════════════════════
+# 0.5 [JWT 전환] 시나리오 유저 토큰 확보
+#   A/B축 통합 후 Spring Security가 /api/auth/**, /actuator/** 를 제외한 모든
+#   엔드포인트를 JWT로 보호한다(구 X-User-Id 헤더 미인정, 무인증 요청은 401).
+#   시나리오가 쓰는 유저(1~10, 특히 6)를 실제 가입/로그인시켜 토큰을 확보하고,
+#   이후 모든 curl은 -H "Authorization: Bearer <token>" 으로 인증한다.
+#   재실행 시 가입은 중복(409/400)이어도 무시하고 로그인만 성공하면 된다.
+# ══════════════════════════════════════════════════════════════════════
+SCEN_PASSWORD="scenario1234"
+declare -a TOKENS     # TOKENS[i]   = i번째 시나리오 유저의 JWT (i=1..10)
+declare -a USER_IDS   # USER_IDS[i] = 그 유저의 실제 DB user_id (psql 검증용)
+
+acquire_token() {   # $1 = 슬롯 인덱스(1..10)
+  local i="$1"
+  local email="scenario_u${i}@booster.test"
+  # 가입은 멱등하게(중복이면 무시) — set -e 회피 위해 실패해도 통과
+  curl -s -X POST "$API/api/auth/signup" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$email\",\"password\":\"$SCEN_PASSWORD\",\"nickname\":\"scen_u${i}\"}" \
+    >/dev/null 2>&1 || true
+  local body
+  body=$(curl -s -X POST "$API/api/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$email\",\"password\":\"$SCEN_PASSWORD\"}")
+  TOKENS[$i]=$(echo "$body" | jq -r '.accessToken // empty')
+  USER_IDS[$i]=$(echo "$body" | jq -r '.userId // empty')
+  if [ -z "${TOKENS[$i]}" ]; then
+    fail "시나리오 유저 로그인 실패 (slot $i, email=$email): $body"
+  fi
+}
+
+log "[JWT] 시나리오 유저 1~10 토큰 확보 중..."
+for i in $(seq 1 10); do acquire_token "$i"; done
+ok "시나리오 유저 토큰 확보 완료 (user_id ${USER_IDS[1]}..${USER_IDS[10]})"
 
 echo ""
 
@@ -168,7 +211,7 @@ CHALLENGE_ID=""
 for i in $(seq 1 10); do
   RESP=$(curl -sf -X POST "$API/api/challenges" \
     -H "Content-Type: application/json" \
-    -H "X-User-Id: 1" \
+    -H "Authorization: Bearer ${TOKENS[1]}" \
     -d "{
       \"title\": \"시나리오테스트$i\",
       \"category\": \"HEALTH\",
@@ -196,7 +239,7 @@ fi
 log "엣지케이스용 ENDED 챌린지 생성 중..."
 ENDED_RESP=$(curl -sf -X POST "$API/api/challenges" \
   -H "Content-Type: application/json" \
-  -H "X-User-Id: 1" \
+  -H "Authorization: Bearer ${TOKENS[1]}" \
   -d '{
     "title": "시나리오엣지케이스",
     "category": "HEALTH",
@@ -214,7 +257,8 @@ ok "ENDED 챌린지 생성 완료 (ID: $ENDED_CHALLENGE_ID)"
 # 목록 조회 5회
 log "챌린지 목록 조회 테스트 (5회)..."
 for i in $(seq 1 5); do
-  STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges" 2>/dev/null || echo "000")
+  # [JWT 전환] 목록 조회도 통합 후 인증 필요(구 무인증 → 401)
+  STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges" -H "Authorization: Bearer ${TOKENS[1]}" 2>/dev/null || echo "000")
   if [ "$STATUS" != "200" ]; then
     warn "목록 조회 응답: $STATUS"
   fi
@@ -231,7 +275,7 @@ log "챌린지 $CHALLENGE_ID 에 사용자 1~10 참여 신청..."
 for userId in 1 2 3 4 5 6 7 8 9 10; do
   STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "$API/api/challenges/$CHALLENGE_ID/participants" \
     -H "Content-Type: application/json" \
-    -H "X-User-Id: $userId" \
+    -H "Authorization: Bearer ${TOKENS[$userId]}" \
     -d "{
       \"personalStatement\": \"참여합니다\",
       \"gpsLat\": 37.5665,
@@ -267,7 +311,7 @@ FIRST_STATUS=""
 for i in $(seq 1 20); do
   RESP=$(curl -sf -X POST "$API/api/challenges/$CHALLENGE_ID/check-ins" \
     -H "Content-Type: application/json" \
-    -H "X-User-Id: 1" \
+    -H "Authorization: Bearer ${TOKENS[1]}" \
     -d "{
       \"currentLat\": 37.5665,
       \"currentLng\": 126.9780
@@ -292,11 +336,11 @@ echo -e "${CYAN}══ 시나리오 E: 동시성 부하 (k6) ══${NC}"
 
 # Smoke 검증: 챌린지 목록, 상세, 체크인 read/write 단건 확인 (k6 전)
 log "Smoke 검증 중 (k6 전)..."
-SMOKE_LIST=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges" 2>/dev/null || echo "000")
-SMOKE_DETAIL=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID" -H "X-User-Id: 1" 2>/dev/null || echo "000")
-SMOKE_CHECKIN_READ=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID/check-ins" -H "X-User-Id: 1" 2>/dev/null || echo "000")
+SMOKE_LIST=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges" -H "Authorization: Bearer ${TOKENS[1]}" 2>/dev/null || echo "000")
+SMOKE_DETAIL=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID" -H "Authorization: Bearer ${TOKENS[1]}" 2>/dev/null || echo "000")
+SMOKE_CHECKIN_READ=$(curl -sf -o /dev/null -w "%{http_code}" "$API/api/challenges/$CHALLENGE_ID/check-ins" -H "Authorization: Bearer ${TOKENS[1]}" 2>/dev/null || echo "000")
 SMOKE_CHECKIN_WRITE_RESP=$(curl -sf -w "\n%{http_code}" -X POST "$API/api/challenges/$CHALLENGE_ID/check-ins" \
-  -H "Content-Type: application/json" -H "X-User-Id: 1" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer ${TOKENS[1]}" \
   -d '{"currentLat":37.5665,"currentLng":126.9780}' 2>/dev/null || printf '{}\n000')
 SMOKE_CHECKIN_WRITE=$(echo "$SMOKE_CHECKIN_WRITE_RESP" | tail -1)
 
@@ -320,7 +364,7 @@ echo ""
 log "팀 구성 동시성 테스트용 챌린지 생성 중..."
 FORMATION_RESP=$(curl -sf -X POST "$API/api/challenges" \
   -H "Content-Type: application/json" \
-  -H "X-User-Id: 1" \
+  -H "Authorization: Bearer ${TOKENS[1]}" \
   -d '{
     "title": "시나리오동시성테스트",
     "category": "HEALTH",
@@ -399,7 +443,8 @@ SETTLE_RESULT='{}'
 SETTLE_DONE=0
 _elapsed=0
 while [ "$_elapsed" -lt "$SETTLE_TIMEOUT" ]; do
-  SETTLE_RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" 2>/dev/null || echo '{}')
+  # [JWT 전환] 정산 결과 조회도 통합 후 인증 필요(구 무인증 → 401)
+  SETTLE_RESULT=$(curl -sf "$API/api/challenges/$CHALLENGE_ID/result" -H "Authorization: Bearer ${TOKENS[1]}" 2>/dev/null || echo '{}')
   if echo "$SETTLE_RESULT" | grep -q '"status":"COMPLETED"'; then
     SETTLE_DONE=1
     break
@@ -489,7 +534,7 @@ echo -e "${CYAN}══ 시나리오 H: GPS 경계값 테스트 ══${NC}"
 log "GPS 경계값 테스트용 챌린지 생성 중 (userId=6, radius=100m)..."
 GPS_CHALLENGE_RESP=$(curl -sf -X POST "$API/api/challenges" \
   -H "Content-Type: application/json" \
-  -H "X-User-Id: 6" \
+  -H "Authorization: Bearer ${TOKENS[6]}" \
   -d '{
     "title": "시나리오GPS경계값",
     "category": "HEALTH",
@@ -509,7 +554,7 @@ if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
   for uid in 1 2 3 4 5 6 7 8 9 10; do
     curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/participants" \
       -H "Content-Type: application/json" \
-      -H "X-User-Id: $uid" \
+      -H "Authorization: Bearer ${TOKENS[$uid]}" \
       -d '{"personalStatement":"GPS테스트","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
       > /dev/null 2>&1
   done
@@ -518,7 +563,7 @@ if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
   psql_exec "UPDATE challenges SET status='ACTIVE', started_at=NOW()-INTERVAL '1 minute' WHERE id=$GPS_CHALLENGE_ID;" || true
 
   # userId=6 팀 배정 확인 — 미배정 시 GPS 판정을 검증할 수 없으므로 경고
-  H_TEAM=$(psql_exec "SELECT COUNT(team_id) FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=6;" | tr -d ' \n')
+  H_TEAM=$(psql_exec "SELECT COUNT(team_id) FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=${USER_IDS[6]};" | tr -d ' \n')
   if [ "${H_TEAM:-0}" = "0" ]; then
     warn "[WARN] userId=6 팀 미배정 — 팀 구성 실패로 GPS 경계 검증(H) 불가"
   fi
@@ -527,7 +572,7 @@ if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
   log "H-1: 반경 내 체크인 테스트 (37.56690, 126.9780 — 약 44m)..."
   INSIDE_RESP=$(curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/check-ins" \
     -H "Content-Type: application/json" \
-    -H "X-User-Id: 6" \
+    -H "Authorization: Bearer ${TOKENS[6]}" \
     -d '{"currentLat":37.56690,"currentLng":126.9780}' 2>/dev/null || echo '{}')
   INSIDE_STATUS=$(echo "$INSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('status','?'))" 2>/dev/null)
   if [ "$INSIDE_STATUS" = "SUCCESS" ]; then
@@ -538,12 +583,12 @@ if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
 
   # H-2: 반경 외 체크인 (≈222m north — 100m 초과, 다음 날 시뮬레이션을 위해 date 조작)
   # 날짜를 어제로 바꿔 멱등성 우회 후 외부 좌표 테스트
-  psql_exec "UPDATE challenge_check_ins SET check_in_date=CURRENT_DATE-1 WHERE challenge_id=$GPS_CHALLENGE_ID AND participant_id=(SELECT id FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=6 LIMIT 1);" || true
+  psql_exec "UPDATE challenge_check_ins SET check_in_date=CURRENT_DATE-1 WHERE challenge_id=$GPS_CHALLENGE_ID AND participant_id=(SELECT id FROM challenge_participants WHERE challenge_id=$GPS_CHALLENGE_ID AND user_id=${USER_IDS[6]} LIMIT 1);" || true
 
   log "H-2: 반경 외 체크인 테스트 (37.56850, 126.9780 — 약 222m)..."
   OUTSIDE_RESP=$(curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/check-ins" \
     -H "Content-Type: application/json" \
-    -H "X-User-Id: 6" \
+    -H "Authorization: Bearer ${TOKENS[6]}" \
     -d '{"currentLat":37.56850,"currentLng":126.9780}' 2>/dev/null || echo '{}')
   OUTSIDE_STATUS=$(echo "$OUTSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('status','?'))" 2>/dev/null)
   OUTSIDE_HTTP=$(echo "$OUTSIDE_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status', d.get('data',{}).get('status','?')))" 2>/dev/null)

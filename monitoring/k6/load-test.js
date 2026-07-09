@@ -33,7 +33,7 @@ export const options = {
       exec: 'normalFlow',
     },
 
-    // 2. 동시 같은 유저 (10 VU 모두 userId=1로 체크인 — 멱등성·경쟁조건 확인)
+    // 2. 동시 같은 유저 (10 VU 모두 member[0] 토큰으로 체크인 — 멱등성·경쟁조건 확인)
     concurrent_same_user: {
       executor: 'constant-vus',
       vus: 10,
@@ -86,6 +86,41 @@ export const options = {
   },
 };
 
+// [JWT 전환] A/B축 통합 후 Spring Security가 /api/auth/**, /actuator/** 를 제외한
+// 모든 엔드포인트를 JWT로 보호한다(무인증/X-User-Id 요청은 401). 이 스크립트는
+// 시드 의존 없이 setup에서 실제 유저를 가입/로그인해 토큰을 확보한다.
+//   - 멤버 10명(member 1~10): normalFlow는 앞 5명으로 "서로 다른 유저" 재현,
+//     sameUserFlow는 member[0] 고정(구 X-User-Id=1), teamFormationFlow는 10명 각자(구 __VU).
+//   - outsider 1명: edgeCaseFlow의 "미참여 유저"(구 X-User-Id=99) 대체 — 어떤 챌린지에도
+//     참여하지 않은 실제 유저이므로 체크인 시 4xx가 정상.
+const MEMBER_COUNT = 10;
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+function signupAndLogin(email, password, nickname) {
+  http.post(`${BASE_URL}/api/auth/signup`,
+    JSON.stringify({ email, password, nickname }), { headers: JSON_HEADERS });
+  const loginRes = http.post(`${BASE_URL}/api/auth/login`,
+    JSON.stringify({ email, password }), { headers: JSON_HEADERS });
+  const token = loginRes.json('accessToken');
+  if (!token) {
+    throw new Error(`로그인 실패 — 토큰 못 받음. email=${email} status=${loginRes.status} body=${loginRes.body}`);
+  }
+  return token;
+}
+
+// 전체 테스트 시작 전 1회: 부하용 유저 가입+로그인 → 토큰 배열/아웃사이더 토큰 확보.
+// 반환값은 각 flow의 첫 인자(data)로 전달된다.
+export function setup() {
+  const stamp = Date.now();
+  const password = 'loadtest1234';
+  const memberTokens = [];
+  for (let i = 0; i < MEMBER_COUNT; i++) {
+    memberTokens.push(signupAndLogin(`loadtest_m${i}_${stamp}@booster.test`, password, `lt_m${i}`));
+  }
+  const outsiderToken = signupAndLogin(`loadtest_out_${stamp}@booster.test`, password, 'lt_out');
+  return { memberTokens, outsiderToken };
+}
+
 export function handleSummary(data) {
   return {
     '/tmp/k6-summary.json': JSON.stringify(data, null, 2),
@@ -94,15 +129,17 @@ export function handleSummary(data) {
 }
 
 // ── 시나리오 1: 정상 흐름 ────────────────────────────────────────────────
-export function normalFlow() {
-  const userId = (__VU % 5) + 1;
+export function normalFlow(data) {
+  // [JWT 전환] 서로 다른 5명(구 userId 1~5) → member 토큰 5개를 순환 사용
+  const token = data.memberTokens[__VU % 5];
   const authHeaders = {
     'Content-Type': 'application/json',
-    'X-User-Id': String(userId),
+    Authorization: `Bearer ${token}`,
   };
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-  const listRes = http.get(`${BASE_URL}/api/challenges`);
+  // [JWT 전환] 목록 조회도 통합 후 인증 필요(구 무인증 → 401) → Bearer 토큰 사용
+  const listRes = http.get(`${BASE_URL}/api/challenges`, { headers: authHeaders });
   challengeListDuration.add(listRes.timings.duration);
   check(listRes, { 'list 200': (r) => r.status === 200 });
   errorRate.add(listRes.status >= 400);
@@ -147,11 +184,12 @@ export function normalFlow() {
 }
 
 // ── 시나리오 2: 동시 같은 유저 ──────────────────────────────────────────
-// 10 VU 모두 userId=1로 동시에 체크인 → 멱등성과 경쟁조건(race condition) 검증
-export function sameUserFlow() {
+// 10 VU 모두 동일 유저로 동시에 체크인 → 멱등성과 경쟁조건(race condition) 검증
+export function sameUserFlow(data) {
+  // [JWT 전환] 구 X-User-Id=1 → member[0] 토큰 고정(모든 VU가 같은 유저)
   const authHeaders = {
     'Content-Type': 'application/json',
-    'X-User-Id': '1',
+    Authorization: `Bearer ${data.memberTokens[0]}`,
   };
 
   const res = http.post(
@@ -170,8 +208,9 @@ export function sameUserFlow() {
 
 // ── 시나리오 3: 엣지케이스 ───────────────────────────────────────────────
 // 비정상 요청이 올바르게 4xx를 반환하는지 확인
-export function edgeCaseFlow() {
-  const authHeaders = { 'Content-Type': 'application/json', 'X-User-Id': '1' };
+export function edgeCaseFlow(data) {
+  // [JWT 전환] 구 X-User-Id=1 → member[0] 토큰
+  const authHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${data.memberTokens[0]}` };
 
   // 케이스 1: ENDED 챌린지에 체크인 시도 → 4xx 여야 함
   const endedRes = http.post(
@@ -187,11 +226,12 @@ export function edgeCaseFlow() {
   }
   sleep(0.5);
 
-  // 케이스 2: 미참여 유저(userId=99) 체크인 시도 → 4xx 여야 함
+  // 케이스 2: 미참여 유저(outsider 토큰) 체크인 시도 → 4xx 여야 함
+  // [JWT 전환] 구 X-User-Id=99 → 어떤 챌린지에도 참여하지 않은 실제 outsider 유저 토큰
   const nonParticipantRes = http.post(
     `${BASE_URL}/api/challenges/${CHALLENGE_ID}/check-ins`,
     JSON.stringify({ currentLat: 37.5665, currentLng: 126.9780 }),
-    { headers: { 'Content-Type': 'application/json', 'X-User-Id': '99' } }
+    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.outsiderToken}` } }
   );
   const nonParticipantOk = nonParticipantRes.status >= 400;
   check(nonParticipantRes, { '미참여 유저 체크인 → 4xx': () => nonParticipantOk });
@@ -218,8 +258,9 @@ export function edgeCaseFlow() {
 
 // ── 시나리오 4: 팀 구성 동시성 ────────────────────────────────────────
 // 10 VU 전부 동시에 같은 챌린지 참여 신청 → 팀이 정확히 1번만 구성되는지 확인
-export function teamFormationFlow() {
-  const userId = __VU; // VU 1~10 → userId 1~10
+export function teamFormationFlow(data) {
+  // [JWT 전환] 구 X-User-Id=__VU(1~10) → member 토큰 10개를 각 VU가 하나씩 사용
+  const token = data.memberTokens[(__VU - 1) % MEMBER_COUNT];
   const res = http.post(
     `${BASE_URL}/api/challenges/${FORMATION_CHALLENGE_ID}/participants`,
     JSON.stringify({
@@ -229,14 +270,14 @@ export function teamFormationFlow() {
       gpsRadiusMeters: 100,
       gpsPlaceName: '서울시청',
     }),
-    { headers: { 'Content-Type': 'application/json', 'X-User-Id': String(userId) } }
+    { headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } }
   );
   // 200/201 = 신규 참여, 409 = 이미 참여(멱등) — 모두 정상
   const ok = res.status === 200 || res.status === 201 || res.status === 409;
   check(res, { 'team formation 참여 신청 성공': () => ok });
   errorRate.add(!ok);
   if (!ok) {
-    console.error(`[FORMATION] VU${__VU} userId=${userId} failed: ${res.status} ${res.body}`);
+    console.error(`[FORMATION] VU${__VU} failed: ${res.status} ${res.body}`);
   }
   // sleep 없음 — 동시성 최대화
 }

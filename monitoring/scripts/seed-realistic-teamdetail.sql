@@ -105,6 +105,24 @@ BEGIN
             team_ids := array_append(team_ids, v_team_id);
         END LOOP;
 
+        -- [JWT 전환] 이 챌린지의 로그인 가능한 앵커 user 행.
+        --   A/B축 통합 후 Spring Security가 team-detail을 JWT로 보호하고,
+        --   team-detail은 "토큰 유저가 해당 챌린지의 CONFIRMED 참여자"일 것을 요구한다.
+        --   첫 멤버(v_member=0 → user_id = 3000000 + v_offset*10)를 앵커로 삼아,
+        --   그 user_id와 동일한 id의 실제 users 행을 심는다(로그인용).
+        --   email은 챌린지 id로 결정론적 생성: rt_c<challengeId>@booster.test
+        --   password = 'seed1234' (bcrypt). 재실행 대비 ON CONFLICT DO NOTHING.
+        INSERT INTO users
+          (id, email, password_hash, nickname,
+           coin_balance, total_attendance, is_active, joined_at, updated_at)
+        VALUES
+          (3000000 + v_offset * 10,
+           'rt_c' || v_challenge_id || '@booster.test',
+           '$2a$10$OPMJyoUHc4S7lKCMUB0lMuAje8xZU.tG.rUVnKTrewFa47gVxamCa',
+           'rt_c' || v_challenge_id,
+           0, 0, true, now(), now())
+        ON CONFLICT (id) DO NOTHING;
+
         -- Partial check-ins for today: 3-6 of 10 members, split across both teams
         v_checkin_count := 3 + (v_offset % 4); -- cycles 3,4,5,6
         v_a_success := LEAST(5, GREATEST(1, v_checkin_count / 2));

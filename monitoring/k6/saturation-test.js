@@ -6,7 +6,7 @@
 // SCENARIO 환경변수로 한 번에 하나씩 실행 (S1 → S2 → S4 순서 권장, 사이 휴지):
 //   S1  HOT PERSONAL   /{HOT_CHALLENGE_ID}/leaderboards?type=PERSONAL   (핵심 후보, GROUP BY ~1200행)
 //   S2  HOT TEAM 대조군 /{HOT_CHALLENGE_ID}/leaderboards?type=TEAM       (선계산값, DB행 거의 0)
-//   S3  HOT team-detail /{HOT_CHALLENGE_ID}/team-detail (X-User-Id)      (참고용, 50→100→200→400)
+//   S3  HOT team-detail /{HOT_CHALLENGE_ID}/team-detail (JWT 앵커유저)   (참고용, 50→100→200→400)
 //   S4  BREADTH PERSONAL /{rand 147..644}/leaderboards?type=PERSONAL    (요청마다 challenge_id 랜덤)
 //
 // 실행 예:
@@ -24,9 +24,19 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 const BASE_URL          = __ENV.BASE_URL          || 'http://localhost:8080';
 const SCENARIO          = __ENV.SCENARIO          || 'S1';
 const HOT_CHALLENGE_ID  = __ENV.HOT_CHALLENGE_ID  || '145';
-const TEAM_DETAIL_USER  = __ENV.TEAM_DETAIL_USER  || '1000001';
 const BREADTH_MIN       = parseInt(__ENV.BREADTH_MIN || '147', 10);
 const BREADTH_MAX       = parseInt(__ENV.BREADTH_MAX || '644', 10);
+
+// [JWT 전환] A/B축 통합 후 Spring Security가 /api/auth/**, /actuator/** 를 제외한
+// 모든 엔드포인트를 JWT로 보호한다(무인증 요청은 401). 따라서 leaderboards(S1/S2/S4)와
+// team-detail(S3) 모두 Authorization: Bearer 토큰이 필요하다.
+//   - S1/S2/S4(leaderboards): 유효한 JWT면 충분(참여 불필요)
+//   - S3(team-detail): 토큰 유저가 HOT_CHALLENGE_ID의 CONFIRMED 참여자여야 함
+//     → seed-saturation.sql이 심은 앵커 유저(user_id=1000001, sat_hot@booster.test)로 로그인.
+// 로그인 계정은 a-axis-load-test.js처럼 LOGIN_EMAIL/LOGIN_PASSWORD로 재정의 가능.
+const LOGIN_EMAIL     = __ENV.LOGIN_EMAIL    || 'sat_hot@booster.test';
+const LOGIN_PASSWORD  = __ENV.LOGIN_PASSWORD || 'seed1234';
+const JSON_HEADERS    = { 'Content-Type': 'application/json' };
 
 const errorRate  = new Rate('errors');
 const s1Duration = new Trend('s1_duration'); // HOT PERSONAL
@@ -77,6 +87,22 @@ export const options = {
   },
 };
 
+// [JWT 전환] 전체 테스트 시작 전 1회: 앵커 유저 로그인 → 토큰 확보.
+// 반환한 token은 각 flow의 첫 인자(data)로 전달되어 Authorization 헤더에 쓰인다.
+export function setup() {
+  const res = http.post(`${BASE_URL}/api/auth/login`,
+    JSON.stringify({ email: LOGIN_EMAIL, password: LOGIN_PASSWORD }),
+    { headers: JSON_HEADERS });
+  const token = res.json('accessToken');
+  if (!token) {
+    throw new Error(
+      `[JWT] 앵커 유저 로그인 실패 — seed-saturation.sql 먼저 적용했는지 확인. ` +
+      `email=${LOGIN_EMAIL} status=${res.status} body=${res.body}`
+    );
+  }
+  return { token };
+}
+
 export function handleSummary(data) {
   const outPath =
     __ENV.OUT_JSON ||
@@ -88,9 +114,11 @@ export function handleSummary(data) {
 }
 
 // ── S1: HOT PERSONAL 고정 난타 (Redis 핵심 후보) ─────────────────────────
-export function s1Flow() {
+export function s1Flow(data) {
+  // [JWT 전환] leaderboards는 유효한 JWT면 충분(참여 불필요)
   const res = http.get(
-    `${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}/leaderboards?type=PERSONAL`
+    `${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}/leaderboards?type=PERSONAL`,
+    { headers: { Authorization: `Bearer ${data.token}` } }
   );
   s1Duration.add(res.timings.duration);
   const ok = res.status === 200;
@@ -100,9 +128,11 @@ export function s1Flow() {
 }
 
 // ── S2: HOT TEAM 고정 난타 (대조군 — 선계산값, DB행 거의 0) ──────────────
-export function s2Flow() {
+export function s2Flow(data) {
+  // [JWT 전환] Authorization 헤더 추가
   const res = http.get(
-    `${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}/leaderboards?type=TEAM`
+    `${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}/leaderboards?type=TEAM`,
+    { headers: { Authorization: `Bearer ${data.token}` } }
   );
   s2Duration.add(res.timings.duration);
   const ok = res.status === 200;
@@ -111,10 +141,11 @@ export function s2Flow() {
 }
 
 // ── S3: HOT team-detail (참고용 — 무거운 비교 쿼리 + 커넥션 점유) ────────
-export function s3Flow() {
+export function s3Flow(data) {
+  // [JWT 전환] X-User-Id 제거 → 앵커 유저(HOT 챌린지의 CONFIRMED 참여자) 토큰 사용
   const res = http.get(
     `${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}/team-detail`,
-    { headers: { 'X-User-Id': TEAM_DETAIL_USER } }
+    { headers: { Authorization: `Bearer ${data.token}` } }
   );
   s3Duration.add(res.timings.duration);
   const ok = res.status === 200;
@@ -123,9 +154,13 @@ export function s3Flow() {
 }
 
 // ── S4: BREADTH PERSONAL — 요청마다 challenge_id 랜덤(147..644) ──────────
-export function s4Flow() {
+export function s4Flow(data) {
+  // [JWT 전환] Authorization 헤더 추가
   const id = BREADTH_MIN + Math.floor(Math.random() * (BREADTH_MAX - BREADTH_MIN + 1));
-  const res = http.get(`${BASE_URL}/api/challenges/${id}/leaderboards?type=PERSONAL`);
+  const res = http.get(
+    `${BASE_URL}/api/challenges/${id}/leaderboards?type=PERSONAL`,
+    { headers: { Authorization: `Bearer ${data.token}` } }
+  );
   s4Duration.add(res.timings.duration);
   const ok = res.status === 200;
   check(res, { 's4 breadth personal 200': () => ok });
