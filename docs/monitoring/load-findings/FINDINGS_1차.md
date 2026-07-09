@@ -18,7 +18,7 @@
 | k6 | `grafana/k6` Docker 이미지로 실행 | 부하 생성(ramping VUs). 로컬 미설치 → `docker run` 사용 |
 | Hibernate 통계 | `generate_statistics` + `LOG_QUERIES_SLOWER_THAN_MS=100` | 요청당 쿼리 수·느린 쿼리(SQL_SLOW) 가시성 |
 
-> 실행 절차는 `docs/monitoring/MONITORING.md` 참고. 부하 스크립트는 `monitoring/k6/a-axis-load-test.js`.
+> 실행 절차는 `docs/monitoring/harness/MONITORING.md` 참고. 부하 스크립트는 `monitoring/k6/a-axis-load-test.js`.
 
 ---
 
