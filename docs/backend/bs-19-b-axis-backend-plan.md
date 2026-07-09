@@ -3,10 +3,11 @@
 > 대상: Challenge / Team / ChallengeCheckIn / Settlement 백엔드 (B-axis)
 > 기반: deep-interview `di-booster-20260531` (Ambiguity 19.5%, PASSED)
 > 기술 스택: Spring Boot REST API + PostgreSQL
-> 상태: 계획 문서 (코드 미생성)
+> 상태: 구현 완료 (BS-26, BS-27 기준 — Phase 1~4a 백엔드 구현 완료)
 > 모드: ralplan consensus — **APPROVED** (Planner→Architect→Critic 합의 완료, 2026-06-04)
 > Open Questions: **전체 확정 완료** (Q1–Q5, 2026-06-07)
 > DB/API 동기화: `bs-22-database-design-plan.md` + `MVP_API_SPEC.md` 기준 반영 (2026-06-11)
+> Spec 정합성 업데이트: BS-30 (2026-06-23) — ChallengeStatus·CheckInStatus·VerificationType·검증 테이블 구조를 ERD/API Spec과 완전 일치시킴
 
 ---
 
@@ -41,7 +42,7 @@
 1. **흐름 분리 불변식 우선**: ChallengeCheckIn과 PersonalCheckIn의 결합을 코드·모듈 경계로 강제한다. 어떤 편의성도 이 분리를 깨지 않는다.
 2. **정산은 결정론적·재현 가능해야 한다**: 동일 입력(인증 기록 + 탈퇴 이력)에 대해 항상 동일한 참여율·승패·코인 분배 결과를 산출한다. 정산은 멱등(idempotent)하게 1회만 적용된다.
 3. **코인 원장의 단일 진실 공급원은 A-axis**: B-axis는 잔액을 직접 수정하지 않고 `CoinService`를 통해서만 변동을 일으킨다. 정산 분배·차감·반환은 모두 추적 가능한 트랜잭션으로 남긴다.
-4. **상태 전이는 명시적 상태 머신으로 관리**: Challenge(RECRUITING→ONGOING→ENDED→SETTLED) 및 Team result는 정의된 전이만 허용한다.
+4. **상태 전이는 명시적 상태 머신으로 관리**: Challenge(READY→ACTIVE→ENDED, CANCELLED) 및 Team result는 정의된 전이만 허용한다. 정산 완료는 `SettlementStatus.COMPLETED`로 표현하며 Challenge 상태를 SETTLED로 변경하지 않는다.
 5. **참여 시점 스냅샷 고정**: GPS 위치, 팀 편성 시점 인원수 등 정산에 영향을 주는 값은 챌린지 시작 후 변경 불가하게 잠근다.
 6. **MVP는 모듈러 모놀리스**: A-axis와 B-axis는 패키지·아키텍처 테스트로 논리 분리하되, **동일 PostgreSQL DB와 동일 스프링 트랜잭션 경계를 공유한다**. `CoinService`는 in-process 호출이므로 D1의 동기 트랜잭션이 성립하고 비관적 락 보유 중 외부 I/O 대기 문제는 발생하지 않는다. 향후 서비스 분리 시 이 전제를 재검토한다.
 
@@ -84,7 +85,7 @@
 
 #### 선택지 D — 5:5 팀 자동 구성 트리거
 - **Option D1 (채택): 10번째 참여 확정 트랜잭션 내 동기 구성**
-  - 10번째 참여자 확정(코인 차감 완료) 시점에 같은 트랜잭션에서 셔플·팀 배정·`status=ONGOING`·`startedAt` 설정.
+  - 10번째 참여자 확정(코인 차감 완료) 시점에 같은 트랜잭션에서 셔플·팀 배정·`status=ACTIVE`·`startedAt` 설정.
   - Pros: 경쟁 조건 없음, "10명=즉시 시작" 스펙 부합, 별도 스케줄러 불필요
   - Cons: 10번째 참여 요청의 응답 시간이 약간 길어짐(허용 범위)
 - **Option D2 (기각): 비동기 워커/스케줄러로 주기 폴링**
@@ -130,11 +131,17 @@ backend (Spring Boot)
 
 **`challenges`**
 ```
-id, category, title, description, verification_method, duration_days, deposit_coins,
+id, category, title, description, verification_type, duration_days, deposit_coins,
 visibility, approval_type, status, invite_code, max_participants,
 started_at, ended_at, created_by, created_at, updated_at
 ```
-- status: `RECRUITING | ONGOING | ENDED | SETTLED`
+- status: `READY | ACTIVE | ENDED | CANCELLED`
+  - `READY`: 모집 중 (구 RECRUITING)
+  - `ACTIVE`: 진행 중 (구 ONGOING)
+  - `ENDED`: 종료 (정산 완료 여부는 `settlements.status`로 구분)
+  - `CANCELLED`: 취소됨
+  - ⚠️ **SETTLED 상태 없음**: 정산 완료는 `SettlementStatus.COMPLETED` + `settlements` UNIQUE(challenge_id) 제약으로 멱등성 보장
+- verification_type: `GPS | PHOTO | AI | GPS_PHOTO | GPS_PHOTO_AI` (구 free-text `verification_method`)
 - visibility: `PUBLIC | PRIVATE`
 - approval_type: `AUTO | LEADER`
   - `LEADER` 승인 권한자 = `created_by` 고정 (별도 `leader_id` 컬럼 없음)
@@ -156,7 +163,7 @@ status, active_until, joined_at, approved_at, created_at, updated_at
 - UNIQUE (challenge_id, user_id)
 - `gps_locked`: Phase 2 팀 구성 시 true로 변경
 
-Challenge.status 상태머신: `RECRUITING → ONGOING → ENDED → SETTLED`
+Challenge.status 상태머신: `READY → ACTIVE → ENDED` (취소 시 `→ CANCELLED`)
 
 ### 서비스 클래스 & 핵심 메서드 (개념 수준)
 - `ChallengeService`
@@ -200,7 +207,7 @@ Challenge.status 상태머신: `RECRUITING → ONGOING → ENDED → SETTLED`
 ### 구현 기능/작업
 - 10명 충족 감지 → 랜덤 셔플 → 2개 팀(5명씩) 배정
 - Team 엔티티 2개 생성, 각 ChallengeParticipant에 teamId 할당
-- Challenge `status = ONGOING`, `startedAt = now(KST)`, `endedAt = startedAt + durationDays`
+- Challenge `status = ACTIVE`, `startedAt = now(KST)`, `endedAt = startedAt + durationDays`
 - 시작 시점에 모든 참여자 GPS 위치 불변(locked) 마킹
 - 시작 시점 팀 인원수 스냅샷 기록 (정산 분모 기준값)
 
@@ -261,15 +268,39 @@ GPS 기반 팀 챌린지 인증을 기록하고, 팀 참여율을 계산하며, 
 **`challenge_check_ins`** — **NOT `check_ins`(A-axis)** — 별도 테이블, 별도 리포지토리
 ```
 id, participant_id, challenge_id, team_id, check_in_date(DATE),
-status, verified_at, current_lat, current_lng, created_at, updated_at
+status, verified_at, created_at, updated_at
 ```
-- status: `SUCCESS | FAILED`
+- status: `SUCCESS | FAILED | LATE_SUCCESS | PENDING`
+  - `PENDING`: 인증 제출 직후 판정 대기 상태 (신규)
+  - `SUCCESS`: GPS 반경 내 인증 성공
+  - `LATE_SUCCESS`: 지연 성공 (시간 창 이후 인증, 향후 사용)
+  - `FAILED`: GPS 반경 외 판정 실패
   - **MISSED = 레코드 미생성**. 참여율 계산 시 SUCCESS 레코드 부재로 미수행 판단.
-  - MVP에서는 자정 MISSED 배치 생성 없음. 통계 고도화 시 검토.
 - `check_in_date`: `DATE` 타입. DB 타임존 의존 없이 애플리케이션에서 KST 기준 `LocalDate` 계산 후 저장.
-- `current_lat`, `current_lng`: 인증 시점 좌표 (감사/디버깅용). GPS 좌표 저장 여부 및 정밀도·보관 정책은 미정 (bs-22 Open Question 12.3).
+- ⚠️ `current_lat`, `current_lng` **제거됨** (BS-27): 인증 시점 좌표는 `verification_submissions`로 이동
 - `challenge_id`, `team_id`: 정규화 관점에서 `participant_id`로 추적 가능하나 조회 성능·쿼리 단순성을 위해 중복 저장.
 - UNIQUE (participant_id, check_in_date) — 챌린지별 하루 1건 보장
+
+**`verification_submissions`** — BS-27 검증 요청 이력 (challenge_check_ins 1:N)
+```
+id, check_in_id, submitted_at, submitted_lat(DOUBLE PRECISION), submitted_lng(DOUBLE PRECISION),
+attempt_number, created_at
+```
+- 하나의 체크인에 대한 인증 시도를 순번별로 기록
+
+**`gps_verification_results`** — GPS 판정 결과 (verification_submissions 1:1)
+```
+id, submission_id(UNIQUE), target_lat(DOUBLE PRECISION), target_lng(DOUBLE PRECISION),
+radius_meters(INTEGER), distance_meters(NUMERIC 10,2), is_within_radius(BOOLEAN), created_at
+```
+- `distance_meters`: 정밀 소수 계산 (BigDecimal, NUMERIC 10,2)
+- GPS 이외 인증 방식(PHOTO, AI 등)은 별도 result 테이블로 확장 예정
+
+**`verification_decisions`** — 최종 판정 (verification_submissions 1:1)
+```
+id, submission_id(UNIQUE), final_passed(BOOLEAN), failure_reason(VARCHAR 200), created_at
+```
+- MVP: GPS 결과만으로 최종 판정 (`GPS_OUT_OF_RADIUS` 등)
 
 `teams.participation_rate` 캐시 컬럼 갱신 (분자 기준)
 
@@ -319,7 +350,7 @@ status, verified_at, current_lat, current_lng, created_at, updated_at
   - 패팀: 예치금 소멸 (지급 없음 — 참여 시 이미 차감됨. 감사 기록은 Settlement 테이블에 남김)
   - DRAW: **활성 참여자(탈퇴자 제외)에게만** 본인 예치금 반환 (CoinService 호출). 탈퇴자는 DRAW 여부와 무관하게 반환 없음.
   - 탈퇴자: 승·패·DRAW 모두 예치금 반환 없음. 탈퇴자 예치금은 별도 재분배 없이 소멸 처리한다 (DRAW 시 활성자의 분배 풀에 합산되지 않는다).
-- **정산 멱등성**: `UPDATE challenge SET status = SETTLED WHERE id = ? AND status = ENDED` 의 affected-rows = 1 인 호출자만 코인 분배를 수행한다. affected-rows = 0 이면 즉시 no-op 반환. 상태 플래그 조회 후 전이하는 방식(check-then-set)은 race condition 위험으로 사용하지 않는다.
+- **정산 멱등성**: `settlements` 테이블의 `SettlementStatus.COMPLETED` 레코드 존재 여부로 중복 실행을 방지한다. `UNIQUE(challenge_id)` DB 제약이 이중 실행 시 예외를 발생시키며, 서비스 레이어에서 `findByChallengeId(...).filter(COMPLETED).isPresent()` 게이트로 no-op 반환한다. Challenge 상태를 SETTLED로 변경하지 않는다(ChallengeStatus에 SETTLED 없음).
 
 ### 관련 엔티티/테이블 (bs-22 확정 기준)
 
@@ -341,19 +372,16 @@ winner_team_id, loser_team_id, draw, created_at, updated_at
 - 재시도 전략: `status = FAILED` 시 DELETE+INSERT 아닌 기존 레코드 `UPDATE`
 - 개별 참여자 지급 이력이 필요해지면 `settlement_participants` 테이블 확장 (bs-22 8.4)
 
-**`challenges` 변경 사항 (정산 완료 후)**
-```
-status → 'SETTLED'
-```
+**정산 완료 후 Challenge 상태**: Challenge.status는 `ENDED`를 유지한다. 정산 완료 여부는 `settlements.status = COMPLETED`로 확인한다.
 
 ### 서비스 클래스 & 핵심 메서드 (4a)
 - `SettlementService`
-  - `settleChallenge(challengeId)` — 원자 UPDATE(`WHERE status=ENDED`) → affected-rows=0이면 no-op 반환. affected-rows=1인 호출자만 이하 로직 수행.
+  - `settleChallenge(challengeId)` — `SettlementStatus.COMPLETED` 레코드 존재 시 즉시 no-op 반환(멱등 게이트). 없으면 참여율 재계산 → 승패 판정 → 코인 분배 수행.
   - `computeAuthoritativeRate(teamId)` — 구간 분할 재계산 (ParticipationRateCalculator 권위 모드)
   - `determineResult(teamA, teamB)` — WIN/LOSE/DRAW
   - `distributeCoins(...)` — CoinService 호출로 분배/반환 (DRAW는 활성 참여자만 대상)
 - `ChallengeEndScheduler`
-  - `markEndedChallenges()` — endedAt 경과 챌린지를 ENDED로 전이한 뒤, 동일 실행에서 `SettlementService.settleChallenge()`를 호출. 정산 트리거 경로는 이 스케줄러 단일. 멱등 보장으로 수동 재시도 API도 동일 settleChallenge() 재사용 가능.
+  - `markEndedChallenges()` — `ACTIVE` 챌린지 중 `endedAt` 경과한 것을 `ENDED`로 전이한 뒤, 동일 실행에서 `SettlementService.settleChallenge()`를 호출. 정산 트리거 경로는 이 스케줄러 단일. 멱등 보장으로 수동 재시도 API도 동일 settleChallenge() 재사용 가능.
 
 ### API 엔드포인트 (MVP_API_SPEC 기준, 4a)
 - `GET /api/challenges/{challengeId}/result` — 정산 결과 조회 (B-axis 추가 API)
@@ -448,17 +476,29 @@ id, challenge_id, from_participant_id, to_participant_id, emoji_type, created_at
 | 채팅/응원 API | 스펙 미포함 | `/api/teams/{teamId}/chat`, `/api/challenges/{challengeId}/cheers` | Phase 4b에서 스펙 추가 필요 |
 | 정산 결과 조회 | 스펙 미포함 | `GET /api/challenges/{challengeId}/result` | B-axis 추가 API로 스펙에 반영 필요 |
 
-### Flyway 마이그레이션 계획 (bs-22 기준)
+### Flyway 마이그레이션 현황 (적용 완료)
 
 ```
-V1__create_challenge_and_participant_tables.sql   → Phase 1 착수 전
-V2__create_team_tables.sql                        → Phase 2 착수 전
-V3__create_challenge_check_in_tables.sql          → Phase 3 착수 전
-V4__create_settlement_tables.sql                  → Phase 4a 착수 전
-V5__create_social_tables.sql                      → Phase 4b 착수 전
+V1__create_challenge_and_participant_tables.sql   → Phase 1 (적용 완료)
+V2__create_team_tables.sql                        → Phase 2 (적용 완료)
+V3__create_challenge_check_in_tables.sql          → Phase 3 (적용 완료)
+V4__create_settlement_tables.sql                  → Phase 4a (적용 완료)
+V5__create_social_tables.sql                      → Phase 4b (적용 완료)
+V6__align_with_spec.sql                           → BS-30 Spec 정합성 (적용 완료, 2026-06-23)
+V7__fix_gps_column_types.sql                      → GPS 컬럼 DOUBLE PRECISION 변환 (적용 완료, 2026-06-23)
 ```
 
-> 이미 팀 개발 환경에 별도 V1이 적용된 경우, 기존 V1을 기준으로 파일 번호를 조정한다.
+**V6 주요 변경 내용**:
+- `challenges.status` 값 마이그레이션: RECRUITING→READY, ONGOING→ACTIVE, SETTLED→ENDED
+- `challenges.status` 제약: `('READY','ACTIVE','ENDED','CANCELLED')`
+- `challenges.verification_method` 컬럼 → `verification_type` 리네임, 값 정규화
+- `challenge_check_ins.status` 제약: `('SUCCESS','FAILED','LATE_SUCCESS','PENDING')`
+- `challenge_check_ins.current_lat`, `current_lng` 컬럼 제거
+- `verification_submissions`, `gps_verification_results`, `verification_decisions` 테이블 신규 생성
+
+**V7 주요 변경 내용**:
+- `challenge_participants.gps_lat`, `gps_lng`: `DECIMAL(10,7)` → `DOUBLE PRECISION`
+  (Hibernate 6.6+가 `Double` 필드에 `float(53)` 타입을 기대하므로 스키마 검증 통과 필요)
 
 ---
 
@@ -496,7 +536,7 @@ V5__create_social_tables.sql                      → Phase 4b 착수 전
 - [ ] Challenge 생성/탐색(필터·검색)/상세/초대코드 조회가 동작한다
 - [ ] 참여 신청 시 잔액 검증 후 예치금이 원자적으로 차감되고, 부족 시 거절된다
 - [ ] 참여 시점 GPS 위치가 등록되고 챌린지 시작 후 변경 불가하다
-- [ ] 10명 확정 시 랜덤 5:5 팀이 구성되고 챌린지가 ONGOING으로 자동 시작된다 (11명 초과 방지)
+- [ ] 10명 확정 시 랜덤 5:5 팀이 구성되고 챌린지가 ACTIVE로 자동 시작된다 (11명 초과 방지)
 - [ ] ChallengeCheckIn이 일자별 멱등하게 기록되고, PersonalCheckIn/스트릭에 절대 쓰지 않는다 (아키텍처 테스트로 검증)
 - [ ] 팀 상세 뷰가 우리 팀/상대 팀 참여율·오늘 상태·Day N/총일수를 제공한다
 - [ ] 정산이 구간 분할 참여율로 승패를 결정하고 멱등하게 1회 적용된다

@@ -16,11 +16,13 @@ import com.booster.shared.contract.CoinService;
 import com.booster.shared.contract.CoinTransactionReason;
 import com.booster.team.service.TeamFormationService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -37,8 +39,8 @@ public class ParticipationService {
         Challenge challenge = challengeRepository.findByIdWithLock(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
-        if (challenge.getStatus() != ChallengeStatus.RECRUITING) {
-            throw new IllegalStateException("Challenge is not in RECRUITING status");
+        if (challenge.getStatus() != ChallengeStatus.READY) {
+            throw new IllegalStateException("Challenge is not in READY status");
         }
 
         if (participantRepository.findByChallengeIdAndUserId(challengeId, userId).isPresent()) {
@@ -49,6 +51,8 @@ public class ParticipationService {
         if (confirmedCount >= challenge.getMaxParticipants()) {
             throw new ChallengeFullException(challengeId);
         }
+
+        log.info("Participation requested: userId={}, challengeId={}, approvalType={}", userId, challengeId, challenge.getApprovalType());
 
         // Coin deduction (atomic — throws InsufficientCoinException if balance is low)
         coinService.deduct(userId, challenge.getDepositCoins(), CoinTransactionReason.CHALLENGE_DEPOSIT, challengeId);
@@ -71,6 +75,7 @@ public class ParticipationService {
 
         if (initialStatus == ParticipantStatus.CONFIRMED) {
             participant.confirm(LocalDateTime.now());
+            log.info("Participant confirmed: userId={}, challengeId={}", userId, challengeId);
         }
 
         participantRepository.save(participant);
@@ -91,6 +96,10 @@ public class ParticipationService {
             throw new UnauthorizedException("Only the challenge creator can approve participants");
         }
 
+        if (challenge.getStatus() != ChallengeStatus.READY) {
+            throw new IllegalStateException("Cannot approve participants after challenge has started");
+        }
+
         ChallengeParticipant participant = participantRepository.findById(participantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Participant", participantId));
 
@@ -104,6 +113,7 @@ public class ParticipationService {
         }
 
         participant.confirm(LocalDateTime.now());
+        log.info("Participant approved: participantId={}, challengeId={}, approvedBy={}", participantId, challengeId, leaderId);
         teamFormationService.formTeamsIfReady(challengeId);
 
         return ParticipantResponse.from(participant);
@@ -114,7 +124,7 @@ public class ParticipationService {
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
-        if (challenge.getStatus() != ChallengeStatus.RECRUITING) {
+        if (challenge.getStatus() != ChallengeStatus.READY) {
             throw new IllegalStateException("Cannot cancel after challenge has started");
         }
 
@@ -126,5 +136,6 @@ public class ParticipationService {
         }
 
         participant.cancel();
+        log.info("Participation cancelled: userId={}, challengeId={}", userId, challengeId);
     }
 }

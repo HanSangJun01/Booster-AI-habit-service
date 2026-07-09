@@ -8,12 +8,14 @@ import com.booster.challengecheckin.dto.TeamDetailResponse;
 import com.booster.challengecheckin.dto.TeamDetailResponse.TeamInfo;
 import com.booster.challengecheckin.dto.TeamMemberCheckInStatus;
 import com.booster.challengecheckin.repository.ChallengeCheckInRepository;
+import com.booster.config.CacheConfig;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.ResourceNotFoundException;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,10 +34,17 @@ public class TeamDetailViewService {
     private final TeamRepository teamRepository;
     private final ChallengeParticipantRepository participantRepository;
     private final ChallengeCheckInRepository checkInRepository;
-    private final ParticipationRateCalculator participationRateCalculator;
     private final ChallengeRepository challengeRepository;
 
+    // 라이브 팀 비교 뷰 — (challengeId, userId)별 캐시. 자연 노화는 refreshAfterWrite(stale+비동기 갱신),
+    // 체크인 write는 TeamDetailCacheEvictor가 즉시 evict → 최신 반영.
+    @Cacheable(cacheNames = CacheConfig.TEAM_DETAIL, key = "#challengeId + '_' + #userId")
     public TeamDetailResponse getTeamComparison(Long challengeId, Long userId) {
+        return computeTeamComparison(challengeId, userId);
+    }
+
+    /** 실제 계산(비캐시). @Cacheable 미스 경로와 refreshAfterWrite CacheLoader가 공용으로 호출. */
+    public TeamDetailResponse computeTeamComparison(Long challengeId, Long userId) {
         // 1. 챌린지 조회
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
@@ -108,7 +117,7 @@ public class TeamDetailViewService {
         return new TeamInfo(
                 team.getId(),
                 team.getName(),
-                participationRateCalculator.currentRate(team.getId()),
+                team.getParticipationRate(),   // 이미 로딩된 team 엔티티의 선계산값 사용 (currentRate의 중복 findById 제거)
                 todayCheckedInCount,
                 participants.size(),
                 members
