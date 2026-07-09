@@ -2,7 +2,10 @@ package com.booster.shared.gps;
 
 import org.springframework.stereotype.Component;
 
-/** Haversine 공식 기반 GPS 반경 판정. A/B 공유 컴포넌트. */
+/**
+ * Haversine 공식 기반 GPS 반경 판정. A/B 공유 단일 컴포넌트.
+ * §공통: Haversine(현재좌표, 등록좌표) <= 등록반경(meters).
+ */
 @Component
 public class GpsVerificationEvaluator {
 
@@ -20,6 +23,11 @@ public class GpsVerificationEvaluator {
     }
 
     public double calculateDistanceMeters(double lat1, double lng1, double lat2, double lng2) {
+        return haversineDistance(lat1, lng1, lat2, lng2);
+    }
+
+    /** {@link #calculateDistanceMeters} 별칭 (A축 호출부 호환). */
+    public double distanceMeters(double lat1, double lng1, double lat2, double lng2) {
         return haversineDistance(lat1, lng1, lat2, lng2);
     }
 

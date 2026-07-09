@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -29,7 +30,7 @@ public class ChallengeCheckInController {
     @PostMapping("/{challengeId}/check-ins")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<CheckInResponse> checkIn(
-            @RequestHeader("X-User-Id") Long userId,
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId,
             @Valid @RequestBody CheckInRequest request) {
         CheckInResponse response = checkInOrchestrator.performCheckIn(
@@ -47,7 +48,7 @@ public class ChallengeCheckInController {
 
     @GetMapping("/{challengeId}/team-detail")
     public ApiResponse<TeamDetailResponse> getTeamDetail(
-            @RequestHeader("X-User-Id") Long userId,
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId) {
         return ApiResponse.success(teamDetailViewService.getTeamComparison(challengeId, userId));
     }

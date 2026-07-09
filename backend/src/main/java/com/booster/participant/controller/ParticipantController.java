@@ -8,6 +8,7 @@ import com.booster.shared.common.UnauthorizedException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -20,7 +21,7 @@ public class ParticipantController {
     @PostMapping("/{challengeId}/participants")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<ParticipantResponse> apply(
-            @RequestHeader("X-User-Id") Long userId,
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId,
             @Valid @RequestBody ParticipationRequest request) {
         return ApiResponse.success(participationService.requestParticipation(userId, challengeId, request));
@@ -28,7 +29,7 @@ public class ParticipantController {
 
     @DeleteMapping("/{challengeId}/participants/{targetUserId}")
     public ApiResponse<Void> cancel(
-            @RequestHeader("X-User-Id") Long userId,
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId,
             @PathVariable Long targetUserId) {
         if (!userId.equals(targetUserId)) {
@@ -40,7 +41,7 @@ public class ParticipantController {
 
     @PostMapping("/{challengeId}/participants/{participantId}/approve")
     public ApiResponse<ParticipantResponse> approve(
-            @RequestHeader("X-User-Id") Long leaderId,
+            @AuthenticationPrincipal Long leaderId,
             @PathVariable Long challengeId,
             @PathVariable Long participantId) {
         return ApiResponse.success(participationService.approveParticipation(leaderId, challengeId, participantId));

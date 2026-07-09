@@ -1,0 +1,12 @@
+# [BS-30] Grafana가 시작하면서 지정 폴더의 대시보드 json을 자동 로딩 (import 클릭 불필요)
+apiVersion: 1
+providers:
+  - name: 'booster-a-axis'
+    orgId: 1
+    folder: 'Booster A-axis'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      # 컨테이너 안에서 대시보드 json이 놓이는 경로 (compose에서 마운트)
+      path: /var/lib/grafana/dashboards

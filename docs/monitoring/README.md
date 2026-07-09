@@ -1,23 +1,28 @@
 # docs/monitoring
 
-B-axis 백엔드 성능·모니터링 문서. **참조 세트(phase)별로 묶여** 있고, 각 phase는 `[계획 → 결과]` 한 세트다.
+백엔드 성능·모니터링·검증 문서 (A축 + B축). 실제 도구(부하 스크립트·대시보드·시드)는
+저장소 루트 [`monitoring/`](../../monitoring/)에 있다.
 
 ## 구조
 
 | 폴더 | 무엇 |
 |---|---|
-| `harness/` | 테스트 하네스(**공유 도구**) — 사용 가이드 + 실행 이력. 두 phase가 함께 씀 |
-| `baseline-monitoring/` | **Phase 1** (초기 happy-path 모니터링) |
-| `saturation-cache/` | **Phase 2** (포화·캐시 — 이번 세션) |
+| `harness/` | 테스트 하네스(**공유 도구**) — 사용 가이드(`MONITORING.md` 등) + 실행 이력 |
+| `baseline-monitoring/` | **(B) Phase 1** 초기 happy-path 모니터링 (`b-axis-monitoring-validation-plan.md` → `week1-baseline.md`) |
+| `saturation-cache/` | **(B) Phase 2** 포화·캐시 (`saturation-scenario-matrix.md` → `PERFORMANCE-LOG.md` + `saturation-redis-verdict.md`) |
+| `load-findings/` | **(A)** 초기 부하·성능·오류 발견 (FINDINGS 1~4차) |
+| `verification/` | **(A)** 출시검증·시나리오리뷰·재검증 (FINDINGS 5·6·7차) |
+| `summary/` | **(A)** 종합요약·쉬운버전·버그 총정리표 |
 | `baselines/` | 원시 실행 출력(k6 json, HikariCP log). **gitignore**, 로컬 전용 |
 
-## 각 phase = 계획 → 결과
+## 읽는 순서
 
-| phase | 계획 | 결과 |
-|---|---|---|
-| `baseline-monitoring/` | `b-axis-monitoring-validation-plan.md` (시나리오 A~H) | `week1-baseline.md` |
-| `saturation-cache/` | `saturation-scenario-matrix.md` (시나리오 S1~S6) | `PERFORMANCE-LOG.md` (누적 로그) + `saturation-redis-verdict.md` (판정) |
+**B축 (챌린지/정산 read-path)**
+- `baseline-monitoring/` → `saturation-cache/PERFORMANCE-LOG.md` (누적, 최신순)
+- 세션 회고: `docs/backend/bs-30-readpath-performance-retro.md`
 
-- **누적 성능 로그**: `saturation-cache/PERFORMANCE-LOG.md` — 측정 라운드마다 최신순으로 쌓음. `monitoring/scripts/run-saturation.sh`(실행+기록) / `log-run.sh`(기록)로 자동 append.
-- **원시 vs 요약**: 원시 출력은 `baselines/`(gitignore), 사람이 읽는 요약·판정은 위 문서들(추적).
-- 세션 전체 문제해결 회고는 `docs/backend/bs-30-readpath-performance-retro.md`.
+**A축 (개인 GPS 습관 인증)**
+1. `harness/MONITORING.md` — 무엇을·어떻게 측정하는지
+2. `load-findings/FINDINGS_1차.md` → `_4차` — 부하 병목·오류
+3. `verification/FINDINGS_6차-시나리오리뷰.md` — 확정 버그(동시성·로직)
+4. `summary/SUMMARY-종합요약.md` — 전체 종합

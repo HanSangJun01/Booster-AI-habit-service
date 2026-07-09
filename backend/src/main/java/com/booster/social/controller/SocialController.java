@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -45,7 +46,7 @@ public class SocialController {
     @PostMapping("/api/teams/{teamId}/chat")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<ChatMessageResponse> sendMessage(
-            @RequestHeader("X-User-Id") Long senderId,
+            @AuthenticationPrincipal Long senderId,
             @PathVariable Long teamId,
             @Valid @RequestBody SendMessageRequest request) {
         return ApiResponse.success(teamChatService.sendMessage(senderId, teamId, request.getContent()));
@@ -54,7 +55,7 @@ public class SocialController {
     @DeleteMapping("/api/teams/{teamId}/chat/{messageId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteMessage(
-            @RequestHeader("X-User-Id") Long senderId,
+            @AuthenticationPrincipal Long senderId,
             @PathVariable Long teamId,
             @PathVariable Long messageId) {
         teamChatService.deleteMessage(senderId, teamId, messageId);
@@ -63,7 +64,7 @@ public class SocialController {
     @PostMapping("/api/challenges/{challengeId}/cheers")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<CheerEmojiResponse> sendCheer(
-            @RequestHeader("X-User-Id") Long fromParticipantId,
+            @AuthenticationPrincipal Long fromParticipantId,
             @PathVariable Long challengeId,
             @Valid @RequestBody CheerEmojiRequest request) {
         return ApiResponse.success(cheerService.sendCheer(
