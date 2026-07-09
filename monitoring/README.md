@@ -4,11 +4,15 @@
 (측정 **결과·문서**는 [`docs/monitoring/`](../docs/monitoring/) 참고 — 거긴 phase별 내러티브.)
 
 ## grafana/ — 대시보드
+모니터링 스택 기동 시 `provisioning/`이 데이터소스(Prometheus)와 `dashboards/` 폴더의 대시보드를
+**자동 등록**한다(import 클릭 불필요). Grafana 폴더 "Booster" 아래에 A/B축 둘 다 뜬다.
+
 | 파일 | 무엇 |
 |---|---|
-| `booster-baxis-dashboard-import.json` | B축 대시보드(21패널: 핵심지표·JVM·HTTP·DB 커넥션 등). Grafana에 import |
-| `dashboards/a-axis-overview.json` | A축 개요 대시보드 |
-| `provisioning/` | 데이터소스·대시보드 자동 등록 설정(monitoring 스택 기동 시 로딩) |
+| `dashboards/a-axis-overview.json` | A축 개요 대시보드 (자동 로드) |
+| `dashboards/b-axis-overview.json` | B축 대시보드(21패널: 핵심지표·JVM·HTTP·DB 커넥션 등, 자동 로드) |
+| `provisioning/datasources/datasource.yml` | Prometheus 데이터소스(uid=`prometheus`) 자동 등록 |
+| `provisioning/dashboards/dashboards.yml` | `dashboards/` 폴더를 읽는 provider 설정 |
 
 ## k6/ — 부하 스크립트
 | 파일 | 무엇 |
