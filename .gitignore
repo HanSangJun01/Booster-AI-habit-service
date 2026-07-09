@@ -1,1 +1,4 @@
 .DS_Store
+
+# OMC tooling session state (not for VCS)
+.omc/state/

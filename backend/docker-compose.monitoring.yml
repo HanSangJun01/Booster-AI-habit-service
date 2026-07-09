@@ -1,0 +1,36 @@
+# [BS-30 모니터링 스택] Prometheus + Grafana (자동 프로비저닝)
+# 실행:  docker compose -f docker-compose.monitoring.yml up -d
+# 종료:  docker compose -f docker-compose.monitoring.yml down
+#   - Grafana:    http://localhost:3000  (admin / admin)  → A축 대시보드 자동 로딩됨
+#   - Prometheus: http://localhost:9090
+# 백엔드는 별도로 호스트에서 실행: ./gradlew bootRun  (8080)
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: booster-a-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    extra_hosts:
+      # 리눅스 환경에서도 host.docker.internal 이 호스트를 가리키도록 (Docker Desktop은 기본 지원)
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: booster-a-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: light
+    volumes:
+      # 데이터소스 + 대시보드 provider 설정 (시작 시 자동 등록)
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      # 실제 대시보드 json 들 (provider가 이 경로를 읽음)
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
