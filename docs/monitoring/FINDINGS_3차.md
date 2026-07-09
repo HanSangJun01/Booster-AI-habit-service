@@ -2,7 +2,7 @@
 
 > 2차 대비 **바꾼 변수: 데이터 대량 시딩**(seed3rd 유저에 이번 달 체크인 25건 + 코인 내역 300건을 SQL로 주입).
 > 목적: 데이터가 쌓였을 때 dashboard(캘린더)·coins(페이징 COUNT) 쿼리가 실제로 느려지는지 검증.
-> 도구·실행 절차는 1차 보고서 및 `MONITORING.md` 참고. 시드 SQL은 `load-test/seed-3rd.sql`.
+> 도구·실행 절차는 1차 보고서 및 `MONITORING.md` 참고. 시드 SQL은 `monitoring/scripts/seed-3rd.sql`.
 
 ---
 

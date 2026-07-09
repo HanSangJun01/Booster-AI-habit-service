@@ -3,8 +3,8 @@
 -- 선행: POST /api/auth/signup 으로 seed3rd@booster.test 가 먼저 생성돼 있어야 함(비밀번호 해시 때문에 가입은 API로).
 -- 멱등: 다시 돌려도 중복 없이 동일 상태가 되도록 작성(ON CONFLICT / 시드 마커 reference_id=-999).
 -- 실행(저장소 루트에서) — PowerShell stdin 파이프는 긴 줄이 깨지므로 "컨테이너에 복사 후 -f" 방식 사용:
---   docker compose -f backend/docker-compose.yml cp backend/load-test/seed-3rd.sql db:/tmp/seed-3rd.sql
---   docker compose -f backend/docker-compose.yml exec -T db psql -U booster -d booster -v ON_ERROR_STOP=1 -f /tmp/seed-3rd.sql
+--   docker compose -f docker-compose.yml cp monitoring/scripts/seed-3rd.sql db:/tmp/seed-3rd.sql
+--   docker compose -f docker-compose.yml exec -T db psql -U booster -d booster -v ON_ERROR_STOP=1 -f /tmp/seed-3rd.sql
 
 DO $$
 DECLARE

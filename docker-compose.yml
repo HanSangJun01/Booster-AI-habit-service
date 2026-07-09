@@ -19,7 +19,7 @@ services:
 
   # Spring Boot 백엔드
   backend:
-    build: .
+    build: ./backend
     container_name: booster-backend
     depends_on:
       db:

@@ -99,11 +99,11 @@ docker compose -f docker-compose.yml up -d db
 .\gradlew.bat bootRun                      # localhost:8080/actuator/prometheus 확인
 # 모니터링 스택
 docker compose -f docker-compose.monitoring.yml up -d   # Grafana localhost:3000 admin/admin
-# 부하(k6는 미설치 → Docker로). load-test 폴더에서:
+# 부하(k6는 미설치 → Docker로). monitoring/k6 폴더에서:
 docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 -v ${PWD}:/scripts grafana/k6 run /scripts/a-axis-load-test.js
 # SQL 시드(PowerShell 파이프는 깨짐 → 복사 후 -f). 저장소 루트에서:
-docker compose -f backend/docker-compose.yml cp backend/load-test/seed-3rd.sql db:/tmp/seed-3rd.sql
-docker compose -f backend/docker-compose.yml exec -T db psql -U booster -d booster -f /tmp/seed-3rd.sql
+docker compose -f docker-compose.yml cp monitoring/scripts/seed-3rd.sql db:/tmp/seed-3rd.sql
+docker compose -f docker-compose.yml exec -T db psql -U booster -d booster -f /tmp/seed-3rd.sql
 # Prometheus 직접 질의 예: http://localhost:9090  →  http_server_requests_seconds_count{status="500"}
 ```
 
