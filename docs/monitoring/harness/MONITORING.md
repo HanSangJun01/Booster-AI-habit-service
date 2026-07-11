@@ -33,9 +33,10 @@ docker compose -f docker-compose.monitoring.yml up -d
 ### 3. 부하 주기
 ```bash
 cd monitoring/k6
-k6 run a-axis-load-test.js
+k6 run -e SCENARIO=load a-axis-realistic.js
 ```
-- 0 → 20 → 50 → 100명으로 점점 세게 두들김(약 3분).
+- 시나리오는 한 파일에서 `-e SCENARIO=load|stress|soak|write`로 골라 돌린다(파일 상단 주석에 각 설명·실행법).
+- `load`는 0 → 20 → 50 → 100명으로 점점 세게 두들김(약 3분).
 - 도는 동안 Grafana를 띄워놓고 **어느 엔드포인트의 p95/p99가 튀는지, 에러율이 올라가는지** 관찰.
 
 ## 무엇을 보고 무엇을 기록하나

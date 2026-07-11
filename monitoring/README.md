@@ -21,7 +21,7 @@
 | `saturation-test.js` | (B) Phase2 포화(S1~S4, `SCENARIO` env). 리더보드 HOT/TEAM/BREADTH |
 | `team-detail-realistic.js` | (B) Phase2 team-detail 캐시(hot/dist). `rt-targets.json`을 읽음 |
 | `rt-targets.json` | (B) **생성 데이터** — RT_ 시딩 결과(challenge→userIds). 재시딩하면 갱신 |
-| `a-axis-load-test.js` / `a-axis-write-load-test.js` / `a-axis-stress-test.js` / `a-axis-soak-test.js` | (A) 개인 인증 부하/쓰기/스트레스/소크 시나리오 |
+| `a-axis-realistic.js` | (A) 개인 인증 부하 시나리오 통합 러너 (`SCENARIO=load\|stress\|soak\|write`, 파일 상단 주석에 각 설명·실행법) |
 
 ## scripts/ — 시딩 · 실행 · 기록
 **시딩**
