@@ -1,0 +1,5 @@
+# 줄바꿈 고정 — 개인 core.autocrlf 설정과 무관하게 리포 규칙을 강제한다.
+# gradlew / *.sh 는 리눅스(Docker 빌드 컨테이너)에서 실행되는 셸 스크립트라 반드시 LF 여야 한다.
+# (윈도우 체크아웃에서 CRLF 로 변환되면 컨테이너 안에서 shebang 이 깨져 `./gradlew: not found` 로 빌드 실패)
+gradlew text eol=lf
+*.sh    text eol=lf
