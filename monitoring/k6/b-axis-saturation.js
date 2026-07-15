@@ -35,7 +35,7 @@ const BREADTH_MAX       = parseInt(__ENV.BREADTH_MAX || '644', 10);
 //   - S1/S2/S4(leaderboards): 유효한 JWT면 충분(참여 불필요)
 //   - S3(team-detail): 토큰 유저가 HOT_CHALLENGE_ID의 CONFIRMED 참여자여야 함
 //     → b-axis-seed-saturation.sql이 심은 앵커 유저(user_id=1000001, sat_hot@booster.test)로 로그인.
-// 로그인 계정은 a-axis-b-axis-load.js처럼 LOGIN_EMAIL/LOGIN_PASSWORD로 재정의 가능.
+// 로그인 계정은 a-axis-realistic.js처럼 LOGIN_EMAIL/LOGIN_PASSWORD로 재정의 가능.
 const LOGIN_EMAIL     = __ENV.LOGIN_EMAIL    || 'sat_hot@booster.test';
 const LOGIN_PASSWORD  = __ENV.LOGIN_PASSWORD || 'seed1234';
 const JSON_HEADERS    = { 'Content-Type': 'application/json' };

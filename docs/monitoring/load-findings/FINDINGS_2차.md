@@ -10,7 +10,7 @@
 
 - 일시: 2026-06-25 (1차에 이어 같은 스택 위에서 연속 측정 — 백엔드 워밍업된 상태)
 - 부하 프로필: ramping-vus 0→20→50→100, 약 3분
-- 변경점: `a-axis-b-axis-load.js` setup()에 위치 등록(POST /location, 서울시청 좌표 반경 200m) + 오늘 체크인(POST /check-in 동일 좌표) 추가
+- 변경점: `a-axis-load-test.js` setup()에 위치 등록(POST /location, 서울시청 좌표 반경 200m) + 오늘 체크인(POST /check-in 동일 좌표) 추가
 - 전체: 37,234 요청 / 205 req/s / 실패율 **0.01%** / 읽기 p95 **61.67ms**
 
 ## 1차 ↔ 2차 비교

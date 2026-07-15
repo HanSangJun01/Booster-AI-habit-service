@@ -584,11 +584,14 @@ if [ "${GPS_CHALLENGE_ID:-0}" != "0" ]; then
   # (참여자 1명만으로는 team_id=NULL → 체크인 409 'no team assignment' → GPS 판정 미검증)
   # userId=6은 기준 좌표(서울시청, radius=100m)로 등록 → H-1/H-2 GPS 경계 판정 대상.
   for uid in 1 2 3 4 5 6 7 8 9 10; do
+    # [조기종료 수정] set -e 하에서 curl -sf 는 4xx에 exit 22 → 가드 없으면 스위트 전체가
+    # 여기서 중단(H-1/H-2·완료 요약·baseline 스킵). 개별 join 실패는 비치명이므로 || true.
+    # (H_TEAM 검증이 뒤에서 팀 미배정을 잡아낸다)
     curl -sf -X POST "$API/api/challenges/$GPS_CHALLENGE_ID/participants" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer ${TOKENS[$uid]}" \
       -d '{"personalStatement":"GPS테스트","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
-      > /dev/null 2>&1
+      > /dev/null 2>&1 || true
   done
 
   # 10명 참여 시 팀 자동 구성 + ACTIVE 전환됨. 안전을 위해 상태 명시적 보정.
