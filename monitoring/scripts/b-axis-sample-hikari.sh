@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Poll /actuator/prometheus every ~1s and log HikariCP pool gauges with a timestamp.
-# Usage: sample-hikari.sh <output-file> [base-url]
-# Stop with: kill <pid>  (find it via the caller's $! or `pgrep -f sample-hikari.sh`)
+# Usage: b-axis-sample-hikari.sh <output-file> [base-url]
+# Stop with: kill <pid>  (find it via the caller's $! or `pgrep -f b-axis-sample-hikari.sh`)
 
 set -euo pipefail
 
-OUT_FILE="${1:?usage: sample-hikari.sh <output-file> [base-url]}"
+OUT_FILE="${1:?usage: b-axis-sample-hikari.sh <output-file> [base-url]}"
 BASE_URL="${2:-http://localhost:8080}"
 
 echo "# ts active idle pending timeout_total" > "$OUT_FILE"

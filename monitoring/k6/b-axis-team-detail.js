@@ -1,8 +1,8 @@
 // team-detail 현실 트래픽 재현 테스트 — hot-key 편중 vs distributed-key 재현 비교
 //
-// saturation-test.js의 S3(team-detail)는 "고정 1키 난타"로 캐시 적중률을 인위적으로
+// b-axis-saturation.js의 S3(team-detail)는 "고정 1키 난타"로 캐시 적중률을 인위적으로
 // 100%에 가깝게 만든다. 실제 트래픽은 인기 챌린지(hot)에 요청이 몰리되, 나머지
-// 챌린지(normal)에도 분산되어 들어온다. 이 스크립트는 rt-targets.json에 담긴
+// 챌린지(normal)에도 분산되어 들어온다. 이 스크립트는 b-axis-team-detail-targets.json에 담긴
 // hot/normal 챌린지·유저 조합으로 두 가지 현실적 시나리오를 재현해, 캐시 적중률이
 // 실제로 어느 수준으로 떨어지는지 관찰한다.
 //
@@ -13,17 +13,17 @@
 //   dist           20%는 hot, 80%는 normal에서 랜덤 선택 (실제 트래픽 분포 재현 → 낮은 캐시 적중 기대)
 //   hotonly-singlekey  참고용 — 항상 첫 hot 챌린지 + 첫 유저 고정 (구 S3와 동일, 100% 적중 기준선)
 //
-// 사전 조건: monitoring/k6/rt-targets.json 이 최신이어야 한다. challenge id는 시퀀스라
+// 사전 조건: monitoring/k6/b-axis-team-detail-targets.json 이 최신이어야 한다. challenge id는 시퀀스라
 // 재시딩마다 바뀌므로, 시딩 후 반드시 생성 스크립트로 재생성한다:
-//   docker exec -i booster-db psql -U booster -d booster < monitoring/scripts/seed-realistic-teamdetail.sql
-//   monitoring/scripts/gen-rt-targets.sh
+//   docker exec -i booster-db psql -U booster -d booster < monitoring/scripts/b-axis-seed-team-detail.sql
+//   monitoring/scripts/b-axis-gen-team-detail-targets.sh
 //   { "hot": [{ "challengeId": N, "email": "rt_c<N>@booster.test", "password": "seed1234" }, ...],
 //     "normal": [{ "challengeId": N, "email": "...", "password": "..." }, ...] }
 //   각 엔트리는 해당 챌린지의 CONFIRMED 참여자 앵커 로그인 정보를 담는다.
 //
 // 실행 예:
-//   SCENARIO=hot  k6 run monitoring/k6/team-detail-realistic.js
-//   SCENARIO=dist k6 run monitoring/k6/team-detail-realistic.js
+//   SCENARIO=hot  k6 run monitoring/k6/b-axis-team-detail.js
+//   SCENARIO=dist k6 run monitoring/k6/b-axis-team-detail.js
 
 import http from 'k6/http';
 import { check } from 'k6';
@@ -33,12 +33,12 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const SCENARIO = __ENV.SCENARIO || 'dist';
 
-const T = JSON.parse(open('./rt-targets.json'));
+const T = JSON.parse(open('./b-axis-team-detail-targets.json'));
 
 if (!T || !Array.isArray(T.hot) || !Array.isArray(T.normal) || T.hot.length === 0 || T.normal.length === 0) {
   throw new Error(
-    'rt-targets.json이 비어있거나 형식이 올바르지 않습니다. 시더를 먼저 실행해 ' +
-      'monitoring/k6/rt-targets.json 을 생성하세요. 기대 형식: ' +
+    'b-axis-team-detail-targets.json이 비어있거나 형식이 올바르지 않습니다. 시더를 먼저 실행해 ' +
+      'monitoring/k6/b-axis-team-detail-targets.json 을 생성하세요. 기대 형식: ' +
       '{"hot":[{"challengeId":N,"email":"...","password":"..."}...],"normal":[...]}'
   );
 }
@@ -100,7 +100,7 @@ export function setup() {
     const token = res.json('accessToken');
     if (!token) {
       throw new Error(
-        `[JWT] 앵커 유저 로그인 실패 — seed-realistic-teamdetail.sql 먼저 적용/재생성했는지 확인. ` +
+        `[JWT] 앵커 유저 로그인 실패 — b-axis-seed-team-detail.sql 먼저 적용/재생성했는지 확인. ` +
         `challengeId=${e.challengeId} email=${e.email} status=${res.status} body=${res.body}`
       );
     }
@@ -154,7 +154,7 @@ export function distFlow(data) {
 }
 
 // ── hotonly-singlekey: 참고용 — 항상 동일한 첫 hot 챌린지 고정 ──────────
-// 구 saturation-test.js S3와 동일한 조건(100% 적중 기준선)으로, hot/dist 결과와
+// 구 b-axis-saturation.js S3와 동일한 조건(100% 적중 기준선)으로, hot/dist 결과와
 // 나란히 놓고 "키 다양성이 늘어날수록 적중률이 어떻게 떨어지는지"를 비교하기 위함.
 export function singleKeyFlow(data) {
   const challengeId = T.hot[0].challengeId;

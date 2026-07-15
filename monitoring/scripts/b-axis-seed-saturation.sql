@@ -1,5 +1,5 @@
 -- =====================================================================
--- seed-saturation.sql
+-- b-axis-seed-saturation.sql
 -- Purpose : Seed large-scale SATURATION test data for B-axis backend
 --           to reveal which resource (HikariCP / CPU / index scan) saturates
 --           first, so we can decide whether Redis caching is warranted.
@@ -22,7 +22,7 @@
 -- No FK on challenge_participants.user_id -> synthetic user_ids use 1_000_000+
 -- offset to never collide with real users (observed real range 1..32).
 --
--- Run: docker exec -i booster-db psql -U booster -d booster < seed-saturation.sql
+-- Run: docker exec -i booster-db psql -U booster -d booster < b-axis-seed-saturation.sql
 -- =====================================================================
 
 \set ON_ERROR_STOP on
@@ -186,7 +186,7 @@ WHERE c.title LIKE 'SAT_%';
 -- ---------------------------------------------------------------------
 -- 6. [JWT 전환] 로그인 가능한 실제 users 앵커 행
 --    A/B축 통합 후 Spring Security가 모든 엔드포인트를 JWT로 보호하므로
---    saturation-test.js S3(team-detail)는 실제 로그인 토큰이 필요하다.
+--    b-axis-saturation.js S3(team-detail)는 실제 로그인 토큰이 필요하다.
 --    synthetic 참여자 user_id=1000001(A팀, HOT 챌린지의 CONFIRMED 멤버)와
 --    id가 일치하는 users 행을 심어, 이 앵커로 로그인해 team-detail을 호출할 수 있게 한다.
 --    password = 'seed1234' (bcrypt). 재실행 대비 ON CONFLICT (id) DO NOTHING.

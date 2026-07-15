@@ -13,7 +13,7 @@ DB_NAME="${DB_NAME:-booster}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DASHBOARD_JSON="$PROJECT_ROOT/monitoring/grafana/dashboards/b-axis-overview.json"
-K6_SCRIPT="$PROJECT_ROOT/monitoring/k6/load-test.js"
+K6_SCRIPT="$PROJECT_ROOT/monitoring/k6/b-axis-load.js"
 
 # ── 색상 출력 ──────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -426,7 +426,7 @@ echo ""
 
 log "k6 부하 테스트 시작 (정상부하 + 동시같은유저 + 엣지케이스)..."
 echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인하세요."
-echo "  ※ Soak 테스트: SOAK_DURATION=30m ./scripts/run-all-scenarios.sh 으로 실행"
+echo "  ※ Soak 테스트: SOAK_DURATION=30m ./scripts/b-axis-run-scenarios.sh 으로 실행"
 echo ""
 
 # [JWT 전환 수정] k6는 setup에서 자체 유저·챌린지를 프로비저닝해 체크인을 쓴다.

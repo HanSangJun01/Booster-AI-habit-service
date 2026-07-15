@@ -10,9 +10,9 @@
 //   S4  BREADTH PERSONAL /{rand 147..644}/leaderboards?type=PERSONAL    (요청마다 challenge_id 랜덤)
 //
 // 실행 예:
-//   SCENARIO=S1 k6 run monitoring/k6/saturation-test.js
-//   SCENARIO=S2 k6 run monitoring/k6/saturation-test.js
-//   SCENARIO=S4 k6 run monitoring/k6/saturation-test.js
+//   SCENARIO=S1 k6 run monitoring/k6/b-axis-saturation.js
+//   SCENARIO=S2 k6 run monitoring/k6/b-axis-saturation.js
+//   SCENARIO=S4 k6 run monitoring/k6/b-axis-saturation.js
 //
 // docs/monitoring/saturation-cache/saturation-scenario-matrix.md 참고.
 
@@ -24,7 +24,7 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 const BASE_URL          = __ENV.BASE_URL          || 'http://localhost:8080';
 const SCENARIO          = __ENV.SCENARIO          || 'S1';
 // SAT_ 챌린지 id는 시퀀스라 재시딩마다 바뀐다. 기본값은 과거 시딩 기준 참고치일 뿐이며,
-// run-saturation.sh가 DB에서 실제 id를 해석해 넘긴다. setup()이 대상 검증으로 fail-fast.
+// b-axis-run-saturation.sh가 DB에서 실제 id를 해석해 넘긴다. setup()이 대상 검증으로 fail-fast.
 const HOT_CHALLENGE_ID  = __ENV.HOT_CHALLENGE_ID  || '145';
 const BREADTH_MIN       = parseInt(__ENV.BREADTH_MIN || '147', 10);
 const BREADTH_MAX       = parseInt(__ENV.BREADTH_MAX || '644', 10);
@@ -34,8 +34,8 @@ const BREADTH_MAX       = parseInt(__ENV.BREADTH_MAX || '644', 10);
 // team-detail(S3) 모두 Authorization: Bearer 토큰이 필요하다.
 //   - S1/S2/S4(leaderboards): 유효한 JWT면 충분(참여 불필요)
 //   - S3(team-detail): 토큰 유저가 HOT_CHALLENGE_ID의 CONFIRMED 참여자여야 함
-//     → seed-saturation.sql이 심은 앵커 유저(user_id=1000001, sat_hot@booster.test)로 로그인.
-// 로그인 계정은 a-axis-load-test.js처럼 LOGIN_EMAIL/LOGIN_PASSWORD로 재정의 가능.
+//     → b-axis-seed-saturation.sql이 심은 앵커 유저(user_id=1000001, sat_hot@booster.test)로 로그인.
+// 로그인 계정은 a-axis-b-axis-load.js처럼 LOGIN_EMAIL/LOGIN_PASSWORD로 재정의 가능.
 const LOGIN_EMAIL     = __ENV.LOGIN_EMAIL    || 'sat_hot@booster.test';
 const LOGIN_PASSWORD  = __ENV.LOGIN_PASSWORD || 'seed1234';
 const JSON_HEADERS    = { 'Content-Type': 'application/json' };
@@ -98,7 +98,7 @@ export function setup() {
   const token = res.json('accessToken');
   if (!token) {
     throw new Error(
-      `[JWT] 앵커 유저 로그인 실패 — seed-saturation.sql 먼저 적용했는지 확인. ` +
+      `[JWT] 앵커 유저 로그인 실패 — b-axis-seed-saturation.sql 먼저 적용했는지 확인. ` +
       `email=${LOGIN_EMAIL} status=${res.status} body=${res.body}`
     );
   }
@@ -112,7 +112,7 @@ export function setup() {
     throw new Error(
       `HOT_CHALLENGE_ID=${HOT_CHALLENGE_ID}가 SAT_HOT_ 챌린지가 아님 ` +
       `(status=${detail.status}, title=${hotTitle}). 재시딩으로 id가 바뀌었을 수 있음 — ` +
-      `run-saturation.sh로 실행하거나 HOT_CHALLENGE_ID/BREADTH_MIN/BREADTH_MAX를 지정하세요.`);
+      `b-axis-run-saturation.sh로 실행하거나 HOT_CHALLENGE_ID/BREADTH_MIN/BREADTH_MAX를 지정하세요.`);
   }
   if (SCENARIO === 'S4') {
     for (const id of [BREADTH_MIN, BREADTH_MAX]) {
@@ -130,7 +130,7 @@ export function setup() {
 }
 
 export function handleSummary(data) {
-  // 저장소 루트에서 실행 기준 상대경로 (run-saturation.sh는 OUT_JSON으로 절대경로를 넘김)
+  // 저장소 루트에서 실행 기준 상대경로 (b-axis-run-saturation.sh는 OUT_JSON으로 절대경로를 넘김)
   const outPath = __ENV.OUT_JSON || `docs/monitoring/baselines/sat-${SCENARIO}-k6.json`;
   return {
     [outPath]: JSON.stringify(data, null, 2),

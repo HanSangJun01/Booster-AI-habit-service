@@ -83,7 +83,7 @@
 
 - **브랜치:** `test/BS-30-backend-validation-a-axis` — origin 푸시 완료(커밋 ~a1183d9..0f117d8).
 - **산출물(이 폴더):** `FINDINGS_1차~4차.md`, `FINDINGS_5차-출시검증.md`, **`FINDINGS_6차-시나리오리뷰.md`**, 본 종합요약.
-  - 부하 스크립트: `a-axis-load-test.js`(읽기, LOGIN_EMAIL 모드 있음), `a-axis-write-load-test.js`(쓰기/로그인), `a-axis-stress-test.js`(고동시성 500VU), `a-axis-soak-test.js`(30m 지속)
+  - 부하 스크립트: `a-axis-b-axis-load.js`(읽기, LOGIN_EMAIL 모드 있음), `a-axis-write-b-axis-load.js`(쓰기/로그인), `a-axis-stress-test.js`(고동시성 500VU), `a-axis-soak-test.js`(30m 지속)
   - 시드: `seed-3rd.sql`(체크인25+코인300), `seed-big.sql`(코인 30만행+EXPLAIN)
   - 모니터링: `monitoring/**`(prometheus.yml, grafana provisioning, a-axis-overview.json), `docker-compose.monitoring.yml`, 가이드 `docs/monitoring/harness/MONITORING.md`
   - **6차 버그핀 테스트(`backend/src/test/`):** 로직 = `personalcheckin/StreakContinuityScenarioTest`, `recovery/RecoveryScenarioBugTest`(B2 RED + B4 GREEN), `user/WithdrawnUserGuardTest` / 동시성 = `concurrency/ConcurrencyTestBase`, `FixedClockConfig`, `C1~C6` 테스트 / 인프라 = `build.gradle`(Testcontainers + `api.version=1.44` 우회), `src/test/resources/application-ct.yml`
@@ -100,7 +100,7 @@ docker compose -f docker-compose.yml up -d db
 # 모니터링 스택
 docker compose -f docker-compose.monitoring.yml up -d   # Grafana localhost:3000 admin/admin
 # 부하(k6는 미설치 → Docker로). monitoring/k6 폴더에서:
-docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 -v ${PWD}:/scripts grafana/k6 run /scripts/a-axis-load-test.js
+docker run --rm -i -e BASE_URL=http://host.docker.internal:8080 -v ${PWD}:/scripts grafana/k6 run /scripts/a-axis-b-axis-load.js
 # SQL 시드(PowerShell 파이프는 깨짐 → 복사 후 -f). 저장소 루트에서:
 docker compose -f docker-compose.yml cp monitoring/scripts/seed-3rd.sql db:/tmp/seed-3rd.sql
 docker compose -f docker-compose.yml exec -T db psql -U booster -d booster -f /tmp/seed-3rd.sql

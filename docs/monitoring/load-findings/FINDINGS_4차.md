@@ -2,7 +2,7 @@
 
 > 1~3차 대비 **바꾼 변수: 읽기→쓰기 + 다중 유저 + 로그인.**
 > 1~3차는 GET(읽기)·단일 유저만 봐서 출시 리스크(쓰기/로그인/동시 유저)가 미검증이었음. 4차는 매 반복마다 새 유저가 가입→로그인→위치등록→체크인을 수행.
-> 스크립트: `monitoring/k6/a-axis-write-load-test.js`. 도구·절차는 1차 보고서/`MONITORING.md` 참고.
+> 스크립트: `monitoring/k6/a-axis-write-b-axis-load.js`. 도구·절차는 1차 보고서/`MONITORING.md` 참고.
 
 ---
 

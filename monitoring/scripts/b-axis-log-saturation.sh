@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# log-run.sh <k6.json> <hikari.log> "<제목>"
+# b-axis-log-saturation.sh <k6.json> <hikari.log> "<제목>"
 # 포화 실행 결과 파일(k6 JSON + HikariCP 로그)에서 관측값을 뽑아
 # docs/monitoring/saturation-cache/PERFORMANCE-LOG.md 의 <!-- AUTO-LOG-INSERT --> 마커 바로 밑에 블록을 삽입한다.
 # 테스트/다른 파일에 쓰려면 PERF_LOG 환경변수로 대상 경로를 덮어쓸 수 있다.
@@ -42,7 +42,7 @@ def rel(p):
         return p
 
 block = f"""## {title}
-- **자동 기록** (log-run.sh) · 원시: `{rel(k6json)}` · `{rel(hiklog)}`
+- **자동 기록** (b-axis-log-saturation.sh) · 원시: `{rel(k6json)}` · `{rel(hiklog)}`
 
 | 관측값 | 값 |
 |---|---|

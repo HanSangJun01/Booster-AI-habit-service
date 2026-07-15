@@ -13,7 +13,7 @@ const checkInWriteDuration    = new Trend('checkin_write_duration');
 const checkInReadDuration     = new Trend('checkin_read_duration');
 
 const BASE_URL               = __ENV.BASE_URL               || 'http://localhost:8080';
-// CHALLENGE_ID(선택): 읽기 부하 대상 — run-all-scenarios.sh가 30일 체크인을 볼륨 시딩한
+// CHALLENGE_ID(선택): 읽기 부하 대상 — b-axis-run-scenarios.sh가 30일 체크인을 볼륨 시딩한
 // 챌린지를 넘긴다. 미지정 시 setup이 프로비저닝한 챌린지를 읽기에도 쓴다.
 const ENDED_CHALLENGE_ID     = __ENV.ENDED_CHALLENGE_ID     || '999';
 const FORMATION_CHALLENGE_ID = __ENV.FORMATION_CHALLENGE_ID || '0';
@@ -128,7 +128,7 @@ function bearerHeaders(token) {
 }
 
 // 부하 전용 챌린지 프로비저닝: 생성 → 멤버 10명 참여 → ACTIVE(팀 구성) 검증.
-// 제목은 '시나리오' 접두사를 써서 run-all-scenarios.sh의 DB 초기화가 다음 실행 때 정리한다.
+// 제목은 '시나리오' 접두사를 써서 b-axis-run-scenarios.sh의 DB 초기화가 다음 실행 때 정리한다.
 function provisionChallenge(memberTokens, stamp) {
   const createRes = http.post(`${BASE_URL}/api/challenges`, JSON.stringify({
     title: `시나리오k6부하_${stamp}`,

@@ -5,7 +5,7 @@
 > Redis caching is justified — and for **which** endpoint it actually helps.
 >
 > **think-time = 0** in every scenario (pure saturation; not a realistic-traffic model).
-> Seeded by `monitoring/scripts/seed-saturation.sql` (idempotent, `SAT_` prefix).
+> Seeded by `monitoring/scripts/b-axis-seed-saturation.sql` (idempotent, `SAT_` prefix).
 
 ## Seeded data & target identifiers (verified)
 

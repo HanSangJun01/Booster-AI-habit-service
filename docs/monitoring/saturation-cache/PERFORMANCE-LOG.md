@@ -8,7 +8,7 @@
 - 새 측정을 하면 이 파일의 **`---` 구분선 바로 아래(가장 최근 항목 위)** 에 새 블록을 끼워넣는다.
 - **방법 1 (권장):** Claude에게 *"이번 측정 결과를 성능 로그에 추가해줘"* → 자동으로 아래 템플릿 형식으로 정리·삽입.
 - **방법 2 (수동):** 아래 템플릿을 복사해 값을 채운다.
-- **방법 3 (자동):** `monitoring/scripts/run-saturation.sh <SCENARIO> <LABEL> [메모]` 실행 → k6 포화 + HikariCP 샘플링 후 관측값 블록을 아래 `AUTO-LOG-INSERT` 마커 바로 밑에 자동 삽입. (기존 결과 파일만 다시 기록하려면 `monitoring/scripts/log-run.sh <k6.json> <hikari.log> "<제목>"`)
+- **방법 3 (자동):** `monitoring/scripts/b-axis-run-saturation.sh <SCENARIO> <LABEL> [메모]` 실행 → k6 포화 + HikariCP 샘플링 후 관측값 블록을 아래 `AUTO-LOG-INSERT` 마커 바로 밑에 자동 삽입. (기존 결과 파일만 다시 기록하려면 `monitoring/scripts/b-axis-log-saturation.sh <k6.json> <hikari.log> "<제목>"`)
 - 원칙: **무엇을 바꿨나(변경) → 어떻게 쟀나(조건) → 숫자(표) → 해석 한두 줄.** 원시 파일 경로도 남겨 재현 가능하게.
 
 ### 템플릿
@@ -31,7 +31,7 @@
 
 ## 2026-07-08 — team-detail Caffeine 캐시 현실 재검증 + evict + refreshAfterWrite
 - **변경**: team-detail에 Caffeine 로컬 캐시(@Cacheable) + 체크인 시 챌린지 단위 evict(`TeamDetailCacheEvictor`) + `refreshAfterWrite(10s)`/`expireAfterWrite(60s)`(stampede 완화, LoadingCache+CacheLoader).
-- **조건**: 현실 데이터 RT_ 50챌린지(hot 10/normal 40, 10명 5:5, 부분 체크인). k6 mixed-key(`team-detail-realistic.js`) ramp 50→400. 무캐시 기준선은 S3(1,641 rps).
+- **조건**: 현실 데이터 RT_ 50챌린지(hot 10/normal 40, 10명 5:5, 부분 체크인). k6 mixed-key(`b-axis-team-detail.js`) ramp 50→400. 무캐시 기준선은 S3(1,641 rps).
 - **원시**: `baselines/tdr-{hot,dist,dist-noref}-*`
 
 | 시나리오 | 히트율 | RPS | p95 | p99 | pending peak |
@@ -48,7 +48,7 @@
 **해석**: team-detail은 캐시가 정답(cheap fix로 안 오르던 상한을 ~16배로). evict로 정확성, refreshAfterWrite로 herd 제거까지 완성. 멀티 인스턴스 확장 시 evict 전파 위해 Redis 승격 검토.
 
 ## 2026-07-08 — 포화 S3 (cache): Caffeine 로컬캐시 TTL10s
-- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-cache-k6.json` · `docs/monitoring/baselines/sat-S3-cache-hikari.log`
+- **자동 기록** (b-axis-log-saturation.sh) · 원시: `docs/monitoring/baselines/sat-S3-cache-k6.json` · `docs/monitoring/baselines/sat-S3-cache-hikari.log`
 
 | 관측값 | 값 |
 |---|---|
@@ -62,7 +62,7 @@
 
 
 ## 2026-07-08 — 포화 S3 (td-opt): team-detail 최적화(9→7쿼리+점유단축)
-- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-td-opt-k6.json` · `docs/monitoring/baselines/sat-S3-td-opt-hikari.log`
+- **자동 기록** (b-axis-log-saturation.sh) · 원시: `docs/monitoring/baselines/sat-S3-td-opt-k6.json` · `docs/monitoring/baselines/sat-S3-td-opt-hikari.log`
 
 | 관측값 | 값 |
 |---|---|
@@ -76,7 +76,7 @@
 
 
 ## 2026-07-08 — 포화 S3 (baseline): team-detail 코어 포화(풀30)
-- **자동 기록** (log-run.sh) · 원시: `docs/monitoring/baselines/sat-S3-baseline-k6.json` · `docs/monitoring/baselines/sat-S3-baseline-hikari.log`
+- **자동 기록** (b-axis-log-saturation.sh) · 원시: `docs/monitoring/baselines/sat-S3-baseline-k6.json` · `docs/monitoring/baselines/sat-S3-baseline-hikari.log`
 
 | 관측값 | 값 |
 |---|---|

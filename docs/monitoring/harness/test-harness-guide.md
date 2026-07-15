@@ -188,7 +188,7 @@ which curl jq docker python3
 ### 전체 자동 실행 (권장)
 
 ```bash
-bash monitoring/scripts/run-all-scenarios.sh
+bash monitoring/scripts/b-axis-run-scenarios.sh
 ```
 
 **동작**:
@@ -261,7 +261,7 @@ for i in $(seq 1 10); do
 done
 
 # 3. k6 로드 테스트만
-k6 run -e BASE_URL="http://localhost:8080" -e CHALLENGE_ID="1" monitoring/k6/load-test.js
+k6 run -e BASE_URL="http://localhost:8080" -e CHALLENGE_ID="1" monitoring/k6/b-axis-load.js
 ```
 
 ---
@@ -423,7 +423,7 @@ watch -n 1 'curl -s localhost:8080/actuator/prometheus | \
 ## k6 로드 테스트 구조
 
 ### 파일 위치
-`monitoring/k6/load-test.js`
+`monitoring/k6/b-axis-load.js`
 
 ### 주요 구성 요소
 
@@ -487,10 +487,10 @@ export function teamFormationFlow() { /* userId=__VU(1~10), 동시 참여 신청
 #### 4. 환경 변수
 ```bash
 # 전체 자동 실행 (권장) — 환경변수를 스크립트가 자동 설정
-./monitoring/scripts/run-all-scenarios.sh
+./monitoring/scripts/b-axis-run-scenarios.sh
 
 # Soak 포함
-SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
+SOAK_DURATION=30m ./monitoring/scripts/b-axis-run-scenarios.sh
 
 # k6 단독 실행 (env var 수동 지정)
 k6 run \
@@ -498,7 +498,7 @@ k6 run \
   -e CHALLENGE_ID=1 \
   -e ENDED_CHALLENGE_ID=2 \
   -e FORMATION_CHALLENGE_ID=3 \
-  monitoring/k6/load-test.js
+  monitoring/k6/b-axis-load.js
 ```
 
 ### k6 결과 해석
@@ -956,10 +956,10 @@ HikariCP pending 0 → ✅ 정상 (요청 대기 없음)
 
 ```bash
 # 전체 자동 실행 (권장)
-./monitoring/scripts/run-all-scenarios.sh
+./monitoring/scripts/b-axis-run-scenarios.sh
 
 # Soak 테스트 포함 (30분 메모리 누수 확인)
-SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
+SOAK_DURATION=30m ./monitoring/scripts/b-axis-run-scenarios.sh
 
 # Grafana 열기
 open http://localhost:3000
@@ -979,7 +979,7 @@ k6 run \
   -e BASE_URL=http://localhost:8080 \
   -e CHALLENGE_ID=1 \
   -e ENDED_CHALLENGE_ID=2 \
-  monitoring/k6/load-test.js
+  monitoring/k6/b-axis-load.js
 
 # 백엔드 로그 보기
 docker logs booster-backend -f | grep -E "ERROR|Exception"
@@ -1007,7 +1007,7 @@ docker exec booster-postgres psql -U booster -d booster -c \
 - [ ] 백엔드 `./gradlew bootRun` 실행 중 확인
 - [ ] Docker 컨테이너 실행 중: `docker ps | grep booster`
 - [ ] k6 설치: `k6 --version`
-- [ ] 시나리오 실행: `bash monitoring/scripts/run-all-scenarios.sh`
+- [ ] 시나리오 실행: `bash monitoring/scripts/b-axis-run-scenarios.sh`
 - [ ] Grafana 대시보드 확인: `http://localhost:3000`
 - [ ] Baseline 파일 생성 확인: `ls docs/monitoring/baselines/baseline-*.md`
 - [ ] 에러율 < 1% 확인 (또는 원인 파악)

@@ -48,7 +48,7 @@ k6 로그와 백엔드 로그 분석 결과:
 - team_id가 NULL일 때 null-safe 처리 추가
 - 예외 발생하지 않고 기본값 사용 또는 스킵 로직 적용
 
-**3. 테스트 데이터 (run-all-scenarios.sh)**
+**3. 테스트 데이터 (b-axis-run-scenarios.sh)**
 - DB 초기화 시 `challenge_check_ins` 테이블도 DELETE 포함
 - 이전 실행의 잔존 데이터로 인한 멱등성 경로 왜곡 방지
 
@@ -111,7 +111,7 @@ check(checkInWriteRes, { 'checkin write 2xx': (r) => r.status === 200 || r.statu
 
 ### 수정 내용
 
-**1. k6 스크립트 (load-test.js)**
+**1. k6 스크립트 (b-axis-load.js)**
 - 라인 77: check 조건을 `r.status === 200 || r.status === 201`로 수정
 - 라인 79-81: 에러 응답 시 body 로그 추가하여 디버깅 용이화
   ```javascript
@@ -120,7 +120,7 @@ check(checkInWriteRes, { 'checkin write 2xx': (r) => r.status === 200 || r.statu
   }
   ```
 
-**2. run-all-scenarios.sh 개선**
+**2. b-axis-run-scenarios.sh 개선**
 - 라인 119: DB 초기화에 `challenge_check_ins` 추가
   ```sql
   DELETE FROM challenge_check_ins WHERE challenge_id IN (SELECT id FROM challenges WHERE title LIKE '시나리오%');
@@ -204,7 +204,7 @@ check(checkInWriteRes, { 'checkin write 2xx': (r) => r.status === 200 || r.statu
 
 ### 수정 내용
 
-**1. run-all-scenarios.sh 강화 (DB 초기화)**
+**1. b-axis-run-scenarios.sh 강화 (DB 초기화)**
 ```bash
 # 라인 114-122 확대:
 DELETE FROM verification_decisions WHERE id > 0;
@@ -262,7 +262,7 @@ log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 5"
 
 4. **k6 재실행**
    ```bash
-   bash monitoring/scripts/run-all-scenarios.sh
+   bash monitoring/scripts/b-axis-run-scenarios.sh
    # 에러율이 < 1%로 개선되어야 함
    ```
 
@@ -288,11 +288,11 @@ log "참여자 CONFIRMED 수: $CONFIRMED_COUNT / 5"
 
 | 파일 | 수정 내용 | 분류 | 상태 |
 |------|----------|------|------|
-| **monitoring/k6/load-test.js** | 라인 77: check 조건을 `r.status === 200 \|\| r.status === 201`로 수정 | TEST_SCRIPT_ERROR 수정 | ✅ 완료 |
-| **monitoring/k6/load-test.js** | 라인 79-81: 에러 응답 시 response body 로그 추가 | 관찰성 개선 | ✅ 완료 |
-| **monitoring/scripts/run-all-scenarios.sh** | 라인 119: DB 초기화에 `challenge_check_ins` 추가 | TEST_DATA_ERROR 방지 | ✅ 완료 |
-| **monitoring/scripts/run-all-scenarios.sh** | 라인 195-199: 참여자 CONFIRMED 수 검증 로직 추가 | DOMAIN_RULE_MISMATCH 방지 | ✅ 완료 |
-| **monitoring/scripts/run-all-scenarios.sh** | smoke 검증 단계 추가 (early failure detection) | 조기 실패 감지 | ✅ 완료 |
+| **monitoring/k6/b-axis-load.js** | 라인 77: check 조건을 `r.status === 200 \|\| r.status === 201`로 수정 | TEST_SCRIPT_ERROR 수정 | ✅ 완료 |
+| **monitoring/k6/b-axis-load.js** | 라인 79-81: 에러 응답 시 response body 로그 추가 | 관찰성 개선 | ✅ 완료 |
+| **monitoring/scripts/b-axis-run-scenarios.sh** | 라인 119: DB 초기화에 `challenge_check_ins` 추가 | TEST_DATA_ERROR 방지 | ✅ 완료 |
+| **monitoring/scripts/b-axis-run-scenarios.sh** | 라인 195-199: 참여자 CONFIRMED 수 검증 로직 추가 | DOMAIN_RULE_MISMATCH 방지 | ✅ 완료 |
+| **monitoring/scripts/b-axis-run-scenarios.sh** | smoke 검증 단계 추가 (early failure detection) | 조기 실패 감지 | ✅ 완료 |
 | **src/main/resources/db/migration/V8__*.sql** | challenge_check_ins.team_id NOT NULL → NULLABLE | APP_ERROR 수정 | ⏳ 백엔드 재시작 필요 |
 | **src/main/java/.../ChallengeCheckInService.java** | team_id null-check 로직 추가 | APP_ERROR 수정 | ⏳ 백엔드 재시작 필요 |
 

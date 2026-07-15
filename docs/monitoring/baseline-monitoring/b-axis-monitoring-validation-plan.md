@@ -16,7 +16,7 @@
 | Grafana datasource | ✅ Prometheus 연결 완료 | `docker-compose.monitoring.yml` |
 | Grafana 대시보드 | ✅ 16개 패널 (핵심지표·HTTP·DB·JVM·응답시간심층) | `monitoring/grafana/booster-baxis-dashboard-import.json` |
 | SQL 가시성 | ✅ dev 프로파일 활성 시 SQL 전체 출력·100ms 슬로우 쿼리 경고 | `application-dev.yml` |
-| k6 부하 테스트 | ✅ 4단계 VU 시나리오, p99/에러율 기준 내장 | `monitoring/k6/load-test.js` |
+| k6 부하 테스트 | ✅ 4단계 VU 시나리오, p99/에러율 기준 내장 | `monitoring/k6/b-axis-load.js` |
 | HikariCP 풀 | ✅ 기본값 (max 10) | Spring Boot 자동 구성 |
 | 아키텍처 테스트 | ✅ `BAxisIsolationTest` (흐름 분리 불변식) | `src/test/java/com/booster/arch/` |
 | DB 마이그레이션 | ✅ V1~V8 적용 완료 | `src/main/resources/db/migration/` |
@@ -90,7 +90,7 @@ for i in $(seq 1 10); do
 done
 
 # 2. 목록 조회 부하 — k6로 실행
-k6 run monitoring/k6/load-test.js
+k6 run monitoring/k6/b-axis-load.js
 ```
 
 **확인 지표**:
@@ -191,10 +191,10 @@ curl -s http://localhost:8080/api/challenges/1/result | jq
 **실행 절차**:
 ```bash
 # 전체 자동 실행 (환경 확인 → DB 시딩 → k6 → 결과 저장)
-./monitoring/scripts/run-all-scenarios.sh
+./monitoring/scripts/b-axis-run-scenarios.sh
 
 # Soak 포함 (30분 메모리 추이 관찰)
-SOAK_DURATION=30m ./monitoring/scripts/run-all-scenarios.sh
+SOAK_DURATION=30m ./monitoring/scripts/b-axis-run-scenarios.sh
 ```
 
 **k6 시나리오 구성**:
@@ -368,8 +368,8 @@ docker exec booster-postgres psql -U booster -c \
 | `prometheus.yml` | scrape 설정 (15s, host.docker.internal:8080) |
 | `docker-compose.monitoring.yml` | Prometheus:9090, Grafana:3000 |
 | `monitoring/grafana/booster-baxis-dashboard-import.json` | Grafana Import용 대시보드 (16개 패널) |
-| `monitoring/k6/load-test.js` | k6 멀티 시나리오 (normal_load + concurrent_same_user + edge_cases + soak opt-in, 6개 threshold) |
-| `monitoring/scripts/run-all-scenarios.sh` | 전체 자동화 스크립트 (환경확인→DB시딩→시나리오A~H→k6→결과저장) |
+| `monitoring/k6/b-axis-load.js` | k6 멀티 시나리오 (normal_load + concurrent_same_user + edge_cases + soak opt-in, 6개 threshold) |
+| `monitoring/scripts/b-axis-run-scenarios.sh` | 전체 자동화 스크립트 (환경확인→DB시딩→시나리오A~H→k6→결과저장) |
 | `backend/src/main/resources/application.yml` | Actuator 노출 설정 |
 | `backend/src/main/resources/application-dev.yml` | SQL 가시성 (dev 프로파일, SQL DEBUG·슬로우쿼리 WARN) |
 | `docs/monitoring/harness/test-harness-guide.md` | 테스트 하네스 전체 가이드 (구조·시나리오·SQL 가시성·Grafana·k6 실행법·장애 원인 분류) |

@@ -60,7 +60,7 @@
 
 ### 단계 ⑥ — 리포트 파일 관리 체계화 (메타)
 - **요구**: "성능 리포트를 계속 파일로 관리하고 싶다."
-- **구축**: `docs/monitoring/saturation-cache/PERFORMANCE-LOG.md`(추적되는 누적 로그, 최신순, 작성법 내장) + `run-saturation.sh`/`log-run.sh`(실행/기록 분리 → 기존 결과 파일로 기록 로직 테스트 가능, 실제로 마커 버그를 이걸로 조기 발견).
+- **구축**: `docs/monitoring/saturation-cache/PERFORMANCE-LOG.md`(추적되는 누적 로그, 최신순, 작성법 내장) + `b-axis-run-saturation.sh`/`b-axis-log-saturation.sh`(실행/기록 분리 → 기존 결과 파일로 기록 로직 테스트 가능, 실제로 마커 버그를 이걸로 조기 발견).
 - **파고든 질문**: "이미 하고 있나?"(절반—baselines는 gitignore), "어떻게 자동 추가?", "왜 스크립트 2개?"(관심사 분리·테스트성), "각 파일에 뭐 들어있어?"(hikari 시계열/k6 집계/stdout), "이름이 왜 달라?"(도구별 규칙 + 조건 인코딩으로 덮어쓰기 방지).
 
 ### 단계 ⑦ — "B-axis 중요한 서비스가 뭐야?" → 관점 교정
@@ -106,9 +106,9 @@
 
 **① 현실 시딩 (`RT_` prefix)**
 - 50 ACTIVE 챌린지(hot 10=20% / normal 40=80%), 각 10명 CONFIRMED **5:5 팀**, **GPS 등록**(체크인 성공 위해 필수), 오늘 부분 체크인 223건(3~6/챌린지). user_id = `3000000 + offset*10 + memberIndex`, `RT_` prefix로 cleanup 가능.
-- k6용 `rt-targets.json`(challenge → userIds 매핑) 생성.
+- k6용 `b-axis-team-detail-targets.json`(challenge → userIds 매핑) 생성.
 
-**② mixed-key 부하 (`team-detail-realistic.js`, ramp 50→400)**
+**② mixed-key 부하 (`b-axis-team-detail.js`, ramp 50→400)**
 - **hot**: 10개 hot 챌린지 내 랜덤(=100키) → RPS 26,030, 히트율 99.91%, pending 0.
 - **dist**: 20% hot / 80% normal(=500키) → RPS 22,512, 히트율 99.66%, **pending 144**.
 - (히트율이 dist에서도 왜 거의 안 떨어졌는지는 아래 **정직한 발견** 참고.)
@@ -178,7 +178,7 @@
 - **team-detail = 캐시가 정답** (cheap fix로 상한 불변 → 캐시로 16배). 단일 인스턴스는 Caffeine, 멀티 인스턴스 확장 시 Redis 승격.
 
 ### 자산 (재사용 가능)
-- 포화 테스트 하네스: `monitoring/scripts/seed-saturation.sql`, `seed-realistic-teamdetail.sql`, `monitoring/k6/saturation-test.js`, `team-detail-realistic.js`, `run-saturation.sh`/`log-run.sh`
+- 포화 테스트 하네스: `monitoring/scripts/b-axis-seed-saturation.sql`, `b-axis-seed-team-detail.sql`, `monitoring/k6/b-axis-saturation.js`, `b-axis-team-detail.js`, `b-axis-run-saturation.sh`/`b-axis-log-saturation.sh`
 - 버전관리 성능 로그: `docs/monitoring/saturation-cache/PERFORMANCE-LOG.md`
 - 판정 리포트: `docs/monitoring/saturation-cache/saturation-redis-verdict.md`, 시나리오 매트릭스
 

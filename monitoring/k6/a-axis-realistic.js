@@ -2,7 +2,7 @@
 //
 // 예전엔 load / stress / soak / write 4개 파일을 따로 켜야 했다("한 개 켜고 또 한 개 켜고").
 // 이제 이 한 파일에서 SCENARIO 환경변수로 원하는 시나리오만 골라 돌린다.
-// (B축 team-detail-realistic.js 와 같은 방식 — 시나리오 스위처 + 공통코드 1회.)
+// (B축 b-axis-team-detail.js 와 같은 방식 — 시나리오 스위처 + 공통코드 1회.)
 //
 // 서버 쪽 진짜 수치는 Grafana(localhost:3000)에서 보고, 여기 stdout은 클라이언트 관점 + 합격/불합격.
 //

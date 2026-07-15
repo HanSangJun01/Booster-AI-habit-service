@@ -4,7 +4,7 @@
 **환경**: Docker Compose (PostgreSQL 15, Spring Boot 3.x)
 **HikariCP pool-size**: 10 (default)
 **부하 도구**: k6 (5VU → 20VU → 50VU → 0VU), 총 2분 20초
-**실행 스크립트**: `monitoring/scripts/run-all-scenarios.sh`
+**실행 스크립트**: `monitoring/scripts/b-axis-run-scenarios.sh`
 
 ---
 
