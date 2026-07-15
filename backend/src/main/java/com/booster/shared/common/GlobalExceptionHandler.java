@@ -62,6 +62,13 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getMessage(), "ILLEGAL_STATE"));
     }
 
+    /** 잘못된 인자(도메인 검증 실패 등)는 500이 아니라 400으로 응답한다. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(ex.getMessage(), "ILLEGAL_ARGUMENT"));
+    }
+
     // --- 공통: 요청/검증/무결성 ---
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {

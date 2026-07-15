@@ -1,6 +1,5 @@
 package com.booster.shared.contract;
 
-import com.booster.shared.common.InsufficientCoinException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -9,10 +8,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>contract 사유 enum을 A축 통합 사유 enum으로 이름 매핑해 위임한다.
  *
- * <p>주의: A축 {@code charge}는 잔액까지만 차감(클램핑)하고 예외를 던지지 않는다. 그러나 contract의
- * {@code deduct}는 "잔액 부족 시 예외" 시맨틱(챌린지 참가 차단)을 요구하므로, 여기서 사전 잔액 검사로
- * {@link InsufficientCoinException}을 던져 계약을 보존한다.
- * (사전검사→charge 사이의 TOCTOU를 원자적으로 막으려면 A축 charge에 strict 옵션 추가가 후속 과제.)
+ * <p>contract의 {@code deduct}는 "잔액 부족 시 예외"(챌린지 참가 차단) 시맨틱을 요구한다. A축
+ * {@code charge}는 클램핑(예외 없음)이므로, 잔액검사+차감을 한 트랜잭션·행 락으로 원자화한
+ * {@code chargeStrict}에 위임한다(TOCTOU 해소).
  */
 @Component
 @RequiredArgsConstructor
@@ -22,11 +20,7 @@ public class CoinServiceAdapter implements CoinService {
 
     @Override
     public void deduct(Long userId, long amount, CoinTransactionReason reason, Long referenceId) {
-        long balance = coinService.getBalance(userId);
-        if (balance < amount) {
-            throw new InsufficientCoinException(amount, balance);
-        }
-        coinService.charge(userId, amount, map(reason), referenceId);
+        coinService.chargeStrict(userId, amount, map(reason), referenceId);
     }
 
     @Override

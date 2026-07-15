@@ -4,6 +4,7 @@ import com.booster.coin.domain.CoinTransaction;
 import com.booster.coin.domain.CoinTransactionReason;
 import com.booster.coin.repository.CoinTransactionRepository;
 import com.booster.shared.common.BusinessException;
+import com.booster.shared.common.InsufficientCoinException;
 import com.booster.user.domain.User;
 import com.booster.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -49,6 +50,28 @@ public class CoinService {
         coinTransactionRepository.save(
                 CoinTransaction.of(userId, reason, -effective, user.getCoinBalance(), referenceId));
         return effective;
+    }
+
+    /**
+     * 엄격 차감(-). 잔액 부족 시 {@link InsufficientCoinException}을 던진다(클램핑 안 함).
+     *
+     * <p>[BS-A/B 통합] 챌린지 참가 예치금처럼 "부족하면 거절"이 필요한 경로용. 잔액검사와 차감을
+     * {@code lockUser} 행 락 안에서 한 트랜잭션으로 수행해, 같은 유저가 서로 다른 두 챌린지에
+     * 동시 참여할 때 각각 잔액을 통과시키고 이중 차감(클램핑)돼 장부상 풀 &gt; 실제 징수로 벌어지던
+     * TOCTOU를 막는다. (기존 charge는 클램핑이라 조용히 잔액까지만 깎였다.)
+     */
+    @Transactional
+    public void chargeStrict(Long userId, long amount, CoinTransactionReason reason, Long referenceId) {
+        if (amount < 0) {
+            throw new IllegalArgumentException("charge amount must be >= 0: " + amount);
+        }
+        User user = lockUser(userId);
+        if (user.getCoinBalance() < amount) {
+            throw new InsufficientCoinException(amount, user.getCoinBalance());
+        }
+        user.addCoins(-amount);
+        coinTransactionRepository.save(
+                CoinTransaction.of(userId, reason, -amount, user.getCoinBalance(), referenceId));
     }
 
     @Transactional(readOnly = true)

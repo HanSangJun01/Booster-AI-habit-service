@@ -64,11 +64,13 @@ public class SocialController {
     @PostMapping("/api/challenges/{challengeId}/cheers")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<CheerEmojiResponse> sendCheer(
-            @AuthenticationPrincipal Long fromParticipantId,
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId,
             @Valid @RequestBody CheerEmojiRequest request) {
+        // [BS-A/B 통합] JWT principal은 userId다. cheer의 from은 participantId 공간이어야 하므로
+        // userId를 그대로 넘기지 말고 CheerService에서 챌린지 참여자로 해석·검증한다(chat 패턴과 동일).
         return ApiResponse.success(cheerService.sendCheer(
-                challengeId, fromParticipantId,
+                challengeId, userId,
                 request.getToParticipantId(), request.getEmojiType()));
     }
 }
