@@ -23,6 +23,8 @@ import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.2/index.js';
 
 const BASE_URL          = __ENV.BASE_URL          || 'http://localhost:8080';
 const SCENARIO          = __ENV.SCENARIO          || 'S1';
+// SAT_ 챌린지 id는 시퀀스라 재시딩마다 바뀐다. 기본값은 과거 시딩 기준 참고치일 뿐이며,
+// run-saturation.sh가 DB에서 실제 id를 해석해 넘긴다. setup()이 대상 검증으로 fail-fast.
 const HOT_CHALLENGE_ID  = __ENV.HOT_CHALLENGE_ID  || '145';
 const BREADTH_MIN       = parseInt(__ENV.BREADTH_MIN || '147', 10);
 const BREADTH_MAX       = parseInt(__ENV.BREADTH_MAX || '644', 10);
@@ -100,13 +102,36 @@ export function setup() {
       `email=${LOGIN_EMAIL} status=${res.status} body=${res.body}`
     );
   }
+
+  // [수정] 대상 검증 fail-fast: id가 재시딩으로 어긋난 채 포화를 돌리면 존재하지 않는/
+  // 엉뚱한 챌린지를 난타해 빈 200만 나오고 측정이 무의미해진다(에러로도 안 잡힘).
+  const detail = http.get(`${BASE_URL}/api/challenges/${HOT_CHALLENGE_ID}`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  const hotTitle = detail.json('data.title');
+  if (!hotTitle || !String(hotTitle).startsWith('SAT_HOT_')) {
+    throw new Error(
+      `HOT_CHALLENGE_ID=${HOT_CHALLENGE_ID}가 SAT_HOT_ 챌린지가 아님 ` +
+      `(status=${detail.status}, title=${hotTitle}). 재시딩으로 id가 바뀌었을 수 있음 — ` +
+      `run-saturation.sh로 실행하거나 HOT_CHALLENGE_ID/BREADTH_MIN/BREADTH_MAX를 지정하세요.`);
+  }
+  if (SCENARIO === 'S4') {
+    for (const id of [BREADTH_MIN, BREADTH_MAX]) {
+      const d = http.get(`${BASE_URL}/api/challenges/${id}`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      const t = d.json('data.title');
+      if (!t || !String(t).startsWith('SAT_BREADTH_')) {
+        throw new Error(
+          `BREADTH 경계 id=${id}가 SAT_BREADTH_ 챌린지가 아님(status=${d.status}, title=${t}). ` +
+          `BREADTH_MIN/BREADTH_MAX를 확인하세요.`);
+      }
+    }
+  }
   return { token };
 }
 
 export function handleSummary(data) {
-  const outPath =
-    __ENV.OUT_JSON ||
-    `/Users/hansangjun/Desktop/Booster-AI-habit-service/docs/monitoring/baselines/sat-${SCENARIO}-k6.json`;
+  // 저장소 루트에서 실행 기준 상대경로 (run-saturation.sh는 OUT_JSON으로 절대경로를 넘김)
+  const outPath = __ENV.OUT_JSON || `docs/monitoring/baselines/sat-${SCENARIO}-k6.json`;
   return {
     [outPath]: JSON.stringify(data, null, 2),
     stdout: textSummary(data, { indent: '  ', enableColors: true }),

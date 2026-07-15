@@ -1,255 +1,255 @@
 {
   "hot": [
     {
-      "challengeId": 501,
-      "email": "rt_c501@booster.test",
+      "challengeId": 51,
+      "email": "rt_c51@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 502,
-      "email": "rt_c502@booster.test",
+      "challengeId": 52,
+      "email": "rt_c52@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 503,
-      "email": "rt_c503@booster.test",
+      "challengeId": 53,
+      "email": "rt_c53@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 504,
-      "email": "rt_c504@booster.test",
+      "challengeId": 54,
+      "email": "rt_c54@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 505,
-      "email": "rt_c505@booster.test",
+      "challengeId": 55,
+      "email": "rt_c55@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 506,
-      "email": "rt_c506@booster.test",
+      "challengeId": 56,
+      "email": "rt_c56@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 507,
-      "email": "rt_c507@booster.test",
+      "challengeId": 57,
+      "email": "rt_c57@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 508,
-      "email": "rt_c508@booster.test",
+      "challengeId": 58,
+      "email": "rt_c58@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 509,
-      "email": "rt_c509@booster.test",
+      "challengeId": 59,
+      "email": "rt_c59@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 510,
-      "email": "rt_c510@booster.test",
+      "challengeId": 60,
+      "email": "rt_c60@booster.test",
       "password": "seed1234"
     }
   ],
   "normal": [
     {
-      "challengeId": 511,
-      "email": "rt_c511@booster.test",
+      "challengeId": 61,
+      "email": "rt_c61@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 512,
-      "email": "rt_c512@booster.test",
+      "challengeId": 62,
+      "email": "rt_c62@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 513,
-      "email": "rt_c513@booster.test",
+      "challengeId": 63,
+      "email": "rt_c63@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 514,
-      "email": "rt_c514@booster.test",
+      "challengeId": 64,
+      "email": "rt_c64@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 515,
-      "email": "rt_c515@booster.test",
+      "challengeId": 65,
+      "email": "rt_c65@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 516,
-      "email": "rt_c516@booster.test",
+      "challengeId": 66,
+      "email": "rt_c66@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 517,
-      "email": "rt_c517@booster.test",
+      "challengeId": 67,
+      "email": "rt_c67@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 518,
-      "email": "rt_c518@booster.test",
+      "challengeId": 68,
+      "email": "rt_c68@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 519,
-      "email": "rt_c519@booster.test",
+      "challengeId": 69,
+      "email": "rt_c69@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 520,
-      "email": "rt_c520@booster.test",
+      "challengeId": 70,
+      "email": "rt_c70@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 521,
-      "email": "rt_c521@booster.test",
+      "challengeId": 71,
+      "email": "rt_c71@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 522,
-      "email": "rt_c522@booster.test",
+      "challengeId": 72,
+      "email": "rt_c72@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 523,
-      "email": "rt_c523@booster.test",
+      "challengeId": 73,
+      "email": "rt_c73@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 524,
-      "email": "rt_c524@booster.test",
+      "challengeId": 74,
+      "email": "rt_c74@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 525,
-      "email": "rt_c525@booster.test",
+      "challengeId": 75,
+      "email": "rt_c75@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 526,
-      "email": "rt_c526@booster.test",
+      "challengeId": 76,
+      "email": "rt_c76@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 527,
-      "email": "rt_c527@booster.test",
+      "challengeId": 77,
+      "email": "rt_c77@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 528,
-      "email": "rt_c528@booster.test",
+      "challengeId": 78,
+      "email": "rt_c78@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 529,
-      "email": "rt_c529@booster.test",
+      "challengeId": 79,
+      "email": "rt_c79@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 530,
-      "email": "rt_c530@booster.test",
+      "challengeId": 80,
+      "email": "rt_c80@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 531,
-      "email": "rt_c531@booster.test",
+      "challengeId": 81,
+      "email": "rt_c81@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 532,
-      "email": "rt_c532@booster.test",
+      "challengeId": 82,
+      "email": "rt_c82@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 533,
-      "email": "rt_c533@booster.test",
+      "challengeId": 83,
+      "email": "rt_c83@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 534,
-      "email": "rt_c534@booster.test",
+      "challengeId": 84,
+      "email": "rt_c84@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 535,
-      "email": "rt_c535@booster.test",
+      "challengeId": 85,
+      "email": "rt_c85@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 536,
-      "email": "rt_c536@booster.test",
+      "challengeId": 86,
+      "email": "rt_c86@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 537,
-      "email": "rt_c537@booster.test",
+      "challengeId": 87,
+      "email": "rt_c87@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 538,
-      "email": "rt_c538@booster.test",
+      "challengeId": 88,
+      "email": "rt_c88@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 539,
-      "email": "rt_c539@booster.test",
+      "challengeId": 89,
+      "email": "rt_c89@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 540,
-      "email": "rt_c540@booster.test",
+      "challengeId": 90,
+      "email": "rt_c90@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 541,
-      "email": "rt_c541@booster.test",
+      "challengeId": 91,
+      "email": "rt_c91@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 542,
-      "email": "rt_c542@booster.test",
+      "challengeId": 92,
+      "email": "rt_c92@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 543,
-      "email": "rt_c543@booster.test",
+      "challengeId": 93,
+      "email": "rt_c93@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 544,
-      "email": "rt_c544@booster.test",
+      "challengeId": 94,
+      "email": "rt_c94@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 545,
-      "email": "rt_c545@booster.test",
+      "challengeId": 95,
+      "email": "rt_c95@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 546,
-      "email": "rt_c546@booster.test",
+      "challengeId": 96,
+      "email": "rt_c96@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 547,
-      "email": "rt_c547@booster.test",
+      "challengeId": 97,
+      "email": "rt_c97@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 548,
-      "email": "rt_c548@booster.test",
+      "challengeId": 98,
+      "email": "rt_c98@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 549,
-      "email": "rt_c549@booster.test",
+      "challengeId": 99,
+      "email": "rt_c99@booster.test",
       "password": "seed1234"
     },
     {
-      "challengeId": 550,
-      "email": "rt_c550@booster.test",
+      "challengeId": 100,
+      "email": "rt_c100@booster.test",
       "password": "seed1234"
     }
   ]

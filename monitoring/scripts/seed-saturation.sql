@@ -50,6 +50,11 @@ BEGIN;
 --    (verification_submissions references check_ins, but SAT run never
 --     creates them, so no SAT check_in is referenced.)
 -- ---------------------------------------------------------------------
+DELETE FROM settlements s
+ USING challenges c
+ WHERE s.challenge_id = c.id
+   AND c.title LIKE 'SAT_%';
+
 DELETE FROM challenge_check_ins ci
  USING challenges c
  WHERE ci.challenge_id = c.id
@@ -194,6 +199,24 @@ VALUES
    '$2a$10$OPMJyoUHc4S7lKCMUB0lMuAje8xZU.tG.rUVnKTrewFa47gVxamCa',
    'sat_hot', 0, 0, true, now(), now())
 ON CONFLICT (id) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- 7. ENDED 챌린지에 COMPLETED settlements 선등록.
+--    ChallengeEndScheduler.retryFailedSettlements(5분 주기)는 settlement가 없는
+--    ENDED 챌린지를 전부 재정산 시도한다. SAT_ 참여자는 synthetic user라 코인
+--    지급이 매번 실패하므로, 선등록하지 않으면 ENDED ~249건이 5분마다 실패
+--    반복(로그 폭주 + 스케줄러 점유)된다. DRAW-COMPLETED로 심어 스킵시킨다.
+-- ---------------------------------------------------------------------
+INSERT INTO settlements
+  (challenge_id, computed_at, total_pool, per_winner_payout, status,
+   winner_team_id, loser_team_id, draw, created_at, updated_at)
+SELECT
+  c.id, now(), c.deposit_coins * 10, 0, 'COMPLETED',
+  NULL, NULL, true, now(), now()
+FROM challenges c
+WHERE c.title LIKE 'SAT_%'
+  AND c.status = 'ENDED'
+ON CONFLICT (challenge_id) DO NOTHING;
 
 COMMIT;
 

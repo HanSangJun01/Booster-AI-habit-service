@@ -74,19 +74,27 @@ echo ""
 #   엔드포인트를 JWT로 보호한다(구 X-User-Id 헤더 미인정, 무인증 요청은 401).
 #   시나리오가 쓰는 유저(1~10, 특히 6)를 실제 가입/로그인시켜 토큰을 확보하고,
 #   이후 모든 curl은 -H "Authorization: Bearer <token>" 으로 인증한다.
-#   재실행 시 가입은 중복(409/400)이어도 무시하고 로그인만 성공하면 된다.
+#
+#   [코인 고갈 수정] 유저는 실행마다 새로 만든다(이메일에 RUN_STAMP 포함).
+#   고정 이메일 재사용 시 가입 보너스 500코인이 참여 예치금(B/ENDED/H 각 100)으로
+#   회당 300씩 소모되어 3회차 실행부터 InsufficientCoin으로 참여가 실패한다.
+#   (DB 초기화는 '시나리오%' 챌린지만 지우고 코인 잔액은 복원하지 않음)
 # ══════════════════════════════════════════════════════════════════════
 SCEN_PASSWORD="scenario1234"
+RUN_STAMP="$(date +%s)"
 declare -a TOKENS     # TOKENS[i]   = i번째 시나리오 유저의 JWT (i=1..10)
 declare -a USER_IDS   # USER_IDS[i] = 그 유저의 실제 DB user_id (psql 검증용)
 
+scen_email() { echo "scenario_${RUN_STAMP}_u${1}@booster.test"; }
+
 acquire_token() {   # $1 = 슬롯 인덱스(1..10)
   local i="$1"
-  local email="scenario_u${i}@booster.test"
-  # 가입은 멱등하게(중복이면 무시) — set -e 회피 위해 실패해도 통과
+  local email
+  email="$(scen_email "$i")"
+  # 가입 — set -e 회피 위해 실패해도 통과(신규 스탬프라 중복은 사실상 없음)
   curl -s -X POST "$API/api/auth/signup" \
     -H "Content-Type: application/json" \
-    -d "{\"email\":\"$email\",\"password\":\"$SCEN_PASSWORD\",\"nickname\":\"scen_u${i}\"}" \
+    -d "{\"email\":\"$email\",\"password\":\"$SCEN_PASSWORD\",\"nickname\":\"scen_${RUN_STAMP}_u${i}\"}" \
     >/dev/null 2>&1 || true
   local body
   body=$(curl -s -X POST "$API/api/auth/login" \
@@ -129,9 +137,12 @@ payload = {
 print(json.dumps(payload))
 ")
 
-IMPORT_RESULT=$(curl -sf -X POST "$GRAFANA/api/dashboards/import" \
+# [수정] curl -f 금지: 자동 프로비저닝(docker-compose.monitoring.yml) 이후 이 API는
+# 400 "Cannot save provisioned dashboard"를 반환하는데, -f + set -e 조합이면
+# 여기서 스위트 전체가 조기 종료된다. import는 어떤 경우에도 비치명적이어야 한다.
+IMPORT_RESULT=$(curl -s -X POST "$GRAFANA/api/dashboards/import" \
   -H "Content-Type: application/json" \
-  -d "$IMPORT_PAYLOAD" 2>&1)
+  -d "$IMPORT_PAYLOAD" 2>&1) || true
 
 # 최신 Grafana /api/dashboards/import 응답은 {"imported":true,...} 형식.
 # 구형 {"status":"success"}와 신형 "imported":true 모두 성공으로 인식.
@@ -139,6 +150,9 @@ if echo "$IMPORT_RESULT" | grep -qE '"status":"success"|"imported":\s*true'; the
   DASHBOARD_URL=$(echo "$IMPORT_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('importedUrl',''))" 2>/dev/null)
   ok "대시보드 Import 완료"
   echo -e "  ${GREEN}→ http://localhost:3000${DASHBOARD_URL}${NC}"
+elif echo "$IMPORT_RESULT" | grep -q "Cannot save provisioned dashboard"; then
+  ok "대시보드는 이미 자동 프로비저닝됨 — 수동 import 생략"
+  echo -e "  ${GREEN}→ http://localhost:3000/d/booster-baxis-v1${NC}"
 else
   warn "대시보드 Import 실패 (이미 존재하거나 datasource 이름 확인 필요)"
   echo "  응답: $IMPORT_RESULT"
@@ -236,7 +250,10 @@ else
 fi
 
 # 엣지케이스용 ENDED 챌린지 생성
-log "엣지케이스용 ENDED 챌린지 생성 중..."
+# [수정] 유저 1~10을 참여시킨 뒤 종료한다. 참여자가 없으면 k6 엣지케이스가
+# "참여자 조회 404"로만 4xx를 받아 ENDED 상태 검증(409) 경로가 영영 실행되지 않는다.
+# 참여자(유저 1)가 실존해야 recordCheckIn의 "챌린지 ACTIVE 아님" 분기를 실제로 검증한다.
+log "엣지케이스용 ENDED 챌린지 생성 중 (유저 1~10 참여 후 종료)..."
 ENDED_RESP=$(curl -sf -X POST "$API/api/challenges" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TOKENS[1]}" \
@@ -251,8 +268,19 @@ ENDED_RESP=$(curl -sf -X POST "$API/api/challenges" \
     "approvalType": "AUTO"
   }' 2>/dev/null || echo '{}')
 ENDED_CHALLENGE_ID=$(echo "$ENDED_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('data',{}).get('id','999'))" 2>/dev/null)
+ENDED_HAS_MEMBERS=0
+if [ "${ENDED_CHALLENGE_ID:-999}" != "999" ]; then
+  # READY 상태인 동안 10명 참여 → 10번째에 팀 구성 + ACTIVE 자동 전환 → psql로 ENDED 확정
+  for uid in 1 2 3 4 5 6 7 8 9 10; do
+    curl -sf -X POST "$API/api/challenges/$ENDED_CHALLENGE_ID/participants" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${TOKENS[$uid]}" \
+      -d '{"personalStatement":"엣지케이스","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"서울시청"}' \
+      > /dev/null 2>&1 && ENDED_HAS_MEMBERS=1
+  done
+fi
 psql_exec "UPDATE challenges SET status='ENDED', ended_at=NOW()-INTERVAL '1 minute' WHERE id=$ENDED_CHALLENGE_ID;" || warn "ENDED 챌린지 상태 업데이트 실패"
-ok "ENDED 챌린지 생성 완료 (ID: $ENDED_CHALLENGE_ID)"
+ok "ENDED 챌린지 생성 완료 (ID: $ENDED_CHALLENGE_ID, 참여자 시딩: $([ $ENDED_HAS_MEMBERS -eq 1 ] && echo O || echo X))"
 
 # 목록 조회 5회
 log "챌린지 목록 조회 테스트 (5회)..."
@@ -401,10 +429,14 @@ echo "  Grafana에서 HikariCP 커넥션·응답시간을 실시간으로 확인
 echo "  ※ Soak 테스트: SOAK_DURATION=30m ./scripts/run-all-scenarios.sh 으로 실행"
 echo ""
 
+# [JWT 전환 수정] k6는 setup에서 자체 유저·챌린지를 프로비저닝해 체크인을 쓴다.
+#   - CHALLENGE_ID        : 읽기(상세/체크인 조회) 부하 대상 — 위에서 30일 볼륨 시딩한 챌린지
+#   - ENDED_MEMBER_EMAIL  : ENDED 챌린지의 실제 참여자(유저 1) — 409 경로 검증용
 k6 run \
   -e BASE_URL="$API" \
   -e CHALLENGE_ID="$CHALLENGE_ID" \
   -e ENDED_CHALLENGE_ID="${ENDED_CHALLENGE_ID:-999}" \
+  $([ "$ENDED_HAS_MEMBERS" -eq 1 ] && echo "-e ENDED_MEMBER_EMAIL=$(scen_email 1) -e ENDED_MEMBER_PASSWORD=$SCEN_PASSWORD") \
   -e FORMATION_CHALLENGE_ID="${FORMATION_CHALLENGE_ID:-0}" \
   ${SOAK_DURATION:+-e SOAK_DURATION="$SOAK_DURATION"} \
   "$K6_SCRIPT" || warn "k6 기준 초과 — Grafana에서 병목 구간을 확인하세요."

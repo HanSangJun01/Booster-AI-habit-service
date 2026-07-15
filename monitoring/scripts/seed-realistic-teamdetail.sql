@@ -111,7 +111,11 @@ BEGIN
         --   첫 멤버(v_member=0 → user_id = 3000000 + v_offset*10)를 앵커로 삼아,
         --   그 user_id와 동일한 id의 실제 users 행을 심는다(로그인용).
         --   email은 챌린지 id로 결정론적 생성: rt_c<challengeId>@booster.test
-        --   password = 'seed1234' (bcrypt). 재실행 대비 ON CONFLICT DO NOTHING.
+        --   password = 'seed1234' (bcrypt).
+        --
+        --   재실행 시 반드시 DO UPDATE로 email을 갱신한다: challenge id는 시퀀스라
+        --   재시딩마다 증가하는데, 앵커 user id(3000000+)는 고정이므로 DO NOTHING이면
+        --   이전 실행의 이메일(rt_c<옛id>)이 남아 새 챌린지 앵커 로그인이 전부 실패한다.
         INSERT INTO users
           (id, email, password_hash, nickname,
            coin_balance, total_attendance, is_active, joined_at, updated_at)
@@ -121,7 +125,12 @@ BEGIN
            '$2a$10$OPMJyoUHc4S7lKCMUB0lMuAje8xZU.tG.rUVnKTrewFa47gVxamCa',
            'rt_c' || v_challenge_id,
            0, 0, true, now(), now())
-        ON CONFLICT (id) DO NOTHING;
+        ON CONFLICT (id) DO UPDATE
+          SET email         = EXCLUDED.email,
+              nickname      = EXCLUDED.nickname,
+              password_hash = EXCLUDED.password_hash,
+              is_active     = true,
+              updated_at    = now();
 
         -- Partial check-ins for today: 3-6 of 10 members, split across both teams
         v_checkin_count := 3 + (v_offset % 4); -- cycles 3,4,5,6

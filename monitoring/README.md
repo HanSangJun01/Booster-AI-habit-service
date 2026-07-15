@@ -20,7 +20,7 @@
 | `load-test.js` | (B) Phase1 멀티 시나리오(normal_load·concurrent_same_user·edge_cases·soak·team_formation) |
 | `saturation-test.js` | (B) Phase2 포화(S1~S4, `SCENARIO` env). 리더보드 HOT/TEAM/BREADTH |
 | `team-detail-realistic.js` | (B) Phase2 team-detail 캐시(hot/dist). `rt-targets.json`을 읽음 |
-| `rt-targets.json` | (B) **생성 데이터** — RT_ 시딩 결과(challenge→userIds). 재시딩하면 갱신 |
+| `rt-targets.json` | (B) **생성 데이터** — RT_ 시딩 결과(challenge→앵커 로그인). **수동 편집 금지**, 재시딩 후 `scripts/gen-rt-targets.sh`로 재생성 |
 | `a-axis-realistic.js` | (A) 개인 인증 부하 시나리오 통합 러너 (`SCENARIO=load\|stress\|soak\|write`, 파일 상단 주석에 각 설명·실행법) |
 
 ## scripts/ — 시딩 · 실행 · 기록
@@ -35,7 +35,8 @@
 | 파일 | 무엇 |
 |---|---|
 | `run-all-scenarios.sh` | Phase1 종합(환경확인→시딩→시나리오 A~H→k6→baseline 저장) |
-| `run-saturation.sh` | Phase2 포화 1회 실행(k6 + HikariCP 샘플링) → PERFORMANCE-LOG 자동 기록 |
+| `run-saturation.sh` | Phase2 포화 1회 실행(k6 + HikariCP 샘플링) → PERFORMANCE-LOG 자동 기록. SAT_ 챌린지 id를 DB에서 자동 해석 |
+| `gen-rt-targets.sh` | `seed-realistic-teamdetail.sql` 적용 후 `k6/rt-targets.json` 재생성 (id 시퀀스 변동 반영) |
 | `sample-hikari.sh` | HikariCP 게이지(active/idle/pending/timeout)를 1초마다 폴링해 시계열 기록 |
 | `log-run.sh` | k6 json + HikariCP log에서 관측값 파싱 → PERFORMANCE-LOG 마커에 append |
 

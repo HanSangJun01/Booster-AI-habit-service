@@ -13,7 +13,10 @@
 //   dist           20%는 hot, 80%는 normal에서 랜덤 선택 (실제 트래픽 분포 재현 → 낮은 캐시 적중 기대)
 //   hotonly-singlekey  참고용 — 항상 첫 hot 챌린지 + 첫 유저 고정 (구 S3와 동일, 100% 적중 기준선)
 //
-// 사전 조건: monitoring/k6/rt-targets.json 이 시더에 의해 생성되어 있어야 한다.
+// 사전 조건: monitoring/k6/rt-targets.json 이 최신이어야 한다. challenge id는 시퀀스라
+// 재시딩마다 바뀌므로, 시딩 후 반드시 생성 스크립트로 재생성한다:
+//   docker exec -i booster-db psql -U booster -d booster < monitoring/scripts/seed-realistic-teamdetail.sql
+//   monitoring/scripts/gen-rt-targets.sh
 //   { "hot": [{ "challengeId": N, "email": "rt_c<N>@booster.test", "password": "seed1234" }, ...],
 //     "normal": [{ "challengeId": N, "email": "...", "password": "..." }, ...] }
 //   각 엔트리는 해당 챌린지의 CONFIRMED 참여자 앵커 로그인 정보를 담는다.
@@ -107,9 +110,8 @@ export function setup() {
 }
 
 export function handleSummary(data) {
-  const outPath =
-    __ENV.OUT_JSON ||
-    `/Users/hansangjun/Desktop/Booster-AI-habit-service/docs/monitoring/baselines/td-realistic-${SCENARIO}-k6.json`;
+  // 저장소 루트에서 실행 기준 상대경로 (OUT_JSON env로 재정의 가능)
+  const outPath = __ENV.OUT_JSON || `docs/monitoring/baselines/td-realistic-${SCENARIO}-k6.json`;
   return {
     [outPath]: JSON.stringify(data, null, 2),
     stdout: textSummary(data, { indent: '  ', enableColors: true }),
