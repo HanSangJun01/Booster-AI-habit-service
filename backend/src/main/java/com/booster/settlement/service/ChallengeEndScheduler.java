@@ -21,6 +21,7 @@ public class ChallengeEndScheduler {
     private final ChallengeRepository challengeRepository;
     private final SettlementService settlementService;
     private final SettlementRepository settlementRepository;
+    private final SettlementFailureRecorder failureRecorder;
 
     @Scheduled(fixedDelay = 60_000)
     public void markEndedChallenges() {
@@ -34,10 +35,11 @@ public class ChallengeEndScheduler {
                     c.markEnded();
                     challengeRepository.save(c);
                     log.info("Challenge ended, triggering settlement: challengeId={}", c.getId());
-                    settlementService.settleChallenge(c.getId());
                 } catch (Throwable e) {
-                    log.error("Failed to end/settle challengeId={}", c.getId(), e);
+                    log.error("Failed to end challengeId={}", c.getId(), e);
+                    continue;
                 }
+                settleAndRecordFailure(c.getId());
             }
         } catch (Throwable e) {
             log.error("markEndedChallenges crashed", e);
@@ -56,15 +58,28 @@ public class ChallengeEndScheduler {
                         .orElse(true);
                 if (needsRetry) {
                     log.info("Retrying settlement for ENDED challengeId={}", c.getId());
-                    try {
-                        settlementService.settleChallenge(c.getId());
-                    } catch (Throwable e) {
-                        log.error("Retry settlement failed for challengeId={}", c.getId(), e);
-                    }
+                    settleAndRecordFailure(c.getId());
                 }
             }
         } catch (Throwable e) {
             log.error("retryFailedSettlements crashed", e);
+        }
+    }
+
+    // [교착 수정] FAILED 기록은 settleChallenge의 @Transactional이 롤백을 마친 "이후"
+    // 별도 트랜잭션(REQUIRES_NEW)으로 수행해야 한다. settleChallenge 내부 catch에서
+    // 기록하면, 그 트랜잭션이 INSERT한 미커밋 PENDING 행(unique challenge_id)을
+    // 같은 스레드의 새 트랜잭션이 기다리는 self-deadlock으로 스케줄러 스레드가 죽는다.
+    private void settleAndRecordFailure(Long challengeId) {
+        try {
+            settlementService.settleChallenge(challengeId);
+        } catch (Throwable e) {
+            log.error("Settlement failed, recording FAILED: challengeId={}", challengeId, e);
+            try {
+                failureRecorder.recordFailure(challengeId);
+            } catch (Throwable re) {
+                log.error("Failed to record settlement FAILED for challengeId={}", challengeId, re);
+            }
         }
     }
 }

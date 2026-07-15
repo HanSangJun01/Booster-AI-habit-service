@@ -38,7 +38,6 @@ public class SettlementService {
     private final SettlementRepository settlementRepository;
     private final CoinService coinService;
     private final ParticipationRateCalculator participationRateCalculator;
-    private final SettlementFailureRecorder failureRecorder;
 
     @Transactional
     public void settleChallenge(Long challengeId) {
@@ -170,8 +169,11 @@ public class SettlementService {
 
         } catch (Exception e) {
             log.error("Settlement failed for challengeId={}", challengeId, e);
-            // REQUIRES_NEW 별도 트랜잭션으로 FAILED 상태 저장 — 외부 롤백에 영향받지 않음
-            failureRecorder.recordFailure(challengeId);
+            // [교착 수정] 여기서 REQUIRES_NEW로 FAILED를 기록하면 안 된다:
+            // 이 트랜잭션이 위에서 INSERT한 PENDING 행(unique challenge_id)이 아직 미커밋인
+            // 상태에서, 같은 스레드의 새 트랜잭션이 동일 challenge_id를 INSERT하려다
+            // 자기 자신의 락을 영원히 기다리는 self-deadlock이 발생한다(스케줄러 스레드 사망).
+            // FAILED 기록은 호출자(ChallengeEndScheduler)가 이 트랜잭션 롤백 후 수행한다.
             throw e;
         }
     }

@@ -39,7 +39,6 @@ class SettlementServiceTest {
     @Mock private SettlementRepository settlementRepository;
     @Mock private CoinService coinService;
     @Mock private ParticipationRateCalculator participationRateCalculator;
-    @Mock private SettlementFailureRecorder failureRecorder;
 
     @InjectMocks
     private SettlementService settlementService;
@@ -92,12 +91,14 @@ class SettlementServiceTest {
     }
 
     /**
-     * 이슈 1: 예외 발생 시 failureRecorder.recordFailure()가 호출되어야 함.
-     * 수정 전: SettlementService에 failureRecorder 필드가 없으므로 verify 실패.
-     * 수정 후: catch 블록이 failureRecorder.recordFailure(challengeId)를 호출하여 통과.
+     * [교착 수정] 예외 발생 시 예외가 그대로 전파되어야 하고, FAILED 기록은
+     * SettlementService가 하지 않는다(트랜잭션 내 REQUIRES_NEW 기록은 자신이 INSERT한
+     * 미커밋 PENDING 행과 unique(challenge_id) 충돌로 self-deadlock을 일으킴).
+     * FAILED 기록 책임은 호출자(ChallengeEndScheduler)가 트랜잭션 롤백 후 수행한다
+     * — ChallengeEndSchedulerTest에서 검증.
      */
     @Test
-    void settleChallenge_whenExceptionOccurs_shouldCallFailureRecorder() {
+    void settleChallenge_whenExceptionOccurs_shouldPropagateWithoutRecordingFailure() {
         Long challengeId = 300L;
 
         Challenge challenge = mock(Challenge.class);
@@ -109,8 +110,6 @@ class SettlementServiceTest {
         when(teamRepository.findByChallengeId(challengeId)).thenReturn(List.of(mock(Team.class)));
 
         assertThrows(IllegalStateException.class, () -> settlementService.settleChallenge(challengeId));
-
-        verify(failureRecorder).recordFailure(challengeId);
     }
 
     /**
