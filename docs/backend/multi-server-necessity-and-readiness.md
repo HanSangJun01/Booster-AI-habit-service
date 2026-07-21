@@ -80,8 +80,14 @@
 **현재 준비 상태 요약**
 - ✅ 무상태 인증(JWT) — 이미 완료 (sticky session 불필요)
 - ✅ `open-in-view=false`, pool 명시 — 완료
-- ❌ P1~P5 정합성 항목 — **미적용** (단일 서버라 DB 유니크 제약이 최후 방어선 역할 중)
+- ✅ **P1 적용** — ShedLock `@SchedulerLock`(3개 `@Scheduled` 전부) + 정산 retry `FAILED→PENDING` 원자적 CAS
+- ❌ P2~P5 정합성 항목 — **미적용** (단일 서버라 DB 유니크 제약이 최후 방어선 역할 중)
 - ❌ 캐시/커넥션 외부화 — 미적용(조건부)
+
+**Deferred (P4/P5)** — P4(정산 비관적 락)와 P5(카운트를 락 이후로 이동)는 **의도적으로 보류**한다.
+정산 happy path는 `settlement.challenge_id` **unique 제약**으로 이미 보호되고, **P1**(ShedLock +
+`FAILED→PENDING` CAS)이 스케줄러 중복 실행과 재시도 이중 지급 갭을 지금 닫는다. 수동 정산 vs 스케줄러
+경합이 실제로 관측되면 그때 재검토한다.
 
 ---
 

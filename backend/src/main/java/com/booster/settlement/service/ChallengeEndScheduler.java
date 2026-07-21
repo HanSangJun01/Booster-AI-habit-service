@@ -7,6 +7,7 @@ import com.booster.settlement.domain.SettlementStatus;
 import com.booster.settlement.repository.SettlementRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +25,7 @@ public class ChallengeEndScheduler {
     private final SettlementFailureRecorder failureRecorder;
 
     @Scheduled(fixedDelay = 60_000)
+    @SchedulerLock(name = "markEndedChallenges", lockAtMostFor = "PT5M", lockAtLeastFor = "PT10S")
     public void markEndedChallenges() {
         try {
             log.debug("ChallengeEndScheduler running");
@@ -49,6 +51,7 @@ public class ChallengeEndScheduler {
     // ENDED 상태 챌린지 중 정산이 FAILED이거나 settlement 자체가 없는 경우 재시도.
     // markEndedChallenges()와 별도 주기(5분)로 실행하여 FAILED 고착 방지.
     @Scheduled(fixedDelay = 300_000)
+    @SchedulerLock(name = "retryFailedSettlements", lockAtMostFor = "PT5M")
     public void retryFailedSettlements() {
         try {
             List<Challenge> endedChallenges = challengeRepository.findByStatus(ChallengeStatus.ENDED);
