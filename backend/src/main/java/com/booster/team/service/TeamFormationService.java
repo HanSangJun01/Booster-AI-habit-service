@@ -49,8 +49,9 @@ public class TeamFormationService {
 
         log.info("Forming teams for challenge {}", challengeId);
 
+        // 결정적 배정 — 어느 인스턴스가 실행해도 동일 결과 (시드=challengeId)
         List<ChallengeParticipant> shuffled = new ArrayList<>(confirmed);
-        Collections.shuffle(shuffled);
+        Collections.shuffle(shuffled, new java.util.Random(challengeId));
 
         Team teamA = teamRepository.save(Team.builder()
                 .challengeId(challengeId)
