@@ -42,8 +42,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ChallengeCheckInService {
 
-    /** 팀 참여율 낙관락 충돌 시 최대 재시도 횟수. 한 팀 동시 체크인 작성자 수 상한(5:5 구성상 팀 최대 5명)을 커버해 수렴을 보장. */
-    private static final int PARTICIPATION_RATE_MAX_RETRIES = 5;
+    /**
+     * 팀 참여율 낙관락 충돌 시 최대 재시도 횟수.
+     *
+     * <p>한 팀 동시 체크인 작성자 수 상한(5:5 구성상 팀 최대 5명)에 여유를 둔 값이다.
+     * 팀 크기(5)와 딱 같으면 최악의 경우 한 스레드가 정확히 팀원 수만큼 재시도해야 해 마진이
+     * 0이므로, 스케줄 지터·재진입 등을 흡수하도록 여유(10)를 둔다.
+     *
+     * <p>완화(mitigation): 소진 시 저장된 team.participationRate 는 정체될 수 있으나, 정산은
+     * {@link ParticipationRateCalculator#authoritativeRate}(체크인 테이블 재계산)를 사용하므로
+     * 저장 값은 표시용이며 다음 체크인에서 재계산되어 자가치유된다.
+     */
+    private static final int PARTICIPATION_RATE_MAX_RETRIES = 10;
 
     private final ChallengeCheckInRepository checkInRepository;
     private final ChallengeParticipantRepository participantRepository;

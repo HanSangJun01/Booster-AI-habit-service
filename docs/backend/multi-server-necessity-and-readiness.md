@@ -89,6 +89,8 @@
 `FAILED→PENDING` CAS)이 스케줄러 중복 실행과 재시도 이중 지급 갭을 지금 닫는다. 수동 정산 vs 스케줄러
 경합이 실제로 관측되면 그때 재검토한다.
 
+**Known follow-up (테스트 노이즈, 기능 무해)** — 범용 `test` 프로파일은 H2 + Flyway 비활성이라 `shedlock` 테이블(V10)이 없다. `@EnableScheduling`이 `BoosterApplication`에 있어 full-context `@SpringBootTest`(test 프로파일) 실행 중 `@SchedulerLock @Scheduled`가 발화하면 스케줄러 스레드에서 "table shedlock not found" 로그가 뜬다 — **테스트 실패가 아니라 로그 노이즈**(전체 스위트 GREEN 유지). 근본 해소는 스케줄링을 test/ct에서 게이팅(`@Configuration @EnableScheduling @Profile("!test & !ct")` 분리)하는 것이나, `ShedLockConfig` javadoc이 `@EnableScheduling` 위치를 `BoosterApplication`으로 명시하고 있어 지금은 문서화로 남긴다. 필요 시 후속 처리.
+
 ---
 
 ## 4. "미리 준비"할 때 고려사항 (체크리스트)
