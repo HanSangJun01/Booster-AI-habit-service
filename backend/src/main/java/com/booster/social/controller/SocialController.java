@@ -38,9 +38,12 @@ public class SocialController {
 
     @GetMapping("/api/teams/{teamId}/chat")
     public ApiResponse<Page<ChatMessageResponse>> getMessages(
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long teamId,
             Pageable pageable) {
-        return ApiResponse.success(teamChatService.getMessages(teamId, pageable));
+        // (BS-39 I2) 읽기에도 멤버십 검사가 필요하다(쓰기엔 이미 있었음). 예전엔 비참여자가
+        // 임의 teamId로 남의 팀 채팅을 통째로 읽을 수 있었다. userId를 서비스로 넘겨 검증.
+        return ApiResponse.success(teamChatService.getMessages(userId, teamId, pageable));
     }
 
     @PostMapping("/api/teams/{teamId}/chat")
