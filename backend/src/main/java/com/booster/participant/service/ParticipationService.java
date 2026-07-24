@@ -121,7 +121,12 @@ public class ParticipationService {
 
     @Transactional
     public void cancelParticipation(Long userId, Long challengeId) {
-        Challenge challenge = challengeRepository.findById(challengeId)
+        // (BS-39 I13) 챌린지 비관락으로 동시 취소를 직렬화한다. 예전엔 findById(무락)이라
+        // 같은 유저의 동시 취소 요청이 둘 다 status=CONFIRMED/PENDING 을 읽고 각각 환불 →
+        // 코인이 무에서 생성되는 이중 환불(코인 파밍)이 재현됐다. requestParticipation 과
+        // 동일하게 findByIdWithLock 으로 잠그면, 먼저 취소한 트랜잭션이 상태를 CANCELLED 로
+        // 커밋한 뒤에야 다음 취소가 진입해 재환불하지 않는다.
+        Challenge challenge = challengeRepository.findByIdWithLock(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
         if (challenge.getStatus() != ChallengeStatus.READY) {
@@ -131,7 +136,12 @@ public class ParticipationService {
         ChallengeParticipant participant = participantRepository.findByChallengeIdAndUserId(challengeId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Participation not found"));
 
-        if (participant.getStatus() == ParticipantStatus.CONFIRMED) {
+        // (BS-39 I10) 보증금 환불. 참여 시 코인은 AUTO/LEADER 관계없이 무조건 차감되므로
+        // (requestParticipation), 아직 보증금을 쥔 상태(PENDING·CONFIRMED)면 모두 환불해야 한다.
+        // 예전엔 CONFIRMED만 환불해 LEADER 승인형의 PENDING 참여자가 취소 시 보증금을 잃었다.
+        // CANCELLED/LEFT/REJECTED(이미 종료·환불된 상태)는 재환불하지 않는다.
+        if (participant.getStatus() == ParticipantStatus.CONFIRMED
+                || participant.getStatus() == ParticipantStatus.PENDING) {
             coinService.credit(userId, challenge.getDepositCoins(), CoinTransactionReason.DEPOSIT_CANCEL_REFUND, challengeId);
         }
 

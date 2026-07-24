@@ -1,4 +1,12 @@
 spring:
+  # (BS-39 I5) Pageable 바인딩 전역 상한. 예전엔 B축의 raw Pageable 엔드포인트
+  # (GET /api/challenges, GET /teams/{id}/chat)가 size=1000000도 그대로 받았다.
+  # A축 코인내역(F9)과 동일하게 100으로 클램프한다. 모든 Pageable 엔드포인트에 일괄 적용.
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+        default-page-size: 20
   datasource:
     url: "${DB_URL:jdbc:postgresql://localhost:5432/booster?socketTimeout=30&tcpKeepAlive=true}"
     username: ${DB_USERNAME:booster}

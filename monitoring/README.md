@@ -22,6 +22,7 @@
 | `b-axis-team-detail.js` | (B) Phase2 team-detail 캐시(hot/dist). `b-axis-team-detail-targets.json`을 읽음 |
 | `b-axis-team-detail-targets.json` | (B) **생성 데이터** — RT_ 시딩 결과(challenge→앵커 로그인). **수동 편집 금지**, 재시딩 후 `scripts/b-axis-gen-team-detail-targets.sh`로 재생성 |
 | `a-axis-realistic.js` | (A) 개인 인증 부하 시나리오 통합 러너 (`SCENARIO=load\|stress\|soak\|write`, 파일 상단 주석에 각 설명·실행법) |
+| `integration-realistic.js` | **(A×B)** 통합면 부하 러너 (`SCENARIO=journey\|search\|teamdetail\|contention`). `setup()`이 유저10명+챌린지+팀편성까지 자가시딩. 엔드포인트별 p95를 `ep_*` 메트릭으로 출력 |
 
 ## scripts/ — 시딩 · 실행 · 기록
 **시딩**
@@ -30,6 +31,12 @@
 | `b-axis-seed-saturation.sql` | (B) SAT_ 대량(500챌린지 / 102k 체크인) — 풀 포화 유도용 |
 | `b-axis-seed-team-detail.sql` | (B) RT_ 현실(50챌린지 hot/normal, 5:5 팀·GPS·부분 체크인) — 캐시 재검증용 |
 | `seed-3rd.sql` / `seed-big.sql` | (A) 부하테스트용 시드 |
+
+**프로브 (A×B 통합면 — 논리 버그)**
+| 파일 | 무엇 |
+|---|---|
+| `probe-integration.sh` | 통합면 논리버그를 한 방씩 찌름(부하 아님, P1~P8): 코인보존·잔액경합·팀채팅 권한·size 클램프·본문길이·응원 ID공간·A/B 체크인 연쇄·actuator 노출. 결과 `[BUG]`/`[OK]`/`[??]` |
+| `probe-integration2.sh` | 2차 프로브 — 돈 정합성·동시성·엣지(Q1~Q5): PENDING 취소 환불·동시취소 이중환불·leaderboard 필수파라미터·정원 초과 동시참여·응원 중복. 발견 내역은 [FINDINGS_5차](../docs/monitoring/load-findings/FINDINGS_5차.md) |
 
 **러너 · 헬퍼 (B축)**
 | 파일 | 무엇 |

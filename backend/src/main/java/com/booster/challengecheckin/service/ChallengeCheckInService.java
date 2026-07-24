@@ -21,6 +21,7 @@ import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -83,20 +84,31 @@ public class ChallengeCheckInService {
         }
 
         // 4. 체크인 레코드 생성 (PENDING → 판정 후 SUCCESS/FAILED로 갱신)
+        // (BS-39 I1) 삽입은 REQUIRES_NEW 헬퍼에서만 하고, UNIQUE 위반(같은 유저 동시 첫 체크인)은
+        // 여기 — 오염되지 않은 바깥 트랜잭션 — 에서 잡아 재조회한다. 헬퍼 안에서 잡아 재조회하면
+        // 오염된 세션이 flush되며 AssertionFailure(500)로 터진다.
         ChallengeCheckIn checkIn;
         if (existing.isPresent()) {
             checkIn = existing.get();
         } else {
-            checkIn = checkInInsertHelper.insertOrFetch(
-                    ChallengeCheckIn.builder()
-                            .participantId(participant.getId())
-                            .challengeId(challengeId)
-                            .teamId(participant.getTeamId())
-                            .checkInDate(today)
-                            .status(CheckInStatus.PENDING)
-                            .build(),
-                    participant.getId(),
-                    today);
+            try {
+                checkIn = checkInInsertHelper.insertInNewTransaction(
+                        ChallengeCheckIn.builder()
+                                .participantId(participant.getId())
+                                .challengeId(challengeId)
+                                .teamId(participant.getTeamId())
+                                .checkInDate(today)
+                                .status(CheckInStatus.PENDING)
+                                .build());
+            } catch (DataIntegrityViolationException e) {
+                // 경쟁에서 짐 — 다른 요청이 먼저 오늘자 레코드를 넣었다. 바깥 세션에서 깨끗하게 재조회.
+                checkIn = checkInRepository.findByParticipantIdAndCheckInDate(participant.getId(), today)
+                        .orElseThrow(() -> new IllegalStateException("Check-in conflict unresolvable"));
+                // 이미 SUCCESS로 확정된 레코드면 멱등 반환(동시 요청이 먼저 판정 완료한 경우).
+                if (checkIn.getStatus() == CheckInStatus.SUCCESS) {
+                    return CheckInResponse.from(checkIn);
+                }
+            }
         }
 
         // 5. VerificationSubmission 생성

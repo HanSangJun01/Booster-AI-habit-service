@@ -5,6 +5,7 @@ import com.booster.challenge.domain.ChallengeStatus;
 import com.booster.challenge.repository.ChallengeRepository;
 import com.booster.challengecheckin.domain.ChallengeCheckIn;
 import com.booster.challengecheckin.domain.CheckInStatus;
+import com.booster.challengecheckin.dto.CheckInResponse;
 import com.booster.challengecheckin.repository.ChallengeCheckInRepository;
 import com.booster.challengecheckin.repository.GpsVerificationResultRepository;
 import com.booster.challengecheckin.repository.VerificationDecisionRepository;
@@ -19,9 +20,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import java.time.LocalDate;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -139,10 +142,13 @@ class ChallengeCheckInServiceTest {
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
-    // ── 이슈 5: recordCheckIn - 동시 중복 insert 시 CheckInInsertHelper에 위임 ──
+    // ── 이슈 I1(BS-39): 동시 첫 체크인 경쟁 → 500이 아니라 멱등 복구 ──
+    // 예전엔 CheckInInsertHelper가 REQUIRES_NEW 안에서 UNIQUE 위반을 잡아 재조회 →
+    // 오염된 세션 flush → AssertionFailure(null id) → 500. (같은 유저 동시 체크인 시 재현)
+    // 수정 후: 헬퍼는 삽입만 하고 위반을 전파, 서비스가 바깥(깨끗한) 트랜잭션에서 재조회해 복구.
 
     @Test
-    void recordCheckIn_whenDuplicateInsert_shouldDelegateToHelperAndPropagateConflict() {
+    void recordCheckIn_whenConcurrentInsertRace_shouldRecoverIdempotentlyNot500() {
         ChallengeParticipant participant = confirmedParticipantWithTeam();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
@@ -153,20 +159,29 @@ class ChallengeCheckInServiceTest {
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
 
-        // 처음 조회 시 existing 없음 → insertOrFetch 호출됨
+        // 경쟁 승자가 이미 오늘자 SUCCESS 레코드를 만든 상태
+        ChallengeCheckIn winner = ChallengeCheckIn.builder()
+                .participantId(participant.getId())
+                .challengeId(challengeId)
+                .teamId(participant.getTeamId())
+                .checkInDate(today)
+                .status(CheckInStatus.SUCCESS)
+                .build();
+
+        // step3 첫 조회는 empty(경쟁 시작), catch 재조회는 승자 레코드
         when(checkInRepository.findByParticipantIdAndCheckInDate(any(), eq(today)))
-                .thenReturn(Optional.empty());
+                .thenReturn(Optional.empty(), Optional.of(winner));
 
-        // helper가 해결 불가한 충돌 상황 시뮬레이션
-        when(checkInInsertHelper.insertOrFetch(any(), any(), any()))
-                .thenThrow(new IllegalStateException("Check-in conflict unresolvable"));
+        // 동시 첫 삽입 → UNIQUE 위반 (헬퍼는 이제 삼키지 않고 전파)
+        when(checkInInsertHelper.insertInNewTransaction(any()))
+                .thenThrow(new DataIntegrityViolationException("unique_participant_date"));
 
-        // DataIntegrityViolationException(rollback-only → 500) 대신 IllegalStateException으로 전파
-        assertThrows(IllegalStateException.class,
-                () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
+        // 수정 후: 예외(500) 없이 멱등 SUCCESS 반환
+        CheckInResponse resp = checkInService.recordCheckIn(userId, challengeId, lat, lng);
+        assertEquals(CheckInStatus.SUCCESS, resp.getStatus());
 
-        // save가 서비스에서 직접 호출되지 않고 helper에 위임됨을 확인
-        verify(checkInInsertHelper).insertOrFetch(any(), eq(participant.getId()), eq(today));
-        verify(checkInRepository, never()).save(any(ChallengeCheckIn.class));
+        // 헬퍼에 위임 + catch에서 재조회(총 2회) 했는지 확인
+        verify(checkInInsertHelper).insertInNewTransaction(any());
+        verify(checkInRepository, times(2)).findByParticipantIdAndCheckInDate(any(), eq(today));
     }
 }
