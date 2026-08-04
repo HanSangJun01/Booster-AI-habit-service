@@ -148,4 +148,38 @@ public class ParticipationService {
         participant.cancel();
         log.info("Participation cancelled: userId={}, challengeId={}", userId, challengeId);
     }
+
+    /**
+     * (BS-39 I15) 회원 탈퇴 시 아직 시작 전(READY) 챌린지의 참여를 환불·정리한다.
+     * 예전엔 withdraw()가 user.deactivate()만 해서 탈퇴 후에도 CONFIRMED 참여와 예치금이 남아
+     * 정산에 좀비 참여자로 집계되고 보증금이 영구 잠겼다. 취소 규칙과 동일하게 READY 챌린지만
+     * 환불 대상이며(시작 후엔 예치금 확정 — cancelParticipation과 같은 규칙), 각 챌린지를
+     * 비관락으로 잠가 동시 상태전이·이중환불과 경합하지 않는다(I13과 동일).
+     */
+    @Transactional
+    public void cancelActiveParticipationsForWithdrawal(Long userId) {
+        for (ChallengeParticipant p : participantRepository.findByUserId(userId)) {
+            if (p.getStatus() != ParticipantStatus.PENDING && p.getStatus() != ParticipantStatus.CONFIRMED) {
+                continue; // 이미 취소/종료·환불된 참여는 건너뜀
+            }
+            Long challengeId = p.getChallenge().getId();
+            Challenge challenge = challengeRepository.findByIdWithLock(challengeId).orElse(null);
+            if (challenge == null || challenge.getStatus() != ChallengeStatus.READY) {
+                continue; // 시작(ACTIVE)/종료된 챌린지는 기존 취소규칙대로 환불 없음
+            }
+            // 락 획득 후 참여 상태를 다시 확인(그 사이 취소되었을 수 있음).
+            ChallengeParticipant fresh = participantRepository
+                    .findByChallengeIdAndUserId(challengeId, userId).orElse(null);
+            if (fresh == null) {
+                continue;
+            }
+            if (fresh.getStatus() == ParticipantStatus.CONFIRMED
+                    || fresh.getStatus() == ParticipantStatus.PENDING) {
+                coinService.credit(userId, challenge.getDepositCoins(),
+                        CoinTransactionReason.DEPOSIT_CANCEL_REFUND, challengeId);
+                fresh.cancel();
+                log.info("Withdrawal cleanup: cancelled participation userId={}, challengeId={}", userId, challengeId);
+            }
+        }
+    }
 }

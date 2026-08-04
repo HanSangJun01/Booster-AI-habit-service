@@ -4,6 +4,7 @@ import com.booster.participant.service.ParticipationService;
 import com.booster.shared.common.GlobalExceptionHandler;
 import com.booster.shared.security.JwtAuthenticationFilter;
 import com.booster.shared.security.JwtTokenProvider;
+import com.booster.user.repository.UserRepository;
 import com.booster.shared.security.RestAuthenticationEntryPoint;
 import com.booster.shared.security.SecurityConfig;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,12 @@ class ParticipantControllerTest {
 
     @MockBean
     JwtTokenProvider jwtTokenProvider;
+
+    // (BS-39 I16) JwtAuthenticationFilter가 활성상태 검증을 위해 UserRepository를 주입받으므로
+    // WebMvcTest 슬라이스에도 목 빈이 필요하다(테스트는 authentication()으로 principal을 직접 주입해
+    // 필터의 토큰 경로를 타지 않으므로 스텁 동작은 불필요).
+    @MockBean
+    UserRepository userRepository;
 
     /** principal = userId(Long) — JwtAuthenticationFilter가 세팅하는 형태와 동일. */
     private static UsernamePasswordAuthenticationToken authUser(Long userId) {

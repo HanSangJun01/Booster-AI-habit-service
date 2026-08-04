@@ -16,6 +16,7 @@ import com.booster.challengecheckin.repository.VerificationSubmissionRepository;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.ResourceNotFoundException;
+import com.booster.shared.common.UnauthorizedException;
 import com.booster.shared.gps.GpsVerificationEvaluator;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
@@ -164,7 +165,12 @@ public class ChallengeCheckInService {
     }
 
     @Transactional(readOnly = true)
-    public List<CheckInResponse> getTeamCheckIns(Long challengeId, LocalDate date) {
+    public List<CheckInResponse> getTeamCheckIns(Long userId, Long challengeId, LocalDate date) {
+        // (BS-39 I14) 멤버십 검사. 예전엔 컨트롤러에 @AuthenticationPrincipal도, 여기에 검사도 없어
+        // 비참여자가 임의 challengeId로 남의 팀 체크인 현황을 통째로 조회할 수 있었다(I2 팀채팅 읽기와
+        // 동일 계열). team-detail(getTeamComparison)과 같은 CONFIRMED 참여 게이트를 적용한다.
+        participantRepository.findConfirmedByUserAndChallenge(challengeId, userId)
+                .orElseThrow(() -> new UnauthorizedException("Not a participant of this challenge"));
         return checkInRepository.findByChallengeIdAndCheckInDate(challengeId, date)
                 .stream()
                 .map(CheckInResponse::from)

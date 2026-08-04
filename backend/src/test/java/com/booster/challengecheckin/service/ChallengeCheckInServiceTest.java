@@ -184,4 +184,33 @@ class ChallengeCheckInServiceTest {
         verify(checkInInsertHelper).insertInNewTransaction(any());
         verify(checkInRepository, times(2)).findByParticipantIdAndCheckInDate(any(), eq(today));
     }
+
+    // ── 이슈 I14(BS-39): 체크인 목록 조회 멤버십 검사 ──
+    // 예전엔 컨트롤러/서비스 어디에도 검사가 없어 비참여자가 임의 challengeId로 남의 팀 체크인
+    // 현황을 조회할 수 있었다(I2 팀채팅 읽기와 동일 계열).
+
+    @Test
+    void getTeamCheckIns_whenNotParticipant_shouldThrowUnauthorized() {
+        LocalDate date = LocalDate.of(2026, 8, 4);
+        when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
+                .thenReturn(Optional.empty());
+
+        assertThrows(com.booster.shared.common.UnauthorizedException.class,
+                () -> checkInService.getTeamCheckIns(userId, challengeId, date));
+
+        // 멤버십 실패 시 체크인 데이터는 조회하지 않아야 한다(정보노출 차단)
+        verify(checkInRepository, never()).findByChallengeIdAndCheckInDate(any(), any());
+    }
+
+    @Test
+    void getTeamCheckIns_whenParticipant_shouldReturnList() {
+        LocalDate date = LocalDate.of(2026, 8, 4);
+        when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
+                .thenReturn(Optional.of(confirmedParticipantWithTeam()));
+        when(checkInRepository.findByChallengeIdAndCheckInDate(challengeId, date))
+                .thenReturn(java.util.List.of());
+
+        assertEquals(0, checkInService.getTeamCheckIns(userId, challengeId, date).size());
+        verify(checkInRepository).findByChallengeIdAndCheckInDate(challengeId, date);
+    }
 }
