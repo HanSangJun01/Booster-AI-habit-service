@@ -1,6 +1,6 @@
 # 멀티서버 필요성 입증 & 확장 준비(scale-out readiness) 리포트
 
-> 작성일: 2026-07-21 · 브랜치: `integration/a-b-axis`
+> 작성일: 2026-07-21 · 최종 갱신: 2026-08-03 · 브랜치: `feature/multi-server`
 > 목적: "멀티서버가 지금 필요한가"를 측정으로 판정하고, 근거를 하나씩 분류해
 > **지금 코드로 준비할 것 / 나중에 배포에서 해결될 것**을 나눈 뒤, 실제 "미리 준비" 절차를 정리한다.
 > 선행 문서: [`multi-server-considerations.md`](./multi-server-considerations.md) (위험 목록·우선순위),
@@ -67,7 +67,7 @@
 | 항목 | 멀티서버에서 깨지는 이유 | 해결 위치 | 처방 | 우선순위 |
 |---|---|:---:|---|:---:|
 | **스케줄러 중복 실행** | `@Scheduled`가 인스턴스마다 독립 타이머 → N대면 정산 N번 → **코인 이중 지급** | **코드** | ShedLock `@SchedulerLock` (또는 Quartz 클러스터) | **P1** |
-| **팀 구성 비결정 셔플** | `Collections.shuffle()`가 인스턴스마다 다른 순서 | **코드** | 셔플 제거 → `participant_id` 정렬 결정적 배정 | P2 |
+| **팀 구성 비결정 셔플** | `Collections.shuffle()`가 인스턴스마다 다른 순서 | **코드** | `id` 안정정렬 후 `seed=challengeId` 결정적 셔플 (`orderForAssignment`) | P2 |
 | **참여율 Lost Update** | Team row 락 없음 → 마지막 저장이 이김 | **코드** | `@Version` 낙관적 락 + 재시도 | P3 |
 | **정산 멱등 게이트 경쟁** | 두 인스턴스가 동시에 PENDING 저장 시도 | **코드** | Challenge row `PESSIMISTIC_WRITE` 락 | P4 |
 | **참가자 수 카운트 경쟁** | 카운트 쿼리가 락 밖 | **코드** | 카운트를 락 이후로 이동 | P5 |
@@ -81,8 +81,20 @@
 - ✅ 무상태 인증(JWT) — 이미 완료 (sticky session 불필요)
 - ✅ `open-in-view=false`, pool 명시 — 완료
 - ✅ **P1 적용** — ShedLock `@SchedulerLock`(3개 `@Scheduled` 전부) + 정산 retry `FAILED→PENDING` 원자적 CAS
-- ❌ P2~P5 정합성 항목 — **미적용** (단일 서버라 DB 유니크 제약이 최후 방어선 역할 중)
+- ✅ **P2 적용** — `TeamFormationService.orderForAssignment`: `id` 안정정렬 후 `seed=challengeId` 결정적 셔플 (크로스 인스턴스 동일 A/B 배정)
+- ✅ **P3 적용** — `Team.@Version` 낙관적 락(V11) + 참여율 갱신을 `REQUIRES_NEW` 별도 트랜잭션에서 재시도(최대 10회), 소진 시 정산은 `authoritativeRate` 재계산으로 자가치유
+- ⏳ **P4·P5 의도적 defer** — 아래 "Deferred (P4/P5)" 참조
 - ❌ 캐시/커넥션 외부화 — 미적용(조건부)
+
+> **동시성 회귀 테스트(Testcontainers 실 PostgreSQL)**: `C7RetryDoubleAwardTest`(P1 이중지급 차단), `C8DeterministicTeamFormationTest`·`TeamFormationOrderingTest`(P2 결정성·입력순서 독립), `C9ParticipationRateLostUpdateTest`(P3 Lost Update 방지)로 고정 — 전체 스위트 GREEN.
+
+**멀티 스택 실증 (2026-08-04, `docker-compose.multi.yml`: nginx LB + backend 3대 + 공유 DB)** — 5장 프로세스 3·5단계를 실제 멀티 인스턴스 스택에서 수행:
+- **기동**: 3대 동시 기동에서 Flyway V1~V11이 **정확히 1회 적용**(Flyway 락이 직렬화 — 한 대 적용, 나머지 "up to date"). V10 shedlock·V11 version 포함, 3대 전부 health UP.
+- **LB 분산**: nginx 경유 동시요청 30개가 3대에 **10/9/11 균등 분산**(`X-Upstream` 헤더로 확인).
+- **Failover**: `backend-1` 강제 종료 중에도 **40/40 요청 200(다운타임 0)**. `X-Upstream` 재시도 체인(죽은서버→산서버)과 `max_fails` 축출 확인.
+- **P1 이중정산 방지(핵심)**: 정산 254건 삭제 후 **3대 동시 재시작 → 세 인스턴스가 동시에 `retryFailedSettlements` 발화**. 결과 **retry 루프 본문은 backend-1만 254회 진입(backend-2·3=0)**, settlement는 **challenge당 정확히 1행(중복 0)**. ShedLock이 동시 경쟁을 한 대로 직렬화함을 실증. (COMPLETED 5/FAILED 249는 시드의 합성 유저에 실제 `users` 행이 없어 코인 지급이 실패한 데이터 이슈로 P1과 무관 — FAILED도 challenge당 1행이라 재시도 시 `FAILED→PENDING` CAS로 재차 이중지급 차단.)
+- **P3는 라이브 미실증** — 동시 체크인은 인증된 실제 유저·GPS가 필요한데 시드가 합성 유저를 써서 재현 불가. `C9`(Testcontainers 실 PostgreSQL)로 커버.
+- **처리량은 제외** — 3대가 같은 호스트 CPU를 공유해 공정 측정 불가(1.3 참조).
 
 **Deferred (P4/P5)** — P4(정산 비관적 락)와 P5(카운트를 락 이후로 이동)는 **의도적으로 보류**한다.
 정산 happy path는 `settlement.challenge_id` **unique 제약**으로 이미 보호되고, **P1**(ShedLock +
@@ -150,4 +162,4 @@
 | 그럼 지금 뭘 하나? | ✅ **scale-out 준비** — P1~P5 정합성 항목을 코드로 닫기 |
 | 준비의 핵심 한 줄 | **"지금 여러 대 두기"가 아니라 "언제든 여러 대로 갈 수 있게 무상태·멱등·분산락으로 준비"** |
 
-**다음 액션(권장)**: 5장 프로세스의 3~4단계 — 멀티 스택으로 **P1(스케줄러 중복 정산)을 재현→ShedLock으로 해결**. 로컬에서 정직하게 증명 가능한 유일한 "멀티서버 대비" 작업이며, 가장 큰 위험(금전 손실)을 먼저 제거한다.
+**진행 현황(2026-08-04)**: 5장 프로세스의 3~6단계를 **P1·P2·P3에 대해 완료** — 멀티 인스턴스에서 깨지는 정합성 항목(스케줄러 중복 정산·팀 배정 비결정·참여율 Lost Update)을 코드로 닫고 동시성 테스트로 회귀 고정했다. 나아가 **`docker-compose.multi.yml`(nginx LB + 3대 + 공유 DB)로 실제 멀티 스택을 띄워 3·5단계를 실증** — 3대 동시 정산 발화에도 ShedLock이 한 대만 통과시켜 이중정산 0건, LB 균등 분산·failover 무중단을 확인했다(3장 "멀티 스택 실증" 참조). P4·P5는 의도적으로 defer(3장 "Deferred" 참조). 남은 것은 **인프라 항목(LB·HA·오토스케일·PgBouncer·Redis)** 으로, 실제 클라우드 배포 시점의 작업이다.
