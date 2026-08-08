@@ -1,5 +1,6 @@
 package com.booster.shared.common;
 
+import com.booster.challengecheckin.service.AiVerificationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -109,6 +110,22 @@ public class GlobalExceptionHandler {
         log.warn("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("요청이 기존 데이터와 충돌합니다.", "DATA_CONFLICT"));
+    }
+
+    /**
+     * AI 인증 파이프라인 예외. 이미지 검증 실패는 4xx로, ai-service upstream 실패는 502로 매핑된다.
+     * status 필드를 예외가 직접 보유하므로 여기서는 그대로 전달만 한다.
+     */
+    @ExceptionHandler(AiVerificationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAiVerification(AiVerificationException ex) {
+        HttpStatus status = ex.getStatus();
+        if (status.is5xxServerError()) {
+            log.error("AI verification server-side failure ({}): {}", status.value(), ex.getMessage(), ex);
+        } else {
+            log.warn("AI verification client-side failure ({}): {}", status.value(), ex.getMessage());
+        }
+        return ResponseEntity.status(status)
+                .body(ApiResponse.error(ex.getMessage(), "AI_VERIFICATION_" + status.value()));
     }
 
     @ExceptionHandler(Exception.class)
