@@ -58,6 +58,25 @@ MVP 핵심 흐름은 다음과 같다.
 | 409 Conflict | 중복 또는 충돌 |
 | 500 Internal Server Error | 서버 내부 오류 |
 
+### 2.5 인증 (Authentication)
+
+`/api/auth/**`(회원가입·로그인)와 `/actuator/**`(모니터링)를 제외한 **모든 엔드포인트는 JWT 인증이 필요**하다.
+
+- 로그인(`POST /api/auth/login`) 응답의 `accessToken`을 요청 헤더에 담아 보낸다:
+
+  ```text
+  Authorization: Bearer <accessToken>
+  ```
+
+- 서버는 토큰에서 **호출자 식별자(userId)를 추출**한다. 클라이언트가 별도 헤더(예: `X-User-Id`)나 바디로 호출자 신원을 전달하지 않는다.
+- 경로의 `{userId}`는 **대상 리소스 지정용**이며, 호출자 본인 여부가 중요한 동작(예: 챌린지 참여 취소, 회원 탈퇴)은 서버가 토큰의 userId와 대조한다. 불일치 시 `403 Forbidden`.
+- 토큰이 없거나 유효하지 않으면 `401 Unauthorized` (에러 엔벨로프 §2.3, `errorCode: "UNAUTHORIZED"`).
+
+| 상황 | 응답 |
+|---|---|
+| 토큰 없음 / 만료 / 서명 불일치 | 401 Unauthorized (`errorCode: UNAUTHORIZED`) |
+| 인증됐으나 타인의 리소스를 조작 | 403 Forbidden |
+
 ## 3. API 목록
 
 | 구분 | Method | Endpoint | 설명 |

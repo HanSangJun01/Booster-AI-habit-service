@@ -1,1 +1,31 @@
 .DS_Store
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Gradle
+.gradle/
+**/.gradle/
+
+# Build outputs
+build/
+**/build/
+
+# OMC local runtime
+.omc/
+**/.omc/
+
+# Claude agent worktrees
+.claude/worktrees/
+
+# SQL / debug logs
+*-sql.log
+
+# Monitoring baselines (generated artifacts)
+docs/monitoring/baselines/
+
+# Env files (secrets)
+.env
+**/.env
+!.env.example
+!**/.env.example

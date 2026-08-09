@@ -1,0 +1,12 @@
+# [BS-30 모니터링] Prometheus 수집 설정 (부하테스트 시 5s 촘촘 수집)
+global:
+  scrape_interval: 5s        # 부하 줄 때 촘촘히 보려고 5초마다 수집
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'booster-backend'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      # 백엔드는 호스트(로컬)에서 gradlew bootRun 또는 8080 published 컨테이너로 실행한다고 가정.
+      # Docker Desktop(Windows/Mac)에서 컨테이너->호스트 접근은 host.docker.internal 사용.
+      - targets: ['host.docker.internal:8080']

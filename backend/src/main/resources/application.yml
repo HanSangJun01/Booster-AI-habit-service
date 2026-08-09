@@ -1,0 +1,88 @@
+spring:
+  # (BS-39 I5) Pageable 바인딩 전역 상한. 예전엔 B축의 raw Pageable 엔드포인트
+  # (GET /api/challenges, GET /teams/{id}/chat)가 size=1000000도 그대로 받았다.
+  # A축 코인내역(F9)과 동일하게 100으로 클램프한다. 모든 Pageable 엔드포인트에 일괄 적용.
+  data:
+    web:
+      pageable:
+        max-page-size: 100
+        default-page-size: 20
+  datasource:
+    url: "${DB_URL:jdbc:postgresql://localhost:5432/booster?socketTimeout=30&tcpKeepAlive=true}"
+    username: ${DB_USERNAME:booster}
+    password: ${DB_PASSWORD:booster}
+    driver-class-name: org.postgresql.Driver
+    # [BS-30 ②] 커넥션풀 크기 명시. 기본 10으로는 500VU 부하에서 Hikari pending 189 관측.
+    # DB max_connections(기본 100)와 인스턴스 수를 함께 고려(pool × 인스턴스 ≤ max_connections).
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:30}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: 5000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        default_batch_fetch_size: 100
+        generate_statistics: false
+        # 지정 ms보다 느린 쿼리를 org.hibernate.SQL_SLOW 로 자동 로깅 → 느린 쿼리 색출
+        session:
+          events:
+            log:
+              LOG_QUERIES_SLOWER_THAN_MS: 100
+      jakarta.persistence.query.timeout: 30000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+
+jwt:
+  # 운영 환경에서는 반드시 JWT_SECRET 환경변수로 256비트 이상 시크릿을 주입한다.
+  secret: ${JWT_SECRET:booster-local-dev-secret-key-please-change-in-production-0123456789}
+  access-token-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:86400000}
+
+booster:
+  # 스트릭 보상: 7일마다 반복 지급(true) / 최초 7일 1회만(false). bs-25 확정: 반복.
+  streak:
+    reward-repeat: ${STREAK_REWARD_REPEAT:true}
+    reward-interval-days: 7
+    reward-coins: 100
+  coin:
+    signup-bonus: 500
+    recovery-success-penalty: 50
+    recovery-failure-penalty: 100
+
+logging:
+  level:
+    com.booster: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.stat: WARN
+    # 느린 쿼리만 INFO로 노출(전체 SQL은 WARN로 막아 부하테스트 로그 폭주 방지)
+    org.hibernate.SQL_SLOW: INFO
+
+# [BS-30 계기판] Actuator 노출 설정
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info, metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: booster
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        hikaricp.connections.acquire: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+      slo:
+        http.server.requests: 100ms, 300ms, 500ms, 1s

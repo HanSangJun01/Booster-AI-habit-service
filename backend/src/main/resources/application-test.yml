@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    properties:
+      hibernate:
+        # 기본 프로파일(application.yml)의 PostgreSQLDialect 속성을 H2용으로 오버라이드.
+        # (PostgreSQLDialect는 PESSIMISTIC_WRITE에 'for no key update'를 생성 → H2 미지원)
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false
+
+jwt:
+  secret: test-secret-key-for-junit-only-0123456789-0123456789-0123456789
+  access-token-expiration-ms: 86400000
+
+booster:
+  streak:
+    reward-repeat: true
+    reward-interval-days: 7
+    reward-coins: 100
+  coin:
+    signup-bonus: 500
+    recovery-success-penalty: 50
+    recovery-failure-penalty: 100
