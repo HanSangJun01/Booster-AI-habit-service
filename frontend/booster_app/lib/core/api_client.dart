@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'session.dart';
 
@@ -40,8 +41,21 @@ class ApiException implements Exception {
 class ApiClient {
   /// `--dart-define=API_BASE_URL=...`로 덮어쓸 수 있다. 기본값은 안드로이드
   /// 에뮬레이터에서 호스트 PC의 localhost:8080을 가리킨다.
-  static const String baseUrl =
+  static const String _defaultBaseUrl =
       String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:8080/api');
+
+  static String? _baseUrlOverride;
+
+  /// 실제로 요청이 나가는 주소.
+  static String get baseUrl => _baseUrlOverride ?? _defaultBaseUrl;
+
+  /// 테스트가 띄운 임시 서버로 요청을 돌리기 위한 통로.
+  ///
+  /// 테스트 서버는 포트 충돌을 피하려고 빈 포트를 받아 뜨기 때문에 주소가
+  /// 매번 달라진다. `--dart-define`은 컴파일 타임이라 그걸 가리킬 수 없다.
+  /// null을 넘기면 원래 값으로 돌아간다.
+  @visibleForTesting
+  static void overrideBaseUrl(String? value) => _baseUrlOverride = value;
 
   /// 응답 대기 상한. 인증 바텀시트처럼 요청이 끝날 때까지 닫히지 않는 화면이
   /// 있어서, 상한이 없으면 응답 없는 서버에 화면이 영영 묶인다.
