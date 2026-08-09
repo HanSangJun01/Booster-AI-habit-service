@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../core/session.dart';
+import '../../core/api_client.dart';
+import '../../services/auth_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
@@ -7,7 +8,11 @@ import 'signup_screen.dart';
 
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// 토큰 만료로 되돌아온 경우 true. 사용자는 자기가 왜 로그인 화면에 와 있는지
+  /// 모르기 때문에, 그냥 빈 화면을 보여주면 앱이 튕긴 것처럼 느낀다.
+  final bool sessionExpired;
+
+  const LoginScreen({super.key, this.sessionExpired = false});
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -19,6 +24,14 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscure = true;
   bool _loading = false;
   String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.sessionExpired) {
+      _errorText = '로그인이 만료됐어요. 다시 로그인해주세요';
+    }
+  }
 
   @override
   void dispose() {
@@ -34,26 +47,22 @@ class _LoginScreenState extends State<LoginScreen> {
       _errorText = null;
     });
     try {
-      await _login(_emailCtrl.text.trim(), _passwordCtrl.text);
+      await AuthService.login(_emailCtrl.text.trim(), _passwordCtrl.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const MainScaffold()),
         (route) => false,
       );
+    } on ApiException catch (e) {
+      // 서버에 닿지 못한 경우(statusCode == null)와 자격증명 오류를 구분해서
+      // 보여준다 — 서버가 안 떠 있는데 "비밀번호가 틀렸다"고 하면 헤맨다.
+      setState(() => _errorText =
+          e.statusCode == null ? e.message : '이메일 또는 비밀번호가 올바르지 않습니다');
     } catch (_) {
-      setState(() => _errorText = '이메일 또는 비밀번호가 올바르지 않습니다');
+      setState(() => _errorText = '로그인 중 문제가 발생했어요. 다시 시도해주세요');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  /// 백엔드 로그인 API 연동 지점 (POST /api/auth/login).
-  /// 현재는 목업으로 항상 성공 처리하며, 응답의 userId 자리에 임시값(1)을 채운다.
-  /// 실제 연동 시 ApiClient.post('/auth/login', body: {...})의 data.userId /
-  /// data.nickname / data.accessToken으로 교체한다.
-  Future<void> _login(String email, String password) async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    Session.set(userId: 1, nickname: email.split('@').first);
   }
 
   @override

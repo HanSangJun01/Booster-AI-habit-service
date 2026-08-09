@@ -1,24 +1,26 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
+import '../../core/location.dart';
+import '../../core/session.dart';
 import '../../models/challenge.dart';
 import '../../models/check_in.dart';
-import '../../models/team.dart';
+import '../../models/personal_location.dart';
+import '../../models/recovery.dart';
 import '../../services/challenge_service.dart';
-import '../../services/team_service.dart';
+import '../../services/personal_service.dart';
+import '../../services/recovery_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import '../home/personal_create_screen.dart';
 import '../main_scaffold.dart';
 
-/// 팀 하나의 인증 카드에 필요한 데이터 묶음. 팀에 진행 중인 챌린지가 아직
-/// 없으면(정원 미달 등) challenge가 null이고 checkIns는 비어 있다.
-class _TeamChallengeInfo {
-  final Team team;
-  final Challenge? challenge;
-  final List<CheckIn> checkIns;
-  _TeamChallengeInfo({required this.team, required this.challenge, required this.checkIns});
-}
-
+/// 인증 화면. 세 갈래가 있다:
+/// - 개인 습관 인증 — `POST /api/personal/check-in`
+/// - 복귀 미션 — `POST /api/personal/recovery` (놓친 날이 있을 때만)
+/// - 팀 챌린지 인증 — `POST /api/challenges/{challengeId}/check-ins`
+///
+/// 세 경우 모두 체크인 생성과 GPS 판정이 **한 번의 호출**로 끝난다. 예전
+/// 스펙의 "체크인 생성 → 인증 제출" 2단계 구조는 백엔드에 존재하지 않는다.
 class VerifyScreen extends StatefulWidget {
   const VerifyScreen({super.key});
   @override
@@ -27,9 +29,16 @@ class VerifyScreen extends StatefulWidget {
 
 class _VerifyScreenState extends State<VerifyScreen> {
   bool _loading = true;
+  TodayStatus? _today;
+  PersonalLocation? _location;
+  RecoveryStatus _recovery = RecoveryStatus.none;
+
+  /// 참여 중인 팀 챌린지. 백엔드에 "내가 참여 중인 챌린지 목록" 엔드포인트가
+  /// 없어서(GET /api/challenges는 공개 챌린지 검색이다), 이번 세션에서 참가
+  /// 하거나 연 챌린지만 Session으로 추적한다. 앱을 재시작하면 사라진다.
   Challenge? _challenge;
-  List<CheckIn> _checkIns = [];
-  List<_TeamChallengeInfo> _teamInfos = [];
+  List<CheckIn> _challengeCheckIns = [];
+
   bool _didInitialLoad = false;
   int? _lastActiveTabIndex;
 
@@ -42,9 +51,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // MainScaffold는 탭을 IndexedStack으로 유지해서, 인증 탭을 한 번 연 뒤엔
-    // 다른 탭(팀 생성 등)에서 상태가 바뀌어도 initState가 다시 안 불린다.
-    // 인증 탭(index 2)이 "새로 활성화"될 때마다 다시 불러와서 최신 상태를 본다.
+    // MainScaffold가 탭을 IndexedStack으로 유지해서 initState가 다시 안 불린다.
+    // 인증 탭(index 2)이 새로 활성화될 때마다 최신 상태를 다시 읽는다.
     const verifyTabIndex = 2;
     final current = MainNavScope.of(context).current;
     if (_didInitialLoad && current == verifyTabIndex && _lastActiveTabIndex != verifyTabIndex) {
@@ -57,148 +65,119 @@ class _VerifyScreenState extends State<VerifyScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final challenge = await ChallengeService.fetchActiveChallenge();
-      final checkIns = challenge == null
-          ? <CheckIn>[]
-          : await ChallengeService.fetchCheckIns(challenge.challengeId);
-      final teams = await TeamService.fetchMyTeams();
-      final teamInfos = <_TeamChallengeInfo>[];
-      for (final team in teams) {
-        final teamChallenge = await ChallengeService.fetchActiveChallengeForTeam(team.teamId);
-        final teamCheckIns = teamChallenge == null
-            ? <CheckIn>[]
-            : await ChallengeService.fetchCheckIns(teamChallenge.challengeId);
-        teamInfos.add(_TeamChallengeInfo(
-            team: team, challenge: teamChallenge, checkIns: teamCheckIns));
+      final results = await Future.wait([
+        PersonalService.fetchToday(),
+        PersonalService.fetchLocation(),
+        RecoveryService.fetchStatus(),
+      ]);
+      Challenge? challenge;
+      var challengeCheckIns = <CheckIn>[];
+      final challengeId = Session.currentChallengeId;
+      if (challengeId != null) {
+        challenge = await ChallengeService.fetchDetail(challengeId);
+        challengeCheckIns = await ChallengeService.fetchCheckIns(challengeId);
       }
       if (!mounted) return;
       setState(() {
+        _today = results[0] as TodayStatus;
+        _location = results[1] as PersonalLocation?;
+        _recovery = results[2] as RecoveryStatus;
         _challenge = challenge;
-        _checkIns = checkIns;
-        _teamInfos = teamInfos;
+        _challengeCheckIns = challengeCheckIns;
         _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      if (e.statusCode != null) showBoosterToast(context, e.message);
-      setState(() {
-        _challenge = null;
-        _checkIns = [];
-        _teamInfos = [];
-        _loading = false;
-      });
+      showBoosterToast(context, e.message);
+      setState(() => _loading = false);
     }
   }
 
-  String get _today {
-    final now = DateTime.now();
-    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-'
-        '${now.day.toString().padLeft(2, '0')}';
+  /// 팀 챌린지에서 내가 오늘 인증했는지. 서버가 팀 전체 체크인을 주므로
+  /// 내 참가자 기록만 골라야 하는데, 참가자 id를 앱이 들고 있지 않아
+  /// 오늘 날짜의 성공 기록 존재 여부로 판단한다.
+  bool get _teamDoneToday {
+    final today = DateTime.now();
+    return _challengeCheckIns.any((c) {
+      final date = c.checkInDate;
+      return date != null &&
+          date.year == today.year &&
+          date.month == today.month &&
+          date.day == today.day &&
+          c.isSuccess;
+    });
   }
 
-  bool get _doneToday => _checkIns.any((c) => c.checkInDate == _today);
+  // ───────────────────────── 인증 실행 ─────────────────────────
 
-  int get _currentStreak {
-    final success = _checkIns.where((c) => c.isSuccess).map((c) => c.date).toSet();
-    var day = DateTime.now();
-    var streak = 0;
-    while (success.contains(DateTime(day.year, day.month, day.day))) {
-      streak++;
-      day = day.subtract(const Duration(days: 1));
+  /// 개인 습관 인증.
+  Future<void> _startPersonalVerify() async {
+    if (_location == null) {
+      await _promptLocationSetup();
+      return;
     }
-    return streak;
+    final passed = await _runVerifySheet((latitude, longitude) async {
+      final result = await PersonalService.checkIn(
+        latitude: latitude,
+        longitude: longitude,
+      );
+      return result.isSuccess;
+    });
+    if (passed == null || !mounted) return;
+    await _load();
   }
 
-  int get _totalSuccessCount => _checkIns.where((c) => c.isSuccess).length;
+  /// 복귀 미션 수행.
+  Future<void> _startRecovery() async {
+    if (_location == null) {
+      await _promptLocationSetup();
+      return;
+    }
+    final passed = await _runVerifySheet((latitude, longitude) async {
+      final result = await RecoveryService.perform(
+        latitude: latitude,
+        longitude: longitude,
+      );
+      return result.isCompleted;
+    });
+    if (passed == null || !mounted) return;
+    await _load();
+  }
 
-  Future<void> _startGpsVerify() async {
-    final challenge = _challenge;
-    if (challenge == null) return;
-    final ok = await showModalBottomSheet<bool>(
+  /// 팀 챌린지 인증.
+  Future<void> _startTeamVerify(Challenge challenge) async {
+    final passed = await _runVerifySheet((latitude, longitude) async {
+      final checkIn = await ChallengeService.checkIn(
+        challenge.id,
+        latitude: latitude,
+        longitude: longitude,
+      );
+      return checkIn.isSuccess;
+    });
+    if (passed == null || !mounted) return;
+    await _load();
+  }
+
+  Future<bool?> _runVerifySheet(
+      Future<bool> Function(double latitude, double longitude) onSubmit) {
+    return showModalBottomSheet<bool>(
       context: context,
       isDismissible: false,
       enableDrag: false,
       backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(.5),
-      builder: (_) => const _GpsVerifySheet(),
+      barrierColor: Colors.black.withValues(alpha: .5),
+      builder: (_) => _GpsVerifySheet(onSubmit: onSubmit),
     );
-    if (ok != true || !mounted) return;
-
-    try {
-      final checkIn = await ChallengeService.createCheckIn(challenge.challengeId);
-      final passed = await ChallengeService.submitGpsVerification(checkIn.checkInId);
-      if (!mounted) return;
-      setState(() {
-        _checkIns = [
-          ..._checkIns,
-          CheckIn(
-            checkInId: checkIn.checkInId,
-            checkInDate: checkIn.checkInDate,
-            status: passed ? 'SUCCESS' : 'FAILED',
-          ),
-        ];
-      });
-      showBoosterToast(
-          context, passed ? '오늘 인증을 완료했어요! 🔥' : '인증 반경을 벗어났어요. 다시 시도해주세요.');
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      showBoosterToast(context, e.message);
-    }
   }
 
-  bool _doneTodayFor(List<CheckIn> checkIns) => checkIns.any((c) => c.checkInDate == _today);
-
-  int _currentStreakFor(List<CheckIn> checkIns) {
-    final success = checkIns.where((c) => c.isSuccess).map((c) => c.date).toSet();
-    var day = DateTime.now();
-    var streak = 0;
-    while (success.contains(DateTime(day.year, day.month, day.day))) {
-      streak++;
-      day = day.subtract(const Duration(days: 1));
-    }
-    return streak;
+  /// 인증 기준 위치가 없으면 개인 인증 자체가 불가능하다 — 등록 화면으로 보낸다.
+  Future<void> _promptLocationSetup() async {
+    final created = await Navigator.of(context).push<PersonalLocation>(
+        MaterialPageRoute(builder: (_) => const PersonalCreateScreen()));
+    if (created != null && mounted) await _load();
   }
 
-  Future<void> _startTeamGpsVerify(_TeamChallengeInfo info) async {
-    final challenge = info.challenge;
-    if (challenge == null) return;
-    final ok = await showModalBottomSheet<bool>(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(.5),
-      builder: (_) => const _GpsVerifySheet(),
-    );
-    if (ok != true || !mounted) return;
-
-    try {
-      final checkIn = await ChallengeService.createCheckIn(challenge.challengeId);
-      final passed = await ChallengeService.submitGpsVerification(checkIn.checkInId);
-      if (!mounted) return;
-      setState(() {
-        final idx = _teamInfos.indexWhere((i) => i.team.teamId == info.team.teamId);
-        if (idx == -1) return;
-        _teamInfos[idx] = _TeamChallengeInfo(
-          team: info.team,
-          challenge: challenge,
-          checkIns: [
-            ...info.checkIns,
-            CheckIn(
-              checkInId: checkIn.checkInId,
-              checkInDate: checkIn.checkInDate,
-              status: passed ? 'SUCCESS' : 'FAILED',
-            ),
-          ],
-        );
-      });
-      showBoosterToast(
-          context, passed ? '오늘 팀 인증을 완료했어요! 🔥' : '인증 반경을 벗어났어요. 다시 시도해주세요.');
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      showBoosterToast(context, e.message);
-    }
-  }
+  // ───────────────────────── 화면 ─────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -212,30 +191,35 @@ class _VerifyScreenState extends State<VerifyScreen> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator(color: BC.oMain))
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-                      children: [
-                        const Text('오늘의 인증',
-                            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 6),
-                        const Text('참여 중인 챌린지에서 인증을 완료해 보세요.',
-                            style: TextStyle(fontSize: 13.5, color: BC.ink2)),
-                        const SizedBox(height: 22),
-                        _sectionTitle(Icons.person_rounded, BC.oMain, BC.oSoft, '개인 챌린지',
-                            _challenge == null ? '0' : '1'),
-                        const SizedBox(height: 12),
-                        _challenge == null ? _noPersonalChallenge() : _personalCard(_challenge!),
-                        if (_teamInfos.isNotEmpty) ...[
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      color: BC.oMain,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                        children: [
+                          const Text('오늘의 인증',
+                              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 6),
+                          const Text('등록한 장소에서 GPS로 인증해 보세요.',
+                              style: TextStyle(fontSize: 13.5, color: BC.ink2)),
+                          const SizedBox(height: 22),
+                          if (_recovery.hasPendingMission) ...[
+                            _recoveryCard(),
+                            const SizedBox(height: 24),
+                          ],
+                          _sectionTitle(Icons.person_rounded, BC.oMain, BC.oSoft, '개인 습관',
+                              _location == null ? '0' : '1'),
+                          const SizedBox(height: 12),
+                          _personalCard(),
                           const SizedBox(height: 24),
                           _sectionTitle(Icons.groups_rounded, BC.blue, BC.blueSoft, '팀 챌린지',
-                              '${_teamInfos.length}'),
+                              _challenge == null ? '0' : '1'),
                           const SizedBox(height: 12),
-                          for (final info in _teamInfos) ...[
-                            _teamCard(info),
-                            const SizedBox(height: 12),
-                          ],
+                          _challenge == null
+                              ? _noTeamChallenge()
+                              : _teamCard(_challenge!),
                         ],
-                      ],
+                      ),
                     ),
             ),
             const BoosterBottomNav(),
@@ -267,24 +251,93 @@ class _VerifyScreenState extends State<VerifyScreen> {
     );
   }
 
-  Widget _noPersonalChallenge() {
+  /// 복귀 미션 배너. 데드라인이 실제 서버 값(`deadlineAt`)이라 남은 시간을
+  /// 그대로 보여줄 수 있다.
+  Widget _recoveryCard() {
+    final remaining = _recovery.remaining;
+    final missed = _recovery.missedDate;
     return AppCard(
-      child: Column(
-        children: [
-          const Icon(Icons.add_circle_outline_rounded, size: 32, color: BC.ink3),
-          const SizedBox(height: 8),
-          const Text('진행 중인 개인 챌린지가 없어요',
-              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: BC.ink2)),
-          const SizedBox(height: 4),
-          const Text('홈 화면에서 챌린지를 먼저 만들어보세요.',
-              style: TextStyle(fontSize: 12.5, color: BC.ink3)),
-        ],
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(width: 5, color: BC.blue),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.refresh_rounded, size: 19, color: BC.blue),
+                          const SizedBox(width: 7),
+                          const Text('복귀 미션',
+                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                          const Spacer(),
+                          MiniTag(
+                            remaining == null
+                                ? '기한 지남'
+                                : '${remaining.inHours}시간 남음',
+                            bg: BC.blueSoft,
+                            fg: BC.blue,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        missed == null
+                            ? '놓친 인증을 만회할 수 있어요.'
+                            : '${missed.month}월 ${missed.day}일 인증을 놓쳤어요. 지금 만회할 수 있어요.',
+                        style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.4),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text('복귀에 성공하면 50코인, 기한을 넘기면 100코인이 차감돼요.',
+                          style: TextStyle(fontSize: 12, color: BC.ink3)),
+                      const SizedBox(height: 14),
+                      PrimaryButton(
+                        label: '복귀 미션 수행하기',
+                        leadingIcon: Icons.refresh_rounded,
+                        onTap: _startRecovery,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _personalCard(Challenge challenge) {
-    final done = _doneToday;
+  Widget _personalCard() {
+    if (_location == null) {
+      return AppCard(
+        child: Column(
+          children: [
+            const Icon(Icons.place_outlined, size: 32, color: BC.ink3),
+            const SizedBox(height: 8),
+            const Text('인증 장소가 없어요',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: BC.ink2)),
+            const SizedBox(height: 4),
+            const Text('장소를 등록해야 GPS 인증을 할 수 있어요.',
+                style: TextStyle(fontSize: 12.5, color: BC.ink3)),
+            const SizedBox(height: 14),
+            PrimaryButton(
+              label: '인증 장소 등록하기',
+              leadingIcon: Icons.place_rounded,
+              onTap: _promptLocationSetup,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final location = _location!;
+    final done = _today?.isDone ?? false;
     return AppCard(
       padding: EdgeInsets.zero,
       child: ClipRRect(
@@ -302,7 +355,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
                       Row(
                         children: [
                           Expanded(
-                            child: Text(challenge.title,
+                            child: Text(location.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     fontSize: 17, fontWeight: FontWeight.w800)),
                           ),
@@ -311,34 +366,21 @@ class _VerifyScreenState extends State<VerifyScreen> {
                       ),
                       const SizedBox(height: 10),
                       Container(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                         decoration: BoxDecoration(
                             color: BC.oSoft, borderRadius: BorderRadius.circular(8)),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            Icon(Icons.location_on_rounded, size: 14, color: BC.oMain),
-                            SizedBox(width: 4),
-                            Text('GPS 위치 인증',
-                                style: TextStyle(
+                          children: [
+                            const Icon(Icons.location_on_rounded, size: 14, color: BC.oMain),
+                            const SizedBox(width: 4),
+                            Text('반경 ${location.radiusMeters}m 안에서 인증',
+                                style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
                                     color: BC.oMain)),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          _meta('연속 인증', '$_currentStreak', '일'),
-                          Container(
-                              width: 1,
-                              height: 34,
-                              color: BC.line,
-                              margin: const EdgeInsets.symmetric(horizontal: 14)),
-                          _meta('누적 인증', '$_totalSuccessCount', '회'),
-                        ],
                       ),
                       const SizedBox(height: 16),
                       done
@@ -346,7 +388,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                           : PrimaryButton(
                               label: '인증하기',
                               leadingIcon: Icons.location_on_rounded,
-                              onTap: _startGpsVerify,
+                              onTap: _startPersonalVerify,
                             ),
                     ],
                   ),
@@ -359,32 +401,96 @@ class _VerifyScreenState extends State<VerifyScreen> {
     );
   }
 
-  Widget _meta(String label, String val, String unit) {
-    return Row(
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
-          child: const Icon(Icons.local_fire_department_rounded, size: 19, color: BC.oMain),
-        ),
-        const SizedBox(width: 9),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: const TextStyle(fontSize: 11.5, color: BC.ink3)),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(val,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                Text(unit, style: const TextStyle(fontSize: 12, color: BC.ink2)),
-              ],
+  Widget _noTeamChallenge() {
+    return AppCard(
+      child: Column(
+        children: const [
+          Icon(Icons.groups_outlined, size: 32, color: BC.ink3),
+          SizedBox(height: 8),
+          Text('참여 중인 팀 챌린지가 없어요',
+              style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: BC.ink2)),
+          SizedBox(height: 4),
+          Text('팀 탭에서 챌린지를 만들거나 참여해보세요.',
+              style: TextStyle(fontSize: 12.5, color: BC.ink3)),
+        ],
+      ),
+    );
+  }
+
+  Widget _teamCard(Challenge challenge) {
+    final done = _teamDoneToday;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(challenge.category,
+                        style: const TextStyle(fontSize: 13, color: BC.ink3)),
+                    Text(challenge.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+              _statusPill(done),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(Icons.calendar_today_rounded, size: 15, color: BC.blue),
+              const SizedBox(width: 5),
+              Text(
+                challenge.currentDay == null
+                    ? '시작 전 · 총 ${challenge.durationDays}일'
+                    : '${challenge.currentDay}일차 / ${challenge.durationDays}일',
+                style: const TextStyle(
+                    fontSize: 12.5, color: BC.ink2, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (!challenge.isActive)
+            Container(
+              height: 50,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: BC.bg, borderRadius: BorderRadius.circular(14)),
+              child: Text(
+                  challenge.isReady ? '아직 시작되지 않았어요' : '종료된 챌린지예요',
+                  style: const TextStyle(
+                      color: BC.ink3, fontSize: 14.5, fontWeight: FontWeight.w700)),
+            )
+          else if (done)
+            _doneButton()
+          else
+            GestureDetector(
+              onTap: () => _startTeamVerify(challenge),
+              child: Container(
+                height: 50,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                    color: BC.blueSoft, borderRadius: BorderRadius.circular(14)),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.location_on_rounded, size: 19, color: BC.blue),
+                    SizedBox(width: 7),
+                    Text('인증하기',
+                        style: TextStyle(
+                            color: BC.blue, fontSize: 15, fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
             ),
-          ],
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -414,8 +520,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
     return Container(
       height: 56,
       alignment: Alignment.center,
-      decoration: BoxDecoration(
-          color: BC.greenSoft, borderRadius: BorderRadius.circular(16)),
+      decoration:
+          BoxDecoration(color: BC.greenSoft, borderRadius: BorderRadius.circular(16)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: const [
@@ -427,184 +533,226 @@ class _VerifyScreenState extends State<VerifyScreen> {
       ),
     );
   }
-
-  // 참여율·상대팀 VS 대결 통계는 배틀/랭킹 관련 API가 없어서 아직 못 채운다.
-  // 체크인(인증) 자체는 개인 챌린지와 동일한 API로 실제 연동돼 있다.
-  Widget _teamCard(_TeamChallengeInfo info) {
-    final team = info.team;
-    final challenge = info.challenge;
-
-    if (challenge == null) {
-      return AppCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(team.name,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                ),
-                MiniTag(team.isFull ? '배틀 진행 중' : '팀원 모집 중',
-                    bg: team.isFull ? BC.oSoft : BC.blueSoft,
-                    fg: team.isFull ? BC.oMain : BC.blue),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              team.isFull ? '아직 팀 챌린지가 생성되지 않았어요.' : '팀원이 다 모이면 배틀과 함께 인증이 시작돼요.',
-              style: const TextStyle(fontSize: 13, color: BC.ink2),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final done = _doneTodayFor(info.checkIns);
-    final streak = _currentStreakFor(info.checkIns);
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(team.name,
-                        style: const TextStyle(fontSize: 13, color: BC.ink3)),
-                    Text(challenge.title,
-                        style:
-                            const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                  ],
-                ),
-              ),
-              _statusPill(done),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Icon(Icons.local_fire_department_rounded, size: 16, color: BC.blue),
-              const SizedBox(width: 5),
-              Text('연속 인증 $streak일',
-                  style: const TextStyle(fontSize: 12.5, color: BC.ink2, fontWeight: FontWeight.w600)),
-            ],
-          ),
-          const SizedBox(height: 14),
-          done
-              ? _doneButton()
-              : GestureDetector(
-                  onTap: () => _startTeamGpsVerify(info),
-                  child: Container(
-                    height: 50,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                        color: BC.blueSoft, borderRadius: BorderRadius.circular(14)),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.location_on_rounded, size: 19, color: BC.blue),
-                        SizedBox(width: 7),
-                        Text('인증하기',
-                            style: TextStyle(
-                                color: BC.blue, fontSize: 15, fontWeight: FontWeight.w800)),
-                      ],
-                    ),
-                  ),
-                ),
-        ],
-      ),
-    );
-  }
 }
 
-/// GPS 인증 바텀시트: 탐지 → 매칭 → 성공
+/// 인증 바텀시트가 지나가는 단계.
+enum _VerifyStage {
+  /// 기기 GPS 좌표를 받아오는 중.
+  locating,
+
+  /// 받은 좌표로 서버에 인증을 제출하는 중.
+  submitting,
+
+  /// 서버 판정 = 성공.
+  passed,
+
+  /// 서버 판정 = 실패(반경 밖 등).
+  failed,
+
+  /// 위치를 못 받았거나 서버 요청이 실패해서 판정까지 못 감.
+  error,
+}
+
+/// GPS 인증 바텀시트: 기기 위치 탐지 → 서버 제출 → 서버가 준 판정 표시.
+///
+/// 좌표는 [LocationService]로 실제 기기에서 받고, 성공/실패는 서버 응답
+/// 그대로다 — 시트가 자체적으로 성공을 만들어내지 않는다.
+///
+/// pop 값: 성공 true / 실패 false / 제출까지 못 감 null.
 class _GpsVerifySheet extends StatefulWidget {
-  const _GpsVerifySheet();
+  /// 실제 기기 좌표를 받아 인증을 제출하고, 서버 판정을 돌려준다.
+  final Future<bool> Function(double latitude, double longitude) onSubmit;
+
+  const _GpsVerifySheet({required this.onSubmit});
+
   @override
   State<_GpsVerifySheet> createState() => _GpsVerifySheetState();
 }
 
 class _GpsVerifySheetState extends State<_GpsVerifySheet> with SingleTickerProviderStateMixin {
-  int stage = 0; // 0 탐지, 1 매칭, 2 성공
+  _VerifyStage _stage = _VerifyStage.locating;
   late final AnimationController _ctrl;
-  Timer? _t1, _t2;
-
-  static const _titles = ['위치를 탐지하고 있어요', '등록한 장소와 맞춰보는 중', '인증 완료!'];
-  static const _subs = [
-    'GPS 신호를 받아오는 중이에요…',
-    '서울 서초구 반포한강공원',
-    '오늘의 인증이 기록됐어요',
-  ];
+  double? _latitude;
+  double? _longitude;
+  String _errorMessage = '';
+  bool _needsAppSettings = false;
 
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
-    _t1 = Timer(const Duration(milliseconds: 1600), () {
-      if (mounted) setState(() => stage = 1);
-    });
-    _t2 = Timer(const Duration(milliseconds: 3200), () {
-      if (mounted) {
-        _ctrl.stop();
-        setState(() => stage = 2);
-      }
+    _run();
+  }
+
+  /// 위치 탐지 → 제출 → 판정. 실패는 전부 error 단계로 모아 사유를 보여준다.
+  Future<void> _run() async {
+    try {
+      final position = await LocationService.current();
+      if (!mounted) return;
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _stage = _VerifyStage.submitting;
+      });
+
+      final passed = await widget.onSubmit(position.latitude, position.longitude);
+      if (!mounted) return;
+      _ctrl.stop();
+      setState(() => _stage = passed ? _VerifyStage.passed : _VerifyStage.failed);
+    } on LocationException catch (e) {
+      _fail(e.message, needsAppSettings: e.needsAppSettings);
+    } on ApiException catch (e) {
+      _fail(e.message);
+    } catch (_) {
+      // 시트는 결과가 나올 때까지 닫히지 않으므로, 예상 못 한 예외(응답 형식이
+      // 계약과 다를 때의 캐스팅 오류 등)까지 반드시 여기서 받아야 한다.
+      // 안 그러면 "인증 처리 중…"에서 영영 멈춘다.
+      _fail('인증을 처리하지 못했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
+  void _fail(String message, {bool needsAppSettings = false}) {
+    if (!mounted) return;
+    _ctrl.stop();
+    setState(() {
+      _errorMessage = message;
+      _needsAppSettings = needsAppSettings;
+      _stage = _VerifyStage.error;
     });
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
-    _t1?.cancel();
-    _t2?.cancel();
     super.dispose();
+  }
+
+  String get _title {
+    switch (_stage) {
+      case _VerifyStage.locating:
+        return '위치를 탐지하고 있어요';
+      case _VerifyStage.submitting:
+        return '등록한 장소와 맞춰보는 중';
+      case _VerifyStage.passed:
+        return '인증 완료!';
+      case _VerifyStage.failed:
+        return '인증 반경을 벗어났어요';
+      case _VerifyStage.error:
+        return '인증을 진행할 수 없어요';
+    }
+  }
+
+  String get _subtitle {
+    switch (_stage) {
+      case _VerifyStage.locating:
+        return 'GPS 신호를 받아오는 중이에요…';
+      case _VerifyStage.submitting:
+        final lat = _latitude;
+        final lng = _longitude;
+        return lat == null || lng == null
+            ? '위치를 확인했어요'
+            : '위도 ${lat.toStringAsFixed(5)}, 경도 ${lng.toStringAsFixed(5)}';
+      case _VerifyStage.passed:
+        return '오늘의 인증이 기록됐어요';
+      case _VerifyStage.failed:
+        return '등록한 장소 근처에서 다시 시도해주세요';
+      case _VerifyStage.error:
+        return _errorMessage;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final inProgress =
+        _stage == _VerifyStage.locating || _stage == _VerifyStage.submitting;
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          24, 16, 24, 28 + MediaQuery.of(context).padding.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-                color: BC.line, borderRadius: BorderRadius.circular(3)),
-          ),
-          const SizedBox(height: 30),
-          SizedBox(height: 150, child: stage < 2 ? _radar() : _success()),
-          const SizedBox(height: 26),
-          Text(_titles[stage],
-              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          Text(_subs[stage],
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13.5, color: BC.ink2)),
-          const SizedBox(height: 28),
-          if (stage == 2)
-            PrimaryButton(
-                label: '확인', onTap: () => Navigator.of(context).pop(true))
-          else
+      padding:
+          EdgeInsets.fromLTRB(24, 16, 24, 28 + MediaQuery.of(context).padding.bottom),
+      // 고정 간격 합계(그래픽 150 + 여백 30/26/28 + 버튼)에 안내 문구가 두 줄이
+      // 되면 작은 화면에서 몇 px씩 넘친다. 스크롤 가능하게 두면 문구 길이나
+      // 화면 크기와 무관하게 안전하다.
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             Container(
-              height: 56,
+              width: 44,
+              height: 5,
+              decoration:
+                  BoxDecoration(color: BC.line, borderRadius: BorderRadius.circular(3)),
+            ),
+            const SizedBox(height: 30),
+            SizedBox(height: 150, child: _graphic(inProgress)),
+            const SizedBox(height: 26),
+            Text(_title,
+                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text(_subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13.5, color: BC.ink2)),
+            const SizedBox(height: 28),
+            _action(inProgress),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _graphic(bool inProgress) {
+    if (inProgress) return _radar();
+    if (_stage == _VerifyStage.passed) return _success();
+    return _problem();
+  }
+
+  Widget _action(bool inProgress) {
+    if (inProgress) {
+      return Container(
+        height: 56,
+        alignment: Alignment.center,
+        decoration:
+            BoxDecoration(color: BC.bg, borderRadius: BorderRadius.circular(16)),
+        child: const Text('인증 처리 중…',
+            style:
+                TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: BC.ink3)),
+      );
+    }
+    if (_stage == _VerifyStage.error && _needsAppSettings) {
+      return Column(
+        children: [
+          PrimaryButton(
+            label: '설정 열기',
+            onTap: () async {
+              await LocationService.openAppSettings();
+              if (mounted) Navigator.of(context).pop();
+            },
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Container(
+              height: 48,
               alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  color: BC.bg, borderRadius: BorderRadius.circular(16)),
-              child: const Text('인증 처리 중…',
+              child: const Text('닫기',
                   style: TextStyle(
                       fontSize: 15, fontWeight: FontWeight.w700, color: BC.ink3)),
             ),
+          ),
         ],
-      ),
+      );
+    }
+    // passed → true, failed → false, error → null(제출 결과 없음).
+    final result = switch (_stage) {
+      _VerifyStage.passed => true,
+      _VerifyStage.failed => false,
+      _ => null,
+    };
+    return PrimaryButton(
+      label: _stage == _VerifyStage.error ? '닫기' : '확인',
+      onTap: () => Navigator.of(context).pop(result),
     );
   }
 
@@ -635,7 +783,7 @@ class _GpsVerifySheetState extends State<_GpsVerifySheet> with SingleTickerProvi
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: BC.oMain.withOpacity((1 - t) * 0.5), width: 2),
+        border: Border.all(color: BC.oMain.withValues(alpha: (1 - t) * 0.5), width: 2),
       ),
     );
   }
@@ -659,6 +807,23 @@ class _GpsVerifySheetState extends State<_GpsVerifySheet> with SingleTickerProvi
               child: const Icon(Icons.check_rounded, color: Colors.white, size: 44),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _problem() {
+    final failed = _stage == _VerifyStage.failed;
+    return Center(
+      child: Container(
+        width: 110,
+        height: 110,
+        decoration: BoxDecoration(
+            color: failed ? BC.oSoft : const Color(0xFFF1F2F5), shape: BoxShape.circle),
+        child: Icon(
+          failed ? Icons.location_off_rounded : Icons.error_outline_rounded,
+          size: 52,
+          color: failed ? BC.oMain : BC.ink3,
         ),
       ),
     );

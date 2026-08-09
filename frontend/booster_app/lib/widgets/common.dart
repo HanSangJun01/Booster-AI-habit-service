@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/session.dart';
 import '../theme/booster_theme.dart';
 
 /// 금화 점 (S/$ 표시)
@@ -32,14 +33,39 @@ class CoinDot extends StatelessWidget {
   }
 }
 
-/// 코인 잔액 알약
+/// 코인 잔액 알약.
+///
+/// [amount]를 주지 않으면 Session에 마지막으로 반영된 잔액을 보여준다.
+/// 체크인·복귀 미션 응답이 갱신된 잔액을 함께 주기 때문에(`coinBalance`),
+/// 별도 조회 없이도 최신 값이 유지된다.
 class CoinPill extends StatelessWidget {
-  final String amount;
-  // TODO: 사용자 전체 코인 잔액 API가 아직 없어 임시 고정값(1,000) 표시.
-  const CoinPill({super.key, this.amount = '1,000'});
+  final String? amount;
+  const CoinPill({super.key, this.amount});
+
+  /// 1234 → "1,234"
+  static String format(int value) {
+    final digits = value.abs().toString();
+    final buffer = StringBuffer(value < 0 ? '-' : '');
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    return buffer.toString();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final fixed = amount;
+    if (fixed != null) return _pill(fixed);
+    // 잔액을 구독한다. 부모가 const라 다시 빌드되지 않아도 값이 바뀌면 여기만
+    // 갱신된다.
+    return ValueListenableBuilder<int>(
+      valueListenable: Session.coinBalanceListenable,
+      builder: (_, value, __) => _pill(format(value)),
+    );
+  }
+
+  Widget _pill(String text) {
     return Container(
       padding: const EdgeInsets.fromLTRB(9, 7, 13, 7),
       decoration: BoxDecoration(
@@ -52,7 +78,7 @@ class CoinPill extends StatelessWidget {
         children: [
           const CoinDot(size: 18),
           const SizedBox(width: 6),
-          Text(amount,
+          Text(text,
               style: const TextStyle(
                   color: BC.oMain, fontWeight: FontWeight.w800, fontSize: 15)),
         ],
@@ -61,11 +87,15 @@ class CoinPill extends StatelessWidget {
   }
 }
 
-/// 알림 벨 + 빨간 배지
+/// 알림 벨 + 빨간 배지.
+///
+/// 백엔드에 알림 API가 없어서(`integration/a-b-axis`에 Notification 컨트롤러
+/// 자체가 없다) 안 읽은 개수를 조회할 방법이 없다. [count]를 명시적으로 넘긴
+/// 경우에만 배지를 띄우고, 기본값은 배지 없음이다.
 class NotificationBell extends StatelessWidget {
   final int count;
   final Color color;
-  const NotificationBell({super.key, this.count = 3, this.color = const Color(0xFF3A3A3E)});
+  const NotificationBell({super.key, this.count = 0, this.color = const Color(0xFF3A3A3E)});
 
   @override
   Widget build(BuildContext context) {
@@ -157,9 +187,19 @@ class BackAppBar extends StatelessWidget {
           Expanded(
             child: Text(title,
                 textAlign: TextAlign.center,
+                // 챌린지 제목을 그대로 넘기는 화면이 있다(team_waiting 등).
+                // 제한이 없으면 긴 제목이 앱바를 두세 줄로 늘린다.
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           ),
-          SizedBox(width: 40, child: Align(alignment: Alignment.centerRight, child: trailing)),
+          // 폭을 40으로 고정하면 trailing이 그보다 넓을 때 잘린다 — CoinPill을
+          // 넘기는 화면들이 실제로 오버플로였다. 40은 trailing이 없을 때 뒤로가기
+          // 버튼과 균형을 맞추기 위한 '최소'값이지 상한이 아니다.
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 40),
+            child: Align(alignment: Alignment.centerRight, child: trailing),
+          ),
         ],
       ),
     );
@@ -213,7 +253,10 @@ class SelectChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 11),
+        // 가로 패딩이 없으면 폭을 스스로 정하는 자리(가로 ListView 등)에서 글자에
+        // 딱 붙어 잘린 것처럼 보인다. Expanded로 감싼 쪽은 폭을 부모가 정하므로
+        // 이 값의 영향을 받지 않는다.
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: selected ? BC.oSoft : Colors.white,
@@ -398,7 +441,7 @@ void showBoosterToast(BuildContext context, String msg) {
   messenger.showSnackBar(SnackBar(
     content: Text(msg, textAlign: TextAlign.center),
     behavior: SnackBarBehavior.floating,
-    backgroundColor: BC.ink.withOpacity(.9),
+    backgroundColor: BC.ink.withValues(alpha: .9),
     duration: const Duration(milliseconds: 1600),
     margin: const EdgeInsets.fromLTRB(40, 0, 40, 110),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

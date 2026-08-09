@@ -1,15 +1,21 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/api_client.dart';
 import '../../core/session.dart';
-import '../../models/team.dart';
-import '../../services/team_service.dart';
+import '../../models/challenge.dart';
+import '../../services/challenge_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
-import 'team_battle_screen.dart';
 import 'team_waiting_screen.dart';
 
+/// 챌린지 생성 — `POST /api/challenges` (`CreateChallengeRequest`).
+///
+/// 예전의 "팀 만들기"가 이것이다. 백엔드에는 팀 생성 API가 없고, 팀은 챌린지에
+/// 사람이 모이면 서버가 편성한다.
+///
+/// 서버가 검증하는 값: durationDays >= 1, depositCoins >= 0,
+/// maxParticipants 2~10, title 200자 이내, category/verificationType/
+/// visibility/approvalType 필수.
 class TeamCreateScreen extends StatefulWidget {
   const TeamCreateScreen({super.key});
   @override
@@ -17,25 +23,33 @@ class TeamCreateScreen extends StatefulWidget {
 }
 
 class _TeamCreateScreenState extends State<TeamCreateScreen> {
-  // 정원은 10명 고정 — 10명이 차면 서버가 랜덤으로 5:5 팀을 구성한다
-  // (docs/.omc/specs/deep-interview-booster.md, MVP 정책). 사용자가 팀
-  // 인원을 고르는 옵션이 아니다.
-  static const _capacity = 10;
-
   int step = 0; // 0 기본, 1 공개설정
-  int freq = 2; // 주 N회 (3회)
+
+  /// 서버는 category를 자유 문자열로 받는다. 자주 쓸 값만 골라 둔다.
+  static const _categories = ['운동', '공부', '독서', '기상'];
+  int _categoryIndex = 0;
+
+  static const _durations = [7, 14, 21, 30];
+  int _durationIndex = 1;
+
+  /// 정원. 서버 제약이 2~10이라 그 안에서 고른다.
+  static const _capacities = [4, 6, 8, 10];
+  int _capacityIndex = 3;
+
   bool isPublic = true;
+
+  /// 참가 승인 방식. AUTO면 신청 즉시 확정, LEADER면 방장이 승인해야 한다.
+  bool _leaderApproval = false;
+
   bool _creating = false;
 
-  final _nameCtrl = TextEditingController();
+  final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _depositCtrl = TextEditingController(text: '300');
 
-  final _freqs = ['1회', '2회', '3회', '4회', '5회', '6회', '7회'];
-
   @override
   void dispose() {
-    _nameCtrl.dispose();
+    _titleCtrl.dispose();
     _descCtrl.dispose();
     _depositCtrl.dispose();
     super.dispose();
@@ -49,7 +63,7 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
         child: Column(
           children: [
             BackAppBar(
-              title: step == 0 ? '팀 만들기' : '공개 설정',
+              title: step == 0 ? '챌린지 만들기' : '공개 설정',
               trailing: const CoinPill(),
             ),
             _stepDots(),
@@ -61,16 +75,14 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
                       label: '다음',
                       trailingIcon: Icons.chevron_right_rounded,
                       onTap: () {
-                        if (_nameCtrl.text.trim().isEmpty) {
-                          showBoosterToast(context, '팀 이름을 입력해주세요');
+                        if (_titleCtrl.text.trim().isEmpty) {
+                          showBoosterToast(context, '챌린지 제목을 입력해주세요');
                           return;
                         }
                         setState(() => step = 1);
                       })
                   : PrimaryButton(
-                      label: _creating
-                          ? '만드는 중...'
-                          : (isPublic ? '팀 만들기' : '방 코드 생성하기'),
+                      label: _creating ? '만드는 중...' : '챌린지 만들기',
                       enabled: !_creating,
                       onTap: _onCreate),
             ),
@@ -136,63 +148,51 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
       children: [
-        _card('1. 팀 이름',
+        _card('1. 챌린지 제목',
             child: TextField(
-              controller: _nameCtrl,
-              maxLength: 20,
-              decoration: _deco('팀 이름을 입력하세요'),
+              controller: _titleCtrl,
+              maxLength: 200,
+              decoration: _deco('예) 매일 아침 러닝'),
             )),
-        _card('2. 소개글',
-            sub: '어떤 팀인지 짧게 소개해 주세요.',
+        _card('2. 카테고리',
+            child: _chipRow(
+                _categories, _categoryIndex, (i) => setState(() => _categoryIndex = i))),
+        _card('3. 소개글',
+            sub: '어떤 챌린지인지 짧게 소개해 주세요.',
             child: TextField(
               controller: _descCtrl,
               maxLines: 3,
-              maxLength: 60,
-              decoration: _deco('예) 매일 30분 운동 인증하는 팀이에요!'),
+              maxLength: 200,
+              decoration: _deco('예) 매일 30분 러닝 인증하는 챌린지예요!'),
             )),
-        _card('3. 주 몇 회',
-            sub: '일주일에 몇 번 인증할까요?',
-            child: _chipRow(_freqs, freq, (i) => setState(() => freq = i))),
-        _card('4. 인증 방법',
-            sub: 'GPS 위치 인증 · 팀 챌린지는 반경 제한 없이 등록 위치에서 인증해요.',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  height: 150,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFD3D7DE)),
+        _card('4. 기간',
+            sub: '며칠 동안 진행할까요?',
+            child: _chipRow([for (final d in _durations) '$d일'], _durationIndex,
+                (i) => setState(() => _durationIndex = i))),
+        _card('5. 정원',
+            sub: '인원이 모이면 서버가 팀을 나눠 대결을 붙여요.',
+            child: _chipRow([for (final c in _capacities) '$c명'], _capacityIndex,
+                (i) => setState(() => _capacityIndex = i))),
+        _card('6. 인증 방법',
+            sub: 'GPS 위치 인증만 지원해요. 인증 위치는 참가할 때 각자 등록해요.',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+              decoration: BoxDecoration(
+                  color: BC.oSoft, borderRadius: BorderRadius.circular(14)),
+              child: Row(
+                children: const [
+                  Icon(Icons.location_on_rounded, color: BC.oMain, size: 22),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text('GPS 위치 인증',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(Icons.location_on_rounded, color: BC.oMain, size: 28),
-                      SizedBox(height: 6),
-                      Text('지도에서 위치 선택',
-                          style: TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF8A8A92))),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: const [
-                    Icon(Icons.location_on_rounded, size: 17, color: BC.oMain),
-                    SizedBox(width: 8),
-                    Text('서울 서초구 반포한강공원',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                  ],
-                ),
-              ],
+                  Icon(Icons.check_circle_rounded, color: BC.oMain, size: 20),
+                ],
+              ),
             )),
-        _card('5. 예치코인',
-            sub: '참여 시 각자 거는 코인이에요.',
+        _card('7. 예치코인',
+            sub: '참가할 때 각자 차감되는 코인이에요. 이긴 팀이 정산에서 나눠 가져요.',
             child: TextField(
               controller: _depositCtrl,
               keyboardType: TextInputType.number,
@@ -212,26 +212,41 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
       children: [
-        _visCard(true, '공개', Icons.public_rounded, '탐색 목록에 노출되고, 누구나 바로 참여할 수 있어요.'),
+        _visCard(true, '공개', Icons.public_rounded, '탐색 목록에 노출돼요. 누구나 찾아서 참여할 수 있어요.'),
         const SizedBox(height: 12),
-        _visCard(false, '비공개', Icons.lock_rounded, '탐색에 노출되지 않아요. 방 코드를 아는 사람만 참여할 수 있어요.'),
+        _visCard(false, '비공개', Icons.lock_rounded, '탐색에 노출되지 않아요. 초대 코드를 아는 사람만 참여할 수 있어요.'),
+        const SizedBox(height: 22),
+        const Text('참가 승인 방식',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        _approvalCard(false, '자동 승인', Icons.bolt_rounded, '신청하면 바로 참가가 확정돼요.'),
+        const SizedBox(height: 12),
+        _approvalCard(true, '방장 승인', Icons.how_to_reg_rounded, '내가 승인해야 참가가 확정돼요.'),
         const SizedBox(height: 18),
         NoteBox(
           icon: Icons.verified_user_rounded,
           child: Text(
               isPublic
-                  ? '공개 팀은 인원이 모이면 바로 배틀이 시작돼요.'
-                  : '비공개 팀을 만들면 방 코드가 생성돼요. 친구에게 코드를 공유해 모아보세요.',
+                  ? '정원이 차면 서버가 팀을 나눠 대결이 시작돼요.'
+                  : '비공개 챌린지를 만들면 초대 코드가 발급돼요. 친구에게 코드를 공유해 모아보세요.',
               style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.5)),
         ),
       ],
     );
   }
 
-  Widget _visCard(bool value, String title, IconData icon, String desc) {
-    final on = isPublic == value;
+  Widget _visCard(bool value, String title, IconData icon, String desc) =>
+      _choiceCard(isPublic == value, title, icon, desc,
+          () => setState(() => isPublic = value));
+
+  Widget _approvalCard(bool value, String title, IconData icon, String desc) =>
+      _choiceCard(_leaderApproval == value, title, icon, desc,
+          () => setState(() => _leaderApproval = value));
+
+  Widget _choiceCard(
+      bool on, String title, IconData icon, String desc, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () => setState(() => isPublic = value),
+      onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
@@ -273,29 +288,35 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
   }
 
   Future<void> _onCreate() async {
-    final depositValue = int.tryParse(_depositCtrl.text.trim());
-    if (depositValue == null || depositValue <= 0) {
+    final deposit = int.tryParse(_depositCtrl.text.trim());
+    if (deposit == null || deposit < 0) {
       showBoosterToast(context, '예치코인을 입력해주세요');
       return;
     }
     setState(() => _creating = true);
     try {
-      final team = await TeamService.createTeam(
-        name: _nameCtrl.text.trim(),
-        description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-        capacity: _capacity,
-        weeklyTarget: freq + 1,
-        deposit: depositValue,
-        isPublic: isPublic,
-      );
+      final description = _descCtrl.text.trim();
+      final challenge = await ChallengeService.create(CreateChallengeRequest(
+        category: _categories[_categoryIndex],
+        title: _titleCtrl.text.trim(),
+        description: description.isEmpty ? null : description,
+        durationDays: _durations[_durationIndex],
+        depositCoins: deposit,
+        visibility: isPublic ? 'PUBLIC' : 'PRIVATE',
+        approvalType: _leaderApproval ? 'LEADER' : 'AUTO',
+        maxParticipants: _capacities[_capacityIndex],
+      ));
       if (!mounted) return;
-      if (isPublic) {
-        Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => TeamWaitingScreen(team: team)));
+      Session.currentChallengeId = challenge.id;
+
+      // 비공개 챌린지는 서버가 발급한 초대 코드를 바로 보여준다.
+      final inviteCode = challenge.inviteCode;
+      if (!isPublic && inviteCode != null && inviteCode.isNotEmpty) {
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+            builder: (_) => OwnerCodeScreen(code: inviteCode, challenge: challenge)));
       } else {
-        // TODO: 방 코드 발급 API가 없어 임시 코드를 그대로 사용.
         Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => OwnerCodeScreen(code: '7K2Q', team: team)));
+            MaterialPageRoute(builder: (_) => TeamWaitingScreen(challenge: challenge)));
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -321,48 +342,42 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
       );
 }
 
-/// 방장 화면 — 방 코드 공유 + 모집 현황 + 챌린지 시작
+/// 비공개 챌린지 생성 직후 — 초대 코드 공유 + 모집 현황.
+///
+/// 코드는 서버가 발급한 `Challenge.inviteCode`다. 상대는
+/// `GET /api/challenges/invite/{code}`로 이 챌린지를 찾아 참가한다.
 class OwnerCodeScreen extends StatefulWidget {
   final String code;
-  final Team team;
-  const OwnerCodeScreen({super.key, required this.code, required this.team});
+  final Challenge challenge;
+  const OwnerCodeScreen({super.key, required this.code, required this.challenge});
 
   @override
   State<OwnerCodeScreen> createState() => _OwnerCodeScreenState();
 }
 
 class _OwnerCodeScreenState extends State<OwnerCodeScreen> {
-  late Team _team;
+  late Challenge _challenge = widget.challenge;
+  bool _refreshing = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _team = widget.team;
-    Session.upsertTeam(_team);
-  }
-
-  void _debugFillTeam() {
-    setState(() {
-      _team = Team(
-        teamId: _team.teamId,
-        name: _team.name,
-        description: _team.description,
-        ownerId: _team.ownerId,
-        memberCount: _team.capacity ?? 10,
-        capacity: _team.capacity,
-        weeklyTarget: _team.weeklyTarget,
-        deposit: _team.deposit,
-        isPublic: _team.isPublic,
-      );
-    });
-    Session.upsertTeam(_team);
+  Future<void> _refresh() async {
+    setState(() => _refreshing = true);
+    try {
+      final latest = await ChallengeService.fetchDetail(_challenge.id);
+      if (!mounted) return;
+      setState(() => _challenge = latest);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final code = widget.code;
-    final cur = _team.memberCount;
-    final cap = _team.capacity ?? 10;
+    final cur = _challenge.confirmedCount ?? 0;
+    final cap = _challenge.maxParticipants;
     return Scaffold(
       backgroundColor: BC.bg,
       body: SafeArea(
@@ -370,158 +385,146 @@ class _OwnerCodeScreenState extends State<OwnerCodeScreen> {
           children: [
             const BackAppBar(title: '방장 화면'),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                children: [
-                  const SizedBox(height: 8),
-                  Center(
-                    child: Container(
-                      width: 64,
-                      height: 64,
-                      decoration: const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
-                      child: const Icon(Icons.lock_rounded, color: BC.oMain, size: 30),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  const Text('비공개 팀이 만들어졌어요',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  const Text('아래 방 코드를 친구에게 공유해 팀원을 모아보세요.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13.5, color: BC.ink2)),
-                  const SizedBox(height: 22),
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 26),
-                    decoration: BoxDecoration(
-                      gradient: BC.grad,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: BC.ctaShadow,
-                    ),
-                    child: Column(
-                      children: [
-                        const Text('방 코드',
-                            style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        const SizedBox(height: 6),
-                        Text(code,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 40,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 8)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(children: [
-                    Expanded(
-                      child: _ghostBtn(Icons.copy_rounded, '코드 복사', () {
-                        Clipboard.setData(ClipboardData(text: code));
-                        showBoosterToast(context, '방 코드를 복사했어요.');
-                      }),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ghostBtn(Icons.ios_share_rounded, '공유하기',
-                          () => showBoosterToast(context, '공유 시트를 여는 중…')),
-                    ),
-                  ]),
-                  const SizedBox(height: 24),
-                  const Text('모집 현황',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFFF8F7F5),
-                        borderRadius: BorderRadius.circular(16)),
-                    child: Column(
-                      children: [
-                        Row(children: [
-                          Text('$cur / $cap명',
-                              style: const TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.w700)),
-                          const Spacer(),
-                          const Text('방장(나) 포함',
-                              style: TextStyle(
-                                  fontSize: 13, color: BC.ink2, fontWeight: FontWeight.w600)),
-                        ]),
-                        const SizedBox(height: 12),
-                        Wrap(spacing: 7, runSpacing: 7, children: [
-                          Container(
-                            width: 34,
-                            height: 34,
-                            alignment: Alignment.center,
-                            decoration:
-                                const BoxDecoration(color: BC.oMain, shape: BoxShape.circle),
-                            child: const Text('나',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700)),
-                          ),
-                          for (int i = 0; i < cur - 1; i++)
-                            Container(
-                              width: 34,
-                              height: 34,
-                              alignment: Alignment.center,
-                              decoration: const BoxDecoration(
-                                  color: Color(0xFFF0997B), shape: BoxShape.circle),
-                              child: const Icon(Icons.person_rounded,
-                                  size: 16, color: Colors.white),
-                            ),
-                          for (int i = 0; i < cap - cur; i++)
-                            Container(
-                              width: 34,
-                              height: 34,
-                              decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                      color: const Color(0xFFD6D4CF), width: 1.5)),
-                              child: const Icon(Icons.add_rounded,
-                                  size: 15, color: Color(0xFFC2C0BB)),
-                            ),
-                        ]),
-                      ],
-                    ),
-                  ),
-                  if (kDebugMode && !_team.isFull) ...[
-                    const SizedBox(height: 14),
-                    GestureDetector(
-                      onTap: _debugFillTeam,
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                color: BC.oMain,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  children: [
+                    const SizedBox(height: 8),
+                    Center(
                       child: Container(
-                        height: 46,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                            color: BC.blueSoft,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: BC.blue, width: 1.2)),
-                        child: const Text('[테스트] 팀원 다 모인 것으로 처리',
-                            style: TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w700, color: BC.blue)),
+                        width: 64,
+                        height: 64,
+                        decoration:
+                            const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
+                        child: const Icon(Icons.lock_rounded, color: BC.oMain, size: 30),
                       ),
                     ),
+                    const SizedBox(height: 14),
+                    const Text('비공개 챌린지가 만들어졌어요',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    const Text('아래 초대 코드를 친구에게 공유해 팀원을 모아보세요.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 13.5, color: BC.ink2)),
+                    const SizedBox(height: 22),
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
+                      decoration: BoxDecoration(
+                        gradient: BC.grad,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: BC.ctaShadow,
+                      ),
+                      child: Column(
+                        children: [
+                          const Text('초대 코드',
+                              style: TextStyle(color: Colors.white70, fontSize: 13)),
+                          const SizedBox(height: 6),
+                          FittedBox(
+                            child: Text(code,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 40,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 6)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _ghostBtn(Icons.copy_rounded, '코드 복사', () {
+                      Clipboard.setData(ClipboardData(text: code));
+                      showBoosterToast(context, '초대 코드를 복사했어요.');
+                    }),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        const Text('모집 현황',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                        const Spacer(),
+                        if (_refreshing)
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                color: BC.oMain, strokeWidth: 2),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFFF8F7F5),
+                          borderRadius: BorderRadius.circular(16)),
+                      child: Column(
+                        children: [
+                          Row(children: [
+                            Text('$cur / $cap명',
+                                style: const TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            const Text('방장(나) 포함',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: BC.ink2,
+                                    fontWeight: FontWeight.w600)),
+                          ]),
+                          const SizedBox(height: 12),
+                          Wrap(spacing: 7, runSpacing: 7, children: [
+                            for (int i = 0; i < cur; i++)
+                              Container(
+                                width: 34,
+                                height: 34,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                    color: i == 0 ? BC.oMain : const Color(0xFFF0997B),
+                                    shape: BoxShape.circle),
+                                child: i == 0
+                                    ? const Text('나',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700))
+                                    : const Icon(Icons.person_rounded,
+                                        size: 16, color: Colors.white),
+                              ),
+                            for (int i = 0; i < (cap - cur); i++)
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: const Color(0xFFD6D4CF), width: 1.5)),
+                                child: const Icon(Icons.add_rounded,
+                                    size: 15, color: Color(0xFFC2C0BB)),
+                              ),
+                          ]),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // 챌린지 시작은 서버가 정원 충족 시 처리한다(앱에 시작 API가 없다).
+                    NoteBox(
+                      icon: Icons.info_outline_rounded,
+                      child: const Text('정원이 차면 서버가 팀을 편성하고 챌린지를 시작해요.',
+                          style: TextStyle(fontSize: 13, color: BC.ink2, height: 1.5)),
+                    ),
                   ],
-                ],
+                ),
               ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
               child: PrimaryButton(
-                label: '챌린지 시작하기',
-                enabled: _team.isFull,
-                onTap: () {
-                  Navigator.of(context).pushReplacement(MaterialPageRoute(
-                      builder: (_) => TeamBattleScreen(teamName: _team.name)));
-                },
+                label: '챌린지 현황 보기',
+                onTap: () => Navigator.of(context).pushReplacement(MaterialPageRoute(
+                    builder: (_) => TeamWaitingScreen(challenge: _challenge))),
               ),
             ),
-            if (!_team.isFull)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 14),
-                child: Text('인원이 모이면 시작할 수 있어요',
-                    style: TextStyle(fontSize: 12, color: BC.ink3)),
-              ),
           ],
         ),
       ),

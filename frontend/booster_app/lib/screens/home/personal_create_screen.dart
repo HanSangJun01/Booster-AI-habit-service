@@ -1,66 +1,118 @@
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
-import '../../services/challenge_service.dart';
+import '../../core/location.dart';
+import '../../models/personal_location.dart';
+import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 
+/// 개인 인증 기준 위치 등록/변경 (`/api/users/me/location`).
+///
+/// 백엔드에 "개인 챌린지" 엔티티가 없어서(제목·기간·주 N회 필드가 존재하지
+/// 않는다) 개인 트랙 설정은 사실상 이 하나다: **어디서 인증할 것인가**.
+/// 등록한 좌표에서 [radiusMeters] 안에 있어야 `POST /api/personal/check-in`이
+/// 성공한다.
+///
+/// 좌표는 사용자가 지도에서 찍는 대신 현재 기기 위치로 잡는다 — 지도 SDK가
+/// 아직 없고, "지금 있는 곳"이 인증 장소인 경우가 대부분이라서다.
 class PersonalCreateScreen extends StatefulWidget {
-  const PersonalCreateScreen({super.key});
+  /// 이미 등록된 위치가 있으면 변경 모드로 연다.
+  final PersonalLocation? current;
+
+  const PersonalCreateScreen({super.key, this.current});
+
   @override
   State<PersonalCreateScreen> createState() => _PersonalCreateScreenState();
 }
 
 class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
-  final _titleCtrl = TextEditingController();
-  int period = 1; // 14일
-  int freq = 2; // 3회
-  bool _loading = false;
+  final _placeCtrl = TextEditingController();
 
-  final _periods = ['7일', '14일', '21일', '30일'];
-  final _periodDays = [7, 14, 21, 30];
-  final _freqs = ['1회', '2회', '3회', '4회', '5회', '6회', '7회'];
+  /// 서버는 반경을 양수로만 검증하므로(`@Positive`) 상한은 앱이 정한다.
+  ///
+  /// 최대 50m다. 그 이상은 "그 장소에 있었다"는 판정이 무의미해진다 —
+  /// 500m면 반경 안에 지하철 몇 정거장이 들어온다. 아래로는 20m가 하한인데,
+  /// 휴대폰 GPS 오차가 통상 5~20m라 그보다 좁히면 제자리에 있어도 인증이
+  /// 실패한다.
+  static const _radiusOptions = [20, 30, 50];
+
+  /// 기본값은 가장 넉넉한 50m. 처음 쓰는 사람이 오차로 실패하는 것보다 낫다.
+  int _radiusIndex = 2;
+
+  double? _latitude;
+  double? _longitude;
+  bool _locating = false;
+  bool _saving = false;
+  String? _locationError;
+
+  bool get _isEdit => widget.current != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final current = widget.current;
+    if (current != null) {
+      _placeCtrl.text = current.placeName ?? '';
+      _latitude = current.lat;
+      _longitude = current.lng;
+      final idx = _radiusOptions.indexOf(current.radiusMeters);
+      if (idx >= 0) _radiusIndex = idx;
+    } else {
+      _detectLocation();
+    }
+  }
 
   @override
   void dispose() {
-    _titleCtrl.dispose();
+    _placeCtrl.dispose();
     super.dispose();
   }
 
+  Future<void> _detectLocation() async {
+    setState(() {
+      _locating = true;
+      _locationError = null;
+    });
+    try {
+      final position = await LocationService.current();
+      if (!mounted) return;
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _locating = false;
+      });
+    } on LocationException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _locationError = e.message;
+        _locating = false;
+      });
+    }
+  }
+
   Future<void> _submit() async {
-    final title = _titleCtrl.text.trim();
-    if (title.isEmpty) {
-      showBoosterToast(context, '챌린지 제목을 입력해주세요');
+    final lat = _latitude;
+    final lng = _longitude;
+    if (lat == null || lng == null) {
+      showBoosterToast(context, '먼저 현재 위치를 확인해주세요');
       return;
     }
-    setState(() => _loading = true);
-    final now = DateTime.now();
-    final end = now.add(Duration(days: _periodDays[period]));
+    setState(() => _saving = true);
     try {
-      final created = await ChallengeService.createChallenge(
-        title: title,
-        startDate: _formatDate(now),
-        endDate: _formatDate(end),
-        weeklyTarget: freq + 1, // freq 인덱스(0~6) → "1회"~"7회"
+      final saved = await PersonalService.saveLocation(
+        latitude: lat,
+        longitude: lng,
+        radiusMeters: _radiusOptions[_radiusIndex],
+        placeName: _placeCtrl.text.trim(),
       );
       if (!mounted) return;
-      Navigator.of(context).pop(created);
+      Navigator.of(context).pop(saved);
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _saving = false);
     }
-  }
-
-  String _formatDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-  String get _exemptText {
-    final n = freq + 1;
-    final e = 7 - n;
-    return e > 0
-        ? '주 $n회 선택 시, 면제일 $e일이 제공돼요.'
-        : '주 $n회는 매일 인증이라 면제일이 없어요.';
   }
 
   @override
@@ -70,111 +122,34 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            BackAppBar(title: '챌린지 생성', trailing: const CoinPill()),
+            BackAppBar(
+                title: _isEdit ? '인증 장소 변경' : '인증 장소 등록',
+                trailing: const CoinPill()),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
                 children: [
-                  // 1. 제목
                   _card(
-                    '1. 챌린지 제목',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextField(
-                          controller: _titleCtrl,
-                          maxLength: 30,
-                          decoration: _inputDeco('챌린지 제목을 입력하세요'),
-                        ),
-                      ],
+                    '1. 현재 위치',
+                    sub: '지금 있는 곳을 인증 기준으로 잡아요.',
+                    child: _locationBox(),
+                  ),
+                  _card(
+                    '2. 인증 반경',
+                    sub: '이 반경 안에 있어야 인증이 성공해요.',
+                    child: _chipRow(
+                      [for (final r in _radiusOptions) '${r}m'],
+                      _radiusIndex,
+                      (i) => setState(() => _radiusIndex = i),
                     ),
                   ),
-                  // 2. 최소 기간
                   _card(
-                    '2. 최소 기간',
-                    sub: '이 기간 동안은 챌린지를 종료할 수 없어요.',
-                    child: Column(
-                      children: [
-                        _chipRow(_periods, period, (i) => setState(() => period = i)),
-                        const SizedBox(height: 14),
-                        NoteBox(
-                          icon: Icons.verified_user_rounded,
-                          child: const Text.rich(TextSpan(children: [
-                            TextSpan(
-                                text: '최소 기간이 지나면 ',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w700, color: BC.oMain, fontSize: 13)),
-                            TextSpan(
-                                text: '언제든 챌린지를 종료하고 코인을 정산할 수 있어요.',
-                                style: TextStyle(fontSize: 13, color: BC.ink2, height: 1.4)),
-                          ])),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 3. 주 몇 회
-                  _card(
-                    '3. 주 몇 회',
-                    sub: '일주일에 몇 번 진행할 건가요?',
-                    child: Column(
-                      children: [
-                        _chipRow(_freqs, freq, (i) => setState(() => freq = i)),
-                        const SizedBox(height: 14),
-                        NoteBox(
-                          icon: Icons.verified_user_rounded,
-                          child: Text.rich(TextSpan(children: [
-                            TextSpan(
-                                text: _exemptText,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w700, color: BC.oMain, fontSize: 13)),
-                            const TextSpan(
-                                text: '\n인증을 놓쳐도 면제일만큼은 패널티가 부과되지 않아요!',
-                                style: TextStyle(fontSize: 12.5, color: BC.ink2, height: 1.5)),
-                          ])),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 4. 인증 위치
-                  _card(
-                    '4. 인증 위치',
-                    sub: '등록한 위치 반경 안에서만 인증할 수 있어요.',
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          height: 150,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                                colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: const Color(0xFFD3D7DE)),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
-                              Icon(Icons.location_on_rounded, color: BC.oMain, size: 28),
-                              SizedBox(height: 6),
-                              Text('지도에서 위치 선택',
-                                  style: TextStyle(
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF8A8A92))),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: const [
-                            Icon(Icons.location_on_rounded, size: 17, color: BC.oMain),
-                            SizedBox(width: 8),
-                            Text('서울 서초구 반포한강공원',
-                                style: TextStyle(
-                                    fontSize: 14, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ],
+                    '3. 장소 이름',
+                    sub: '선택 사항이에요. 안 적으면 좌표로 표시돼요.',
+                    child: TextField(
+                      controller: _placeCtrl,
+                      maxLength: 200,
+                      decoration: _inputDeco('예: 집 앞 헬스장'),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -184,15 +159,98 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
               child: PrimaryButton(
-                label: _loading ? '만드는 중...' : '챌린지 만들기',
+                label: _saving ? '저장하는 중...' : (_isEdit ? '변경 저장' : '등록하기'),
                 trailingIcon: Icons.chevron_right_rounded,
                 onTap: _submit,
-                enabled: !_loading,
+                enabled: !_saving && _latitude != null,
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _locationBox() {
+    final lat = _latitude;
+    final lng = _longitude;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          height: 150,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+                colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFD3D7DE)),
+          ),
+          child: Center(
+            child: _locating
+                ? const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(color: BC.oMain, strokeWidth: 2.5),
+                      ),
+                      SizedBox(height: 10),
+                      Text('현재 위치를 확인하는 중…',
+                          style: TextStyle(fontSize: 13, color: Color(0xFF8A8A92))),
+                    ],
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        lat == null ? Icons.location_disabled_rounded : Icons.location_on_rounded,
+                        color: lat == null ? BC.ink3 : BC.oMain,
+                        size: 28,
+                      ),
+                      const SizedBox(height: 6),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        child: Text(
+                          lat == null || lng == null
+                              ? (_locationError ?? '위치를 확인하지 못했어요')
+                              : '위도 ${lat.toStringAsFixed(5)}\n경도 ${lng.toStringAsFixed(5)}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              height: 1.4,
+                              color: Color(0xFF6A6A72)),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: _locating ? null : _detectLocation,
+          child: Container(
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: BC.oSoft,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.my_location_rounded, size: 18, color: BC.oMain),
+                SizedBox(width: 7),
+                Text('현재 위치 다시 확인',
+                    style: TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w700, color: BC.oMain)),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

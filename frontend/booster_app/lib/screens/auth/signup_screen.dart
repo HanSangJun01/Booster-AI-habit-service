@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../core/session.dart';
+import '../../core/api_client.dart';
+import '../../services/auth_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
@@ -37,25 +38,23 @@ class _SignupScreenState extends State<SignupScreen> {
       _errorText = null;
     });
     try {
-      await _signup(_nicknameCtrl.text.trim(), _emailCtrl.text.trim(), _passwordCtrl.text);
+      // 가입 응답에는 토큰이 없어서 AuthService가 곧바로 로그인까지 이어서
+      // 수행한다 — 여기서 별도로 로그인할 필요는 없다.
+      await AuthService.signup(
+          _nicknameCtrl.text.trim(), _emailCtrl.text.trim(), _passwordCtrl.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const MainScaffold()),
         (route) => false,
       );
+    } on ApiException catch (e) {
+      // 서버 검증 메시지(비밀번호 길이, 이메일 형식, 중복 등)를 그대로 보여준다.
+      setState(() => _errorText = e.message);
     } catch (_) {
       setState(() => _errorText = '회원가입 중 문제가 발생했어요. 다시 시도해주세요');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  /// 백엔드 회원가입 API 연동 지점 (POST /api/auth/signup).
-  /// 현재는 목업으로 항상 성공 처리하며, 응답의 userId 자리에 임시값(1)을 채운다.
-  /// 실제 연동 시 ApiClient.post('/auth/signup', body: {...})의 data.userId로 교체한다.
-  Future<void> _signup(String nickname, String email, String password) async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    Session.set(userId: 1, nickname: nickname);
   }
 
   @override
@@ -92,7 +91,9 @@ class _SignupScreenState extends State<SignupScreen> {
                       BoosterTextField(
                         controller: _passwordCtrl,
                         label: '비밀번호',
-                        hint: '6자 이상 입력하세요',
+                        // 서버 제약(`SignupRequest`)이 8~64자다. 여기서 미리
+                        // 맞춰야 가입 요청이 검증 오류로 튕기지 않는다.
+                        hint: '8자 이상 입력하세요',
                         obscureText: _obscure1,
                         suffixIcon: IconButton(
                           icon: Icon(
@@ -103,8 +104,11 @@ class _SignupScreenState extends State<SignupScreen> {
                               color: BC.ink3),
                           onPressed: () => setState(() => _obscure1 = !_obscure1),
                         ),
-                        validator: (v) =>
-                            (v == null || v.length < 6) ? '비밀번호는 6자 이상이어야 해요' : null,
+                        validator: (v) {
+                          if (v == null || v.length < 8) return '비밀번호는 8자 이상이어야 해요';
+                          if (v.length > 64) return '비밀번호는 64자를 넘을 수 없어요';
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
                       BoosterTextField(

@@ -1,388 +1,163 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/api_client.dart';
 import '../../core/session.dart';
-import '../../models/team.dart';
-import '../../services/team_service.dart';
+import '../../models/challenge.dart';
+import '../../services/challenge_service.dart';
+import '../../services/participant_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import 'team_battle_screen.dart';
 
-/// 신청/승인 대기 중인 팀원 한 명.
+/// 챌린지 모집 현황 — 아직 시작되지 않은(READY) 챌린지.
 ///
-/// 팀 멤버 상세 목록·승인 상태를 반환하는 API가 아직 없어서(§Team 주석 참고)
-/// 전부 클라이언트에서만 관리하는 로컬 상태다. 실제 신청자를 만들 방법이
-/// 없으므로 디버그 빌드에서 가상 신청자를 추가하는 버튼으로 대신 테스트한다.
-class _Member {
-  final int userId;
-  final String nickname;
-  bool approved;
-  /// 신청 시 작성하는 소개글(personal statement). API에 신청 메시지를
-  /// 저장/조회하는 필드가 아직 없어 목업 데이터로만 채워진다.
-  final String? message;
-  _Member({
-    required this.userId,
-    required this.nickname,
-    this.approved = true,
-    this.message,
-  });
-}
-
-/// 팀에 참여/생성했지만 아직 정원이 다 안 찬 상태.
+/// 보여줄 수 있는 게 제한적이다. 백엔드에 **참가자 목록 조회 API가 없어서**
+/// (`ParticipantController`는 신청/취소/승인만 있고 조회가 없다) 누가 신청했는지
+/// 나열할 수 없다. 승인(`POST .../participants/{participantId}/approve`)도
+/// participantId를 알아낼 방법이 없어 이 화면에서는 노출하지 않는다.
 ///
-/// - 참여자 목록과 승인 대기 신청자를 보여준다. 승인/거절/강퇴는 방장(팀
-///   생성자, team.ownerId)만 할 수 있고, 방장이 아니면 버튼 자체가 안 보인다.
-/// - "챌린지 시작하기"도 방장 전용이며, 정원이 다 찼을 때만 눌린다(자동 시작
-///   아님 — 방장이 직접 시작).
-/// - 정원/멤버 목록이 API에 없는 클라이언트 전용 값이라, 실제 팀원 입장
-///   이벤트를 실시간으로 받을 방법이 없다. "새로고침"으로 수동 재조회하거나,
-///   디버그 빌드 전용 테스트 버튼으로 흉내 낼 수 있다.
+/// 그래서 여기서 다루는 건 서버가 실제로 주는 값뿐이다:
+/// 확정 인원(`confirmedCount`), 정원, 초대 코드, 그리고 참가 취소.
 class TeamWaitingScreen extends StatefulWidget {
-  final Team team;
-  const TeamWaitingScreen({super.key, required this.team});
+  final Challenge challenge;
+  const TeamWaitingScreen({super.key, required this.challenge});
   @override
   State<TeamWaitingScreen> createState() => _TeamWaitingScreenState();
 }
 
 class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
-  late Team _team;
+  late Challenge _challenge = widget.challenge;
   bool _refreshing = false;
-  List<_Member> _members = [];
-  int _applicantSeq = 1;
+  bool _leaving = false;
 
-  /// 디버그 빌드에서 방장/일반 유저 시점을 바로 전환해서 미리보기 위한 값.
-  /// null이면 실제 소유권(Session.userId == team.ownerId)을 따른다.
-  bool? _debugRoleOverride;
-
-  bool get _isOwner {
-    if (kDebugMode && _debugRoleOverride != null) return _debugRoleOverride!;
-    return Session.userId != null && Session.userId == _team.ownerId;
-  }
+  bool get _isOwner =>
+      Session.userId != null && Session.userId == _challenge.createdBy;
 
   @override
   void initState() {
     super.initState();
-    _team = widget.team;
-    Session.upsertTeam(_team);
-    _seedMembers();
+    _refresh();
   }
-
-  void _seedMembers() {
-    _members = [
-      _Member(
-        userId: Session.userId ?? 0,
-        nickname: Session.nickname ?? '나',
-        approved: true,
-      ),
-      for (int i = 1; i < _team.memberCount; i++)
-        _Member(userId: -i, nickname: '팀원$i', approved: true),
-    ];
-  }
-
-  Team _withMemberCount(int count) => Team(
-        teamId: _team.teamId,
-        name: _team.name,
-        description: _team.description,
-        ownerId: _team.ownerId,
-        memberCount: count,
-        capacity: _team.capacity,
-        weeklyTarget: _team.weeklyTarget,
-        deposit: _team.deposit,
-        isPublic: _team.isPublic,
-      );
 
   Future<void> _refresh() async {
     setState(() => _refreshing = true);
     try {
-      final teams = await TeamService.fetchMyTeams();
+      final latest = await ChallengeService.fetchDetail(_challenge.id);
       if (!mounted) return;
-      final matches = teams.where((t) => t.teamId == _team.teamId);
-      final fresh = matches.isEmpty ? null : matches.first;
-      if (fresh != null) {
-        setState(() => _team = _withMemberCount(fresh.memberCount));
-        Session.upsertTeam(_team);
+      setState(() => _challenge = latest);
+      // 모집이 끝나 시작된 상태면 바로 배틀 화면으로 넘긴다.
+      if (latest.isActive && mounted) {
+        Navigator.of(context).pushReplacement(MaterialPageRoute(
+            builder: (_) => TeamBattleScreen(challenge: latest)));
       }
-    } on ApiException catch (_) {
-      // 백엔드 미연결 — 새로고침 실패는 무시하고 현재 상태를 유지한다.
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
   }
 
-  void _debugFillTeam() {
-    final cap = _team.capacity ?? 10;
-    setState(() {
-      for (int i = _members.where((m) => m.approved).length; i < cap; i++) {
-        _members.add(_Member(userId: -100 - i, nickname: '팀원$i', approved: true));
-      }
-      _team = _withMemberCount(cap);
-    });
-    Session.upsertTeam(_team);
-  }
-
-  static const _mockMessages = [
-    '매일 아침 6시에 일어나서 꼭 인증할게요! 작심삼일 탈출이 목표입니다.',
-    '작년에 비슷한 챌린지 완주해봤어요. 이번에도 끝까지 함께하고 싶습니다.',
-    '운동 습관 만들려고 신청했어요. 열심히 참여하겠습니다!',
-  ];
-
-  void _debugAddApplicant() {
-    if (_team.isFull) return;
-    setState(() {
-      _members.add(_Member(
-        userId: -1000 - _applicantSeq,
-        nickname: '지원자$_applicantSeq',
-        approved: false,
-        message: _mockMessages[(_applicantSeq - 1) % _mockMessages.length],
-      ));
-      _applicantSeq++;
-    });
-  }
-
-  void _approve(_Member m) {
-    setState(() {
-      m.approved = true;
-      _team = _withMemberCount(_team.memberCount + 1);
-    });
-    Session.upsertTeam(_team);
-  }
-
-  void _reject(_Member m) {
-    setState(() => _members.remove(m));
-  }
-
-  Future<void> _kick(_Member m) async {
+  Future<void> _leave() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('팀원을 강퇴할까요?'),
-        content: Text('${m.nickname}님을 팀에서 내보내요. 이 작업은 되돌릴 수 없어요.'),
+        title: const Text('참가 취소'),
+        content: const Text('참가를 취소하면 예치한 코인이 환불돼요. 정말 취소할까요?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('취소', style: TextStyle(color: BC.ink2)),
+            child: const Text('닫기', style: TextStyle(color: BC.ink2)),
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('강퇴', style: TextStyle(color: Color(0xFFE5484D))),
+            child: const Text('참가 취소', style: TextStyle(color: Color(0xFFE5484D))),
           ),
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _leaving = true);
     try {
-      await TeamService.removeMember(_team.teamId, m.userId);
+      await ParticipantService.cancel(_challenge.id);
+      if (!mounted) return;
+      showBoosterToast(context, '참가를 취소했어요.');
+      Navigator.of(context).pop();
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-      return;
+      setState(() => _leaving = false);
     }
-    if (!mounted) return;
-    setState(() {
-      _members.remove(m);
-      _team = _withMemberCount(_team.memberCount - 1);
-    });
-    Session.upsertTeam(_team);
-  }
-
-  void _startChallenge() {
-    Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => TeamBattleScreen(teamName: _team.name)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final cap = _team.capacity ?? 10;
-    final cur = _team.memberCount.clamp(0, cap);
-    final approvedMembers = _members.where((m) => m.approved).toList();
-    final pendingApplicants = _members.where((m) => !m.approved).toList();
+    final confirmed = _challenge.confirmedCount ?? 0;
+    final capacity = _challenge.maxParticipants;
+    final remaining = (capacity - confirmed).clamp(0, capacity);
 
     return Scaffold(
       backgroundColor: BC.bg,
       body: SafeArea(
         child: Column(
           children: [
-            const BackAppBar(title: '팀원 모집 중', trailing: CoinPill()),
+            BackAppBar(title: _challenge.title, trailing: const CoinPill()),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
-                children: [
-                  Center(
-                    child: Container(
-                      width: 100,
-                      height: 100,
-                      decoration: const BoxDecoration(
-                          color: Color(0xFFFDE6DB), shape: BoxShape.circle),
-                      child: const Icon(Icons.hourglass_top_rounded,
-                          size: 42, color: BC.oMain),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(_team.name,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 6),
-                  Text(
-                    _isOwner
-                        ? '정원이 차면 챌린지를 시작할 수 있어요'
-                        : '방장이 시작하면 배틀이 시작돼요',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 13.5, color: BC.ink2),
-                  ),
-                  const SizedBox(height: 18),
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFFF8F7F5),
-                        borderRadius: BorderRadius.circular(16)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text.rich(TextSpan(children: [
-                              TextSpan(
-                                  text: '$cur',
-                                  style: const TextStyle(
-                                      color: BC.oMain,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800)),
-                              TextSpan(
-                                  text: ' / $cap명',
-                                  style: const TextStyle(
-                                      fontSize: 15, fontWeight: FontWeight.w700)),
-                            ])),
-                            const Spacer(),
-                            Text('${cap - cur}명 남음',
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    color: BC.ink2,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(5),
-                          child: LinearProgressIndicator(
-                            value: cap > 0 ? cur / cap : 0,
-                            minHeight: 8,
-                            backgroundColor: const Color(0xFFE8E6E2),
-                            valueColor: const AlwaysStoppedAnimation(BC.oMain),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text('참여자',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: BC.line)),
-                    child: Column(
-                      children: approvedMembers.map(_memberTile).toList(),
-                    ),
-                  ),
-                  if (pendingApplicants.isNotEmpty) ...[
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                color: BC.oMain,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  children: [
+                    _statusHero(confirmed, capacity, remaining),
                     const SizedBox(height: 16),
-                    const Text('승인 대기 중인 신청자',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: BC.line)),
-                      child: Column(
-                        children: pendingApplicants.map(_applicantTile).toList(),
+                    _infoCard(),
+                    if (_challenge.inviteCode != null &&
+                        _challenge.inviteCode!.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _inviteCard(_challenge.inviteCode!),
+                    ],
+                    const SizedBox(height: 16),
+                    NoteBox(
+                      icon: Icons.info_outline_rounded,
+                      child: Text(
+                        _challenge.needsLeaderApproval
+                            ? '방장이 참가 신청을 승인하면 인원에 반영돼요. 정원이 차면 서버가 팀을 편성하고 챌린지를 시작해요.'
+                            : '신청하면 바로 참가가 확정돼요. 정원이 차면 서버가 팀을 편성하고 챌린지를 시작해요.',
+                        style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.5),
                       ),
                     ),
                   ],
-                  const SizedBox(height: 20),
-                  if (_isOwner)
-                    PrimaryButton(
-                      label: '챌린지 시작하기',
-                      leadingIcon: Icons.play_arrow_rounded,
-                      enabled: _team.isFull,
-                      onTap: _startChallenge,
-                    ),
-                  const SizedBox(height: 12),
-                  GestureDetector(
-                    onTap: _refreshing ? null : _refresh,
-                    child: Container(
-                      height: 50,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: BC.line, width: 1.5)),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.refresh_rounded, size: 18, color: BC.oMain),
-                          const SizedBox(width: 7),
-                          Text(_refreshing ? '확인 중...' : '모집 현황 새로고침',
-                              style: const TextStyle(
-                                  fontSize: 14, fontWeight: FontWeight.w700)),
-                        ],
-                      ),
-                    ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+              child: Column(
+                children: [
+                  PrimaryButton(
+                    label: _refreshing ? '새로고침 중...' : '모집 현황 새로고침',
+                    leadingIcon: Icons.refresh_rounded,
+                    enabled: !_refreshing,
+                    onTap: _refresh,
                   ),
-                  if (kDebugMode) ...[
-                    const SizedBox(height: 12),
+                  const SizedBox(height: 8),
+                  // 방장은 자기 챌린지의 참가를 취소할 수 없다(서버가 막지는
+                  // 않지만 방을 비우는 동작이라 UI에서 노출하지 않는다).
+                  if (!_isOwner)
                     GestureDetector(
-                      onTap: () => setState(() => _debugRoleOverride = !_isOwner),
+                      onTap: _leaving ? null : _leave,
                       child: Container(
-                        height: 46,
+                        height: 48,
                         alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                            color: const Color(0xFFF3E8FF),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: const Color(0xFF9B5DE5), width: 1.2)),
-                        child: Text(
-                            _isOwner ? '[테스트] 일반 유저 시점으로 보기' : '[테스트] 방장 시점으로 보기',
+                        child: Text(_leaving ? '취소하는 중...' : '참가 취소하기',
                             style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 14,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF9B5DE5))),
+                                color: Color(0xFFE5484D))),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    GestureDetector(
-                      onTap: _debugAddApplicant,
-                      child: Container(
-                        height: 46,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                            color: BC.greenSoft,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: BC.green, width: 1.2)),
-                        child: const Text('[테스트] 가상 신청자 추가',
-                            style: TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w700, color: BC.green)),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    GestureDetector(
-                      onTap: _debugFillTeam,
-                      child: Container(
-                        height: 46,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                            color: BC.blueSoft,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(color: BC.blue, width: 1.2)),
-                        child: const Text('[테스트] 팀원 다 모인 것으로 처리',
-                            style: TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.w700, color: BC.blue)),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -392,216 +167,143 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
     );
   }
 
-  Widget _memberTile(_Member m) {
-    final isOwnerMember = m.userId == _team.ownerId;
-    final canKick = _isOwner && !isOwnerMember;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
+  Widget _statusHero(int confirmed, int capacity, int remaining) {
+    final progress = capacity == 0 ? 0.0 : (confirmed / capacity).clamp(0.0, 1.0);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+      decoration: BoxDecoration(
+        gradient: BC.heroGrad,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+              color: BC.o2.withValues(alpha: .32), blurRadius: 26, offset: const Offset(0, 12)),
+        ],
+      ),
+      child: Column(
         children: [
           Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(color: Color(0xFFF0997B), shape: BoxShape.circle),
-            child: Text(m.nickname.isEmpty ? '?' : m.nickname.substring(0, 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .22),
+                borderRadius: BorderRadius.circular(999)),
+            child: Text(_challenge.isReady ? '팀원 모집 중' : '종료된 챌린지',
                 style: const TextStyle(
-                    color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(m.nickname,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 16),
+          Text('$confirmed / $capacity명',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text(remaining == 0 ? '정원이 모두 찼어요!' : '$remaining명 더 모이면 시작돼요',
+              style: const TextStyle(color: Colors.white70, fontSize: 13.5)),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: Colors.white.withValues(alpha: .28),
+              valueColor: const AlwaysStoppedAnimation(Colors.white),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            alignment: WrapAlignment.center,
+            children: [
+              for (int i = 0; i < confirmed; i++)
+                Container(
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .9), shape: BoxShape.circle),
+                  child: const Icon(Icons.person_rounded, size: 17, color: BC.oMain),
                 ),
-                if (isOwnerMember) ...[
-                  const SizedBox(width: 6),
-                  const MiniTag('방장', bg: BC.oSoft, fg: BC.oMain),
-                ],
-              ],
-            ),
+              for (int i = 0; i < remaining; i++)
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white54, width: 1.5)),
+                  child: const Icon(Icons.add_rounded, size: 15, color: Colors.white54),
+                ),
+            ],
           ),
-          if (canKick)
-            GestureDetector(
-              onTap: () => _kick(m),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                    color: BC.bg,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: BC.line)),
-                child: const Text('강퇴',
-                    style: TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFFE5484D))),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  Widget _applicantTile(_Member m) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
-        onTap: () => _showApplicantDetail(m),
-        behavior: HitTestBehavior.opaque,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFD6D4CF), width: 1.5)),
-              child:
-                  const Icon(Icons.person_outline_rounded, size: 16, color: Color(0xFFC2C0BB)),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(m.nickname,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                  if (m.message != null) ...[
-                    const SizedBox(height: 2),
-                    Text(m.message!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12.5, color: BC.ink2)),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (_isOwner) ...[
-              GestureDetector(
-                onTap: () => _reject(m),
-                child: Container(
-                  margin: const EdgeInsets.only(right: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                      color: BC.bg,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: BC.line)),
-                  child: const Text('거절',
-                      style: TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w700, color: BC.ink2)),
-                ),
-              ),
-              GestureDetector(
-                onTap: () => _approve(m),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration:
-                      BoxDecoration(color: BC.oMain, borderRadius: BorderRadius.circular(8)),
-                  child: const Text('승인',
-                      style: TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
-                ),
-              ),
-            ] else
-              const MiniTag('승인 대기 중'),
-          ],
-        ),
+  Widget _infoCard() {
+    return AppCard(
+      child: Column(
+        children: [
+          _infoRow(Icons.category_rounded, '카테고리', _challenge.category),
+          const Divider(height: 22, color: BC.line),
+          _infoRow(Icons.calendar_today_rounded, '기간', '${_challenge.durationDays}일'),
+          const Divider(height: 22, color: BC.line),
+          _infoRow(Icons.savings_rounded, '예치코인',
+              '${CoinPill.format(_challenge.depositCoins)} 코인'),
+          const Divider(height: 22, color: BC.line),
+          _infoRow(Icons.how_to_reg_rounded, '승인 방식',
+              _challenge.needsLeaderApproval ? '방장 승인' : '자동 승인'),
+        ],
       ),
     );
   }
 
-  void _showApplicantDetail(_Member m) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (sheetContext) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-              20, 20, 20, 20 + MediaQuery.of(sheetContext).padding.bottom),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: const Color(0xFFD6D4CF), width: 1.5)),
-                    child: const Icon(Icons.person_outline_rounded,
-                        size: 18, color: Color(0xFFC2C0BB)),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(m.nickname,
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Text('소개글',
-                  style: TextStyle(fontSize: 12.5, color: BC.ink2, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              Text(m.message?.isNotEmpty == true ? m.message! : '작성한 소개글이 없어요.',
-                  style: const TextStyle(fontSize: 14.5, color: BC.ink, height: 1.5)),
-              if (_isOwner) ...[
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          _reject(m);
-                        },
-                        child: Container(
-                          height: 50,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: BC.line, width: 1.5)),
-                          child: const Text('거절',
-                              style: TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.w700, color: BC.ink2)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          _approve(m);
-                        },
-                        child: Container(
-                          height: 50,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                              color: BC.oMain, borderRadius: BorderRadius.circular(14)),
-                          child: const Text('승인',
-                              style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
+  Widget _infoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: BC.ink3),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(fontSize: 14, color: BC.ink2)),
+        const Spacer(),
+        Text(value,
+            style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
+  Widget _inviteCard(String code) {
+    return AppCard(
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration:
+                BoxDecoration(color: BC.oSoft, borderRadius: BorderRadius.circular(13)),
+            child: const Icon(Icons.lock_rounded, size: 21, color: BC.oMain),
           ),
-        );
-      },
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('초대 코드', style: TextStyle(fontSize: 12.5, color: BC.ink3)),
+                Text(code,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 2)),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: code));
+              showBoosterToast(context, '초대 코드를 복사했어요.');
+            },
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: Icon(Icons.copy_rounded, size: 20, color: BC.oMain),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

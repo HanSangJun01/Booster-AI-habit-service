@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  geolocator: ^14.0.3
 
 dev_dependencies:
   flutter_lints: ^3.0.0

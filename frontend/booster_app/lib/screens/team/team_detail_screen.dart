@@ -1,94 +1,103 @@
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
+import '../../core/location.dart';
 import '../../core/session.dart';
-import '../../models/team.dart';
-import '../../services/team_service.dart';
+import '../../models/challenge.dart';
+import '../../models/participant.dart';
+import '../../services/challenge_service.dart';
+import '../../services/participant_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import 'team_waiting_screen.dart';
 
+/// 챌린지 상세 + 참가 신청 — `POST /api/challenges/{challengeId}/participants`.
+///
+/// 참가할 때 **인증 기준 위치를 함께 등록**해야 한다(`ParticipationRequest`의
+/// gpsLat/gpsLng/gpsRadiusMeters가 필수). 이후 이 좌표와 반경으로 팀 챌린지
+/// 인증이 판정된다. 그래서 참여 버튼은 바로 신청하지 않고 위치 확인 시트를 먼저 연다.
 class TeamDetailScreen extends StatefulWidget {
-  final String name;
-  final String desc;
-  final List<String> tags;
-  final String members; // "8/10"
-  /// 탐색 목록(team_explore_screen.dart)이 아직 하드코딩 데이터라 실제
-  /// teamId가 없을 수 있다 — null이면 참여 API를 호출하지 않고 로컬로만 처리한다.
-  final int? teamId;
-  const TeamDetailScreen({
-    super.key,
-    required this.name,
-    required this.desc,
-    required this.tags,
-    required this.members,
-    this.teamId,
-  });
+  final Challenge challenge;
+  const TeamDetailScreen({super.key, required this.challenge});
 
   @override
   State<TeamDetailScreen> createState() => _TeamDetailScreenState();
 }
 
 class _TeamDetailScreenState extends State<TeamDetailScreen> {
-  bool joined = false;
+  late Challenge _challenge = widget.challenge;
   bool _joining = false;
+  bool _joined = false;
 
-  static const _avatarColors = [
-    Color(0xFFFF6A38), Color(0xFFF0997B), Color(0xFFFFB088), Color(0xFFFF8A5B),
-    Color(0xFFE8723E), Color(0xFFFFA06E), Color(0xFFF08050), Color(0xFFFF7A45),
-  ];
-  static const _names = ['김', '이', '박', '최', '정', '강', '윤', '한'];
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  /// 목록 응답에는 confirmedCount가 없어서(상세 전용 필드) 상세를 다시 부른다.
+  Future<void> _refresh() async {
+    try {
+      final latest = await ChallengeService.fetchDetail(_challenge.id);
+      if (!mounted) return;
+      setState(() => _challenge = latest);
+    } on ApiException catch (_) {
+      // 상세 조회 실패는 화면을 막을 정도는 아니다 — 목록에서 받은 값으로 그린다.
+    }
+  }
 
   Future<void> _join() async {
+    final setup = await showModalBottomSheet<_JoinSetup>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _JoinLocationSheet(),
+    );
+    if (setup == null || !mounted) return;
+
     setState(() => _joining = true);
     try {
-      if (widget.teamId != null) {
-        await TeamService.joinTeam(widget.teamId!);
-      } else {
-        // 탐색 목록이 하드코딩 데이터라 실제 teamId가 없는 경우 — API 호출 없이
-        // 참여한 것처럼만 로컬 처리한다.
-        await Future.delayed(const Duration(milliseconds: 600));
-      }
-      if (!mounted) return;
-      final parts = widget.members.split('/');
-      final cur = int.tryParse(parts.first) ?? 0;
-      final cap = int.tryParse(parts.last) ?? 10;
-      setState(() => joined = true);
-      final team = Team(
-        teamId: widget.teamId ?? Session.nextMockTeamId(),
-        name: widget.name,
-        description: widget.desc,
-        ownerId: 0,
-        memberCount: cur + 1, // 참여로 인원 +1 낙관적 반영
-        capacity: cap,
+      final participant = await ParticipantService.apply(
+        _challenge.id,
+        ParticipationRequest(
+          personalStatement: setup.statement,
+          gpsLat: setup.latitude,
+          gpsLng: setup.longitude,
+          gpsRadiusMeters: setup.radiusMeters,
+          gpsPlaceName: setup.placeName,
+        ),
       );
-      // 뒤로가기 후 팀 홈 화면이 다시 조회할 때(백엔드 미연결 시) 이 상태를
-      // 그대로 보여주기 위해 캐시해둔다 — Session.myTeams 주석 참고.
-      Session.upsertTeam(team);
+      if (!mounted) return;
+      setState(() => _joined = true);
+      Session.currentChallengeId = _challenge.id;
+
+      showBoosterToast(
+          context,
+          participant.isConfirmed
+              ? '참가가 확정됐어요!'
+              : '참가 신청을 보냈어요. 방장 승인을 기다려주세요.');
+      final latest = await ChallengeService.fetchDetail(_challenge.id);
+      if (!mounted) return;
       Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => TeamWaitingScreen(team: team)));
+          MaterialPageRoute(builder: (_) => TeamWaitingScreen(challenge: latest)));
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-    } finally {
-      if (mounted) setState(() => _joining = false);
+      setState(() => _joining = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final parts = widget.members.split('/');
-    final cur = int.tryParse(parts.first) ?? 8;
-    final cap = int.tryParse(parts.last) ?? 10;
+    final cur = _challenge.confirmedCount ?? 0;
+    final cap = _challenge.maxParticipants;
+    final remaining = (cap - cur).clamp(0, cap);
 
     return Scaffold(
       backgroundColor: BC.bg,
       body: SafeArea(
         child: Column(
           children: [
-            BackAppBar(
-              title: '팀 상세',
-              trailing: const CoinPill(),
-            ),
+            BackAppBar(title: '챌린지 상세', trailing: const CoinPill()),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
@@ -97,29 +106,31 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     height: 170,
                     decoration: BoxDecoration(
                         gradient: BC.grad, borderRadius: BorderRadius.circular(18)),
-                    child: const Icon(Icons.image_rounded, color: Colors.white70, size: 44),
+                    child: const Icon(Icons.flag_rounded, color: Colors.white70, size: 44),
                   ),
                   const SizedBox(height: 16),
                   Row(children: [
                     Flexible(
-                      child: Text(widget.name,
+                      child: Text(_challenge.title,
                           style: const TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.4)),
                     ),
                     const SizedBox(width: 9),
-                    const MiniTag('공개', bg: BC.oSoft, fg: BC.oMain),
+                    MiniTag(_challenge.isPrivate ? '비공개' : '공개',
+                        bg: BC.oSoft, fg: BC.oMain),
                   ]),
                   const SizedBox(height: 8),
-                  Text(widget.desc,
+                  Text(_challenge.description ?? '소개글이 없어요.',
                       style: const TextStyle(
                           fontSize: 15, color: BC.ink2, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 12),
-                  Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: widget.tags.map((t) => MiniTag(t)).toList()),
+                  Wrap(spacing: 6, runSpacing: 6, children: [
+                    MiniTag(_challenge.category),
+                    MiniTag('${_challenge.durationDays}일'),
+                    MiniTag(_challenge.needsLeaderApproval ? '방장 승인' : '자동 승인'),
+                  ]),
 
                   // 모집 현황
                   _secTitle('모집 현황'),
@@ -147,7 +158,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                                       fontSize: 15, fontWeight: FontWeight.w700)),
                             ])),
                             const Spacer(),
-                            Text('${cap - cur}명 모이면 배틀 시작',
+                            Text(
+                                remaining == 0
+                                    ? '정원이 찼어요'
+                                    : '$remaining명 모이면 배틀 시작',
                                 style: const TextStyle(
                                     fontSize: 13,
                                     color: BC.ink2,
@@ -158,7 +172,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(5),
                           child: LinearProgressIndicator(
-                            value: cur / cap,
+                            value: cap == 0 ? 0 : (cur / cap).clamp(0.0, 1.0),
                             minHeight: 8,
                             backgroundColor: const Color(0xFFE8E6E2),
                             valueColor: const AlwaysStoppedAnimation(BC.oMain),
@@ -175,14 +189,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                                       width: 34,
                                       height: 34,
                                       alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                          color: _avatarColors[i % _avatarColors.length],
-                                          shape: BoxShape.circle),
-                                      child: Text(_names[i % _names.length],
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700)),
+                                      decoration: const BoxDecoration(
+                                          color: BC.oMain, shape: BoxShape.circle),
+                                      child: const Icon(Icons.person_rounded,
+                                          size: 17, color: Colors.white),
                                     )
                                   : Container(
                                       width: 34,
@@ -204,15 +214,23 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                   // 챌린지 정보
                   _secTitle('챌린지 정보'),
                   Row(children: [
-                    Expanded(child: _infoCard(Icons.calendar_today_rounded, '기간', '30일')),
+                    Expanded(
+                        child: _infoCard(Icons.calendar_today_rounded, '기간',
+                            '${_challenge.durationDays}일')),
                     const SizedBox(width: 10),
-                    Expanded(child: _infoCard(Icons.location_on_rounded, '인증 방법', 'GPS')),
+                    Expanded(
+                        child: _infoCard(Icons.location_on_rounded, '인증 방법',
+                            _challenge.verificationType)),
                   ]),
                   const SizedBox(height: 10),
                   Row(children: [
-                    Expanded(child: _infoCard(Icons.repeat_rounded, '인증 주기', '매일')),
+                    Expanded(
+                        child: _infoCard(
+                            Icons.category_rounded, '카테고리', _challenge.category)),
                     const SizedBox(width: 10),
-                    Expanded(child: _infoCard(Icons.schedule_rounded, '마감 시간', '23:00')),
+                    Expanded(
+                        child: _infoCard(Icons.how_to_reg_rounded, '승인',
+                            _challenge.needsLeaderApproval ? '방장 승인' : '자동')),
                   ]),
 
                   // 대결 방식
@@ -223,14 +241,14 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                         borderRadius: BorderRadius.circular(16)),
                     child: Column(
                       children: [
-                        _ruleRow(Icons.groups_rounded, '5:5 팀 배틀',
-                            '인원이 모이면 두 팀으로 나뉘어 챌린지가 시작돼요.', false),
+                        _ruleRow(Icons.groups_rounded, '팀 배틀',
+                            '정원이 차면 서버가 두 팀으로 나눠 챌린지를 시작해요.'),
                         const Divider(height: 1, color: BC.line),
                         _ruleRow(Icons.bar_chart_rounded, '참여율로 승부',
-                            '기간 동안 팀 누적 인증 참여율이 더 높은 팀이 이겨요.', false),
+                            '기간 동안 팀 누적 인증 참여율이 더 높은 팀이 이겨요.'),
                         const Divider(height: 1, color: BC.line),
                         _ruleRow(Icons.emoji_events_rounded, '승리 보상',
-                            '이긴 팀이 전체 예치 코인을 나눠 갖고 진 팀은 소멸돼요. 비기면 전원 반환!', true),
+                            '이긴 팀이 예치 코인을 나눠 갖고, 비기면 전원 환불돼요.'),
                       ],
                     ),
                   ),
@@ -255,14 +273,14 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                                   fontWeight: FontWeight.w700,
                                   color: BC.o2)),
                           const Spacer(),
-                          const Text.rich(TextSpan(children: [
+                          Text.rich(TextSpan(children: [
                             TextSpan(
-                                text: '500',
-                                style: TextStyle(
+                                text: CoinPill.format(_challenge.depositCoins),
+                                style: const TextStyle(
                                     fontSize: 28,
                                     fontWeight: FontWeight.w800,
                                     color: BC.oMain)),
-                            TextSpan(
+                            const TextSpan(
                                 text: '코인',
                                 style: TextStyle(
                                     fontSize: 15,
@@ -278,7 +296,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                           Icon(Icons.verified_user_rounded, size: 18, color: BC.oMain),
                           SizedBox(width: 7),
                           Expanded(
-                            child: Text('이기면 예치코인을 돌려받고 상금까지 받아요. 비기면 전원 반환돼요',
+                            child: Text('잔액이 모자라면 참가할 수 없어요. 참가를 취소하면 환불돼요.',
                                 style: TextStyle(
                                     fontSize: 13,
                                     color: BC.ink2,
@@ -299,21 +317,23 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                 color: Colors.white,
                 border: Border(top: BorderSide(color: BC.line)),
               ),
-              child: joined
+              child: _joined || !_challenge.isReady
                   ? Container(
                       height: 56,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                           color: const Color(0xFFD4D2CD),
                           borderRadius: BorderRadius.circular(16)),
-                      child: const Text('참여 완료',
-                          style: TextStyle(
+                      child: Text(_joined ? '참여 완료' : '모집이 끝난 챌린지예요',
+                          style: const TextStyle(
                               color: Colors.white,
                               fontSize: 17,
                               fontWeight: FontWeight.w800)),
                     )
                   : PrimaryButton(
-                      label: _joining ? '참여하는 중...' : '500코인 걸고 참여하기',
+                      label: _joining
+                          ? '참여하는 중...'
+                          : '${CoinPill.format(_challenge.depositCoins)}코인 걸고 참여하기',
                       leadingIcon: Icons.monetization_on_rounded,
                       enabled: !_joining,
                       onTap: _join,
@@ -345,23 +365,27 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
             child: Icon(icon, size: 20, color: BC.oMain),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: const TextStyle(
-                      fontSize: 12, color: BC.ink2, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text(value,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        fontSize: 12, color: BC.ink2, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _ruleRow(IconData icon, String title, String desc, bool last) {
+  Widget _ruleRow(IconData icon, String title, String desc) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
@@ -391,4 +415,230 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
       ),
     );
   }
+}
+
+/// 참가 신청에 필요한 값 묶음.
+class _JoinSetup {
+  final double latitude;
+  final double longitude;
+  final int radiusMeters;
+  final String? placeName;
+  final String? statement;
+
+  _JoinSetup({
+    required this.latitude,
+    required this.longitude,
+    required this.radiusMeters,
+    this.placeName,
+    this.statement,
+  });
+}
+
+/// 참가 전 인증 위치를 잡는 시트.
+///
+/// 서버가 gpsLat/gpsLng/gpsRadiusMeters를 필수로 받기 때문에, 위치를 못 받으면
+/// 참가 자체를 진행할 수 없다.
+class _JoinLocationSheet extends StatefulWidget {
+  const _JoinLocationSheet();
+  @override
+  State<_JoinLocationSheet> createState() => _JoinLocationSheetState();
+}
+
+class _JoinLocationSheetState extends State<_JoinLocationSheet> {
+  static const _radiusOptions = [50, 100, 200, 500];
+  int _radiusIndex = 1;
+
+  final _statementCtrl = TextEditingController();
+  final _placeCtrl = TextEditingController();
+
+  double? _latitude;
+  double? _longitude;
+  bool _locating = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _detect();
+  }
+
+  @override
+  void dispose() {
+    _statementCtrl.dispose();
+    _placeCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _detect() async {
+    setState(() {
+      _locating = true;
+      _error = null;
+    });
+    try {
+      final position = await LocationService.current();
+      if (!mounted) return;
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _locating = false;
+      });
+    } on LocationException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _locating = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lat = _latitude;
+    final lng = _longitude;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            22, 14, 22, 20 + MediaQuery.of(context).padding.bottom),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration:
+                      BoxDecoration(color: BC.line, borderRadius: BorderRadius.circular(3)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('인증 위치 등록',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              const Text('이 챌린지에서 인증할 기준 위치예요. 참가 후에는 이 반경 안에서만 인증할 수 있어요.',
+                  style: TextStyle(fontSize: 13, color: BC.ink2, height: 1.45)),
+              const SizedBox(height: 18),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+                decoration: BoxDecoration(
+                    color: BC.bg, borderRadius: BorderRadius.circular(14)),
+                child: Column(
+                  children: [
+                    if (_locating)
+                      const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child:
+                            CircularProgressIndicator(color: BC.oMain, strokeWidth: 2.4),
+                      )
+                    else
+                      Icon(
+                        lat == null
+                            ? Icons.location_disabled_rounded
+                            : Icons.location_on_rounded,
+                        color: lat == null ? BC.ink3 : BC.oMain,
+                        size: 26,
+                      ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _locating
+                          ? '현재 위치를 확인하는 중…'
+                          : (lat == null || lng == null
+                              ? (_error ?? '위치를 확인하지 못했어요')
+                              : '위도 ${lat.toStringAsFixed(5)}, 경도 ${lng.toStringAsFixed(5)}'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 13, color: BC.ink2, fontWeight: FontWeight.w600),
+                    ),
+                    if (!_locating) ...[
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: _detect,
+                        child: const Text('다시 확인',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: BC.oMain)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text('인증 반경',
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              Row(children: [
+                for (int i = 0; i < _radiusOptions.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 7),
+                  Expanded(
+                    child: SelectChip(
+                      label: '${_radiusOptions[i]}m',
+                      selected: _radiusIndex == i,
+                      onTap: () => setState(() => _radiusIndex = i),
+                    ),
+                  ),
+                ]
+              ]),
+              const SizedBox(height: 18),
+              const Text('장소 이름 (선택)',
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _placeCtrl,
+                maxLength: 200,
+                decoration: _deco('예: 집 앞 헬스장'),
+              ),
+              const SizedBox(height: 6),
+              const Text('참여 각오 (선택)',
+                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _statementCtrl,
+                maxLines: 2,
+                decoration: _deco('방장에게 보여줄 한마디를 남겨보세요'),
+              ),
+              const SizedBox(height: 18),
+              PrimaryButton(
+                label: '이 위치로 참가하기',
+                enabled: lat != null && lng != null,
+                onTap: () {
+                  if (lat == null || lng == null) return;
+                  Navigator.of(context).pop(_JoinSetup(
+                    latitude: lat,
+                    longitude: lng,
+                    radiusMeters: _radiusOptions[_radiusIndex],
+                    placeName: _placeCtrl.text.trim(),
+                    statement: _statementCtrl.text.trim(),
+                  ));
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _deco(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: BC.ink3),
+        counterText: '',
+        filled: true,
+        fillColor: BC.bg,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(13),
+            borderSide: const BorderSide(color: BC.line, width: 1.5)),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(13),
+            borderSide: const BorderSide(color: BC.oMain, width: 1.5)),
+      );
 }

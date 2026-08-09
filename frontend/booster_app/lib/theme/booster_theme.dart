@@ -40,10 +40,10 @@ class BC {
   );
 
   static List<BoxShadow> cardShadow = [
-    BoxShadow(color: Colors.black.withOpacity(.04), blurRadius: 16, offset: const Offset(0, 4)),
+    BoxShadow(color: Colors.black.withValues(alpha: .04), blurRadius: 16, offset: const Offset(0, 4)),
   ];
   static List<BoxShadow> ctaShadow = [
-    BoxShadow(color: const Color(0xFFFF4D06).withOpacity(.32), blurRadius: 20, offset: const Offset(0, 8)),
+    BoxShadow(color: const Color(0xFFFF4D06).withValues(alpha: .32), blurRadius: 20, offset: const Offset(0, 8)),
   ];
 }
 
@@ -55,7 +55,7 @@ class BoosterTheme {
       colorScheme: ColorScheme.fromSeed(
         seedColor: BC.oMain,
         primary: BC.oMain,
-        background: BC.bg,
+        surface: BC.bg,
       ),
       fontFamily: 'Pretendard',
       splashFactory: InkRipple.splashFactory,

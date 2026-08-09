@@ -62,7 +62,7 @@ class _MainScaffoldState extends State<MainScaffold> {
       select: _select,
       child: PopScope(
         canPop: false,
-        onPopInvoked: (didPop) {
+        onPopInvokedWithResult: (didPop, result) {
           if (didPop) return;
           final nav = _navKeys[_index].currentState;
           if (nav != null && nav.canPop()) {
@@ -187,7 +187,7 @@ class _CenterTab extends StatelessWidget {
                   border: Border.all(color: Colors.white, width: 4),
                   boxShadow: [
                     BoxShadow(
-                        color: BC.o2.withOpacity(.45),
+                        color: BC.o2.withValues(alpha: .45),
                         blurRadius: 18,
                         offset: const Offset(0, 8)),
                   ],
