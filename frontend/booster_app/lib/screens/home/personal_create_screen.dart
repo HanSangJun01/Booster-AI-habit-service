@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import '../../core/api_client.dart';
 import '../../core/location.dart';
 import '../../models/personal_location.dart';
 import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import '../../widgets/location_map.dart';
 
 /// 개인 인증 기준 위치 등록/변경 (`/api/users/me/location`).
 ///
@@ -13,8 +15,9 @@ import '../../widgets/common.dart';
 /// 등록한 좌표에서 [radiusMeters] 안에 있어야 `POST /api/personal/check-in`이
 /// 성공한다.
 ///
-/// 좌표는 사용자가 지도에서 찍는 대신 현재 기기 위치로 잡는다 — 지도 SDK가
-/// 아직 없고, "지금 있는 곳"이 인증 장소인 경우가 대부분이라서다.
+/// 좌표는 현재 기기 위치로 먼저 잡고, 지도에서 미세 조정할 수 있게 한다
+/// ("지금 있는 곳"이 인증 장소인 경우가 대부분이지만, 건물 안에서 GPS가
+/// 튀거나 "집 앞"처럼 조금 떨어진 지점을 잡고 싶을 때가 있다).
 class PersonalCreateScreen extends StatefulWidget {
   /// 이미 등록된 위치가 있으면 변경 모드로 연다.
   final PersonalLocation? current;
@@ -90,6 +93,29 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
     }
   }
 
+  /// 지도에서 기준점을 직접 옮긴다. 반경은 이 화면이 들고 있으므로, 피커는
+  /// 좌표만 돌려주고 반경은 현재 선택값을 그대로 보여주기만 한다.
+  Future<void> _openPicker() async {
+    final lat = _latitude;
+    final lng = _longitude;
+    if (lat == null || lng == null) return;
+
+    final picked = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        builder: (_) => LocationPickerScreen(
+          initialLat: lat,
+          initialLng: lng,
+          radiusMeters: _radiusOptions[_radiusIndex],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _latitude = picked.latitude;
+      _longitude = picked.longitude;
+    });
+  }
+
   Future<void> _submit() async {
     final lat = _latitude;
     final lng = _longitude;
@@ -131,7 +157,7 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
                 children: [
                   _card(
                     '1. 현재 위치',
-                    sub: '지금 있는 곳을 인증 기준으로 잡아요.',
+                    sub: '지금 있는 곳을 인증 기준으로 잡아요. 지도를 눌러 조정할 수 있어요.',
                     child: _locationBox(),
                   ),
                   _card(
@@ -174,60 +200,29 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
   Widget _locationBox() {
     final lat = _latitude;
     final lng = _longitude;
+    final hasPoint = lat != null && lng != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: double.infinity,
-          height: 150,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-                colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFD3D7DE)),
+        if (hasPoint)
+          LocationPreviewMap(
+            lat: lat,
+            lng: lng,
+            radiusMeters: _radiusOptions[_radiusIndex],
+            onTap: _openPicker,
+          )
+        else
+          _mapPlaceholder(),
+
+        // 타일은 네트워크가 있어야 뜬다. GPS는 잡혔는데 데이터가 안 되는
+        // 상황에서 지도만 두면 화면이 빈 회색이 되므로, 좌표는 항상 남긴다.
+        if (hasPoint) ...[
+          const SizedBox(height: 8),
+          Text(
+            '위도 ${lat.toStringAsFixed(5)}  ·  경도 ${lng.toStringAsFixed(5)}',
+            style: const TextStyle(fontSize: 12.5, color: BC.ink3),
           ),
-          child: Center(
-            child: _locating
-                ? const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 26,
-                        height: 26,
-                        child: CircularProgressIndicator(color: BC.oMain, strokeWidth: 2.5),
-                      ),
-                      SizedBox(height: 10),
-                      Text('현재 위치를 확인하는 중…',
-                          style: TextStyle(fontSize: 13, color: Color(0xFF8A8A92))),
-                    ],
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        lat == null ? Icons.location_disabled_rounded : Icons.location_on_rounded,
-                        color: lat == null ? BC.ink3 : BC.oMain,
-                        size: 28,
-                      ),
-                      const SizedBox(height: 6),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        child: Text(
-                          lat == null || lng == null
-                              ? (_locationError ?? '위치를 확인하지 못했어요')
-                              : '위도 ${lat.toStringAsFixed(5)}\n경도 ${lng.toStringAsFixed(5)}',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              height: 1.4,
-                              color: Color(0xFF6A6A72)),
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ),
+        ],
         const SizedBox(height: 12),
         GestureDetector(
           onTap: _locating ? null : _detectLocation,
@@ -251,6 +246,55 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 좌표가 아직 없을 때(위치 확인 중이거나 실패) 지도 자리를 채우는 박스.
+  /// 지도는 좌표가 있어야 그릴 수 있어서, 이 상태에서는 지도를 띄우지 않는다.
+  Widget _mapPlaceholder() {
+    return Container(
+      width: double.infinity,
+      height: 220,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFFEEF1F5), Color(0xFFE4E8EE)]),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFD3D7DE)),
+      ),
+      child: Center(
+        child: _locating
+            ? const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: CircularProgressIndicator(color: BC.oMain, strokeWidth: 2.5),
+                  ),
+                  SizedBox(height: 10),
+                  Text('현재 위치를 확인하는 중…',
+                      style: TextStyle(fontSize: 13, color: Color(0xFF8A8A92))),
+                ],
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.location_disabled_rounded, color: BC.ink3, size: 28),
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    child: Text(
+                      _locationError ?? '위치를 확인하지 못했어요',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                          color: Color(0xFF6A6A72)),
+                    ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 
