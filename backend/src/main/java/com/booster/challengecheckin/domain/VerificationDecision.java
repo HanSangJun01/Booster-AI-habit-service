@@ -20,11 +20,15 @@ public class VerificationDecision {
     @Column(name = "submission_id", nullable = false, unique = true)
     private Long submissionId;
 
-    @Column(name = "final_passed", nullable = false)
-    private boolean finalPassed;
+    @Column(name = "final_passed")
+    private Boolean finalPassed;
 
     @Column(name = "failure_reason", length = 200)
     private String failureReason;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "decision_status", nullable = false, length = 20)
+    private DecisionStatus decisionStatus;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -32,5 +36,12 @@ public class VerificationDecision {
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) createdAt = LocalDateTime.now();
+        if (decisionStatus == null) decisionStatus = DecisionStatus.CONFIRMED;
+    }
+
+    public void confirm(Boolean finalPassed, String failureReason) {
+        this.finalPassed = finalPassed;
+        this.failureReason = failureReason;
+        this.decisionStatus = DecisionStatus.CONFIRMED;
     }
 }

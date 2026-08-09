@@ -31,8 +31,26 @@ services:
       DB_PASSWORD: booster
       # 운영 전환 시 반드시 강력한 시크릿으로 교체
       JWT_SECRET: booster-local-dev-secret-key-please-change-in-production-0123456789
+      # AI 인증 서비스 URL. compose 네트워크에서는 서비스명으로 접근.
+      AI_SERVICE_URL: http://ai-service:8000
     ports:
       - "8080:8080"
+
+  # AI 인증 서비스 (FastAPI + Claude Vision).
+  # opt-in: 기본 `docker compose up`에 포함되지 않는다.
+  # 사용하려면 `docker compose --profile ai up -d`.
+  # 사전 준비: ai-service/.env 에 ANTHROPIC_API_KEY 등 설정.
+  ai-service:
+    profiles: [ai]
+    build: ./ai-service
+    container_name: booster-ai-service
+    env_file:
+      - ai-service/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      # 판정된 이미지를 호스트에서도 확인할 수 있게 마운트 (개발 편의)
+      - ./ai-service/storage:/app/storage
 
 volumes:
   booster-db-data:

@@ -2,9 +2,11 @@ package com.booster.challengecheckin.service;
 
 import com.booster.challenge.domain.Challenge;
 import com.booster.challenge.domain.ChallengeStatus;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.challenge.repository.ChallengeRepository;
 import com.booster.challengecheckin.domain.ChallengeCheckIn;
 import com.booster.challengecheckin.domain.CheckInStatus;
+import com.booster.challengecheckin.domain.DecisionStatus;
 import com.booster.challengecheckin.domain.GpsVerificationResult;
 import com.booster.challengecheckin.domain.VerificationDecision;
 import com.booster.challengecheckin.domain.VerificationSubmission;
@@ -112,6 +114,20 @@ public class ChallengeCheckInService {
             }
         }
 
+        // 4-1. verification_type 스코프 검증 — AI 인증 파트 대응 (Phase 2)
+        //  - GPS/AI/GPS_PHOTO_AI만 지원. 나머지는 미구현.
+        VerificationType verificationType = challenge.getVerificationType();
+        if (verificationType != VerificationType.GPS
+                && verificationType != VerificationType.AI
+                && verificationType != VerificationType.GPS_PHOTO_AI) {
+            throw new IllegalStateException(
+                    "Unsupported verification type: " + verificationType);
+        }
+        boolean needsGps = (verificationType == VerificationType.GPS
+                || verificationType == VerificationType.GPS_PHOTO_AI);
+        boolean needsAi = (verificationType == VerificationType.AI
+                || verificationType == VerificationType.GPS_PHOTO_AI);
+
         // 5. VerificationSubmission 생성
         int attemptNumber = submissionRepository.countByCheckInId(checkIn.getId()) + 1;
         VerificationSubmission submission = submissionRepository.save(
@@ -122,37 +138,68 @@ public class ChallengeCheckInService {
                         .attemptNumber(attemptNumber)
                         .build());
 
-        // 6. GPS 판정 → GpsVerificationResult 저장
-        double distanceMeters = gpsVerificationEvaluator.calculateDistanceMeters(
-                participant.getGpsLat(), participant.getGpsLng(), submittedLat, submittedLng);
-        boolean withinRadius = distanceMeters <= participant.getGpsRadiusMeters();
+        // 6. GPS 판정 → GpsVerificationResult 저장 (verification_type이 GPS를 요구할 때만)
+        Boolean gpsWithinRadius = null;
+        if (needsGps) {
+            double distanceMeters = gpsVerificationEvaluator.calculateDistanceMeters(
+                    participant.getGpsLat(), participant.getGpsLng(), submittedLat, submittedLng);
+            gpsWithinRadius = distanceMeters <= participant.getGpsRadiusMeters();
 
-        gpsResultRepository.save(
-                GpsVerificationResult.builder()
-                        .submissionId(submission.getId())
-                        .targetLat(participant.getGpsLat())
-                        .targetLng(participant.getGpsLng())
-                        .radiusMeters(participant.getGpsRadiusMeters())
-                        .distanceMeters(BigDecimal.valueOf(distanceMeters).setScale(2, RoundingMode.HALF_UP))
-                        .isWithinRadius(withinRadius)
-                        .build());
+            gpsResultRepository.save(
+                    GpsVerificationResult.builder()
+                            .submissionId(submission.getId())
+                            .targetLat(participant.getGpsLat())
+                            .targetLng(participant.getGpsLng())
+                            .radiusMeters(participant.getGpsRadiusMeters())
+                            .distanceMeters(BigDecimal.valueOf(distanceMeters).setScale(2, RoundingMode.HALF_UP))
+                            .isWithinRadius(gpsWithinRadius)
+                            .build());
+        }
 
-        // 7. VerificationDecision 저장 (MVP: GPS 결과만으로 최종 판정)
-        String failureReason = withinRadius ? null : "GPS_OUT_OF_RADIUS";
+        // 7. VerificationDecision 저장
+        //  - AI 결과가 필요하면 PENDING으로 유보, /ai-verification 콜에서 확정
+        //  - GPS 단독이면 즉시 CONFIRMED
+        DecisionStatus decisionStatus;
+        Boolean finalPassed;
+        String failureReason;
+        if (needsAi) {
+            decisionStatus = DecisionStatus.PENDING;
+            finalPassed = null;
+            failureReason = null;
+        } else {
+            decisionStatus = DecisionStatus.CONFIRMED;
+            finalPassed = gpsWithinRadius;
+            failureReason = Boolean.TRUE.equals(gpsWithinRadius) ? null : "GPS_OUT_OF_RADIUS";
+        }
         decisionRepository.save(
                 VerificationDecision.builder()
                         .submissionId(submission.getId())
-                        .finalPassed(withinRadius)
+                        .decisionStatus(decisionStatus)
+                        .finalPassed(finalPassed)
                         .failureReason(failureReason)
                         .build());
 
         // 8. ChallengeCheckIn 상태 갱신
-        CheckInStatus finalStatus = withinRadius ? CheckInStatus.SUCCESS : CheckInStatus.FAILED;
-        LocalDateTime verifiedAt = withinRadius ? LocalDateTime.now() : null;
+        //  - PENDING(AI 대기)은 체크인 상태도 PENDING 유지
+        CheckInStatus finalStatus;
+        LocalDateTime verifiedAt;
+        if (decisionStatus == DecisionStatus.PENDING) {
+            finalStatus = CheckInStatus.PENDING;
+            verifiedAt = null;
+        } else if (Boolean.TRUE.equals(gpsWithinRadius)) {
+            finalStatus = CheckInStatus.SUCCESS;
+            verifiedAt = LocalDateTime.now();
+        } else {
+            finalStatus = CheckInStatus.FAILED;
+            verifiedAt = null;
+        }
         checkIn.updateStatus(finalStatus, verifiedAt);
         ChallengeCheckIn saved = checkInRepository.save(checkIn);
 
-        if (withinRadius) {
+        if (decisionStatus == DecisionStatus.PENDING) {
+            log.info("CheckIn PENDING (awaiting AI): participantId={}, submissionId={}",
+                    participant.getId(), submission.getId());
+        } else if (Boolean.TRUE.equals(gpsWithinRadius)) {
             log.info("CheckIn SUCCESS: participantId={}, date={}", participant.getId(), today);
             if (participant.getTeamId() != null) {
                 updateTeamParticipationRate(participant.getTeamId());
@@ -162,6 +209,64 @@ public class ChallengeCheckInService {
         }
 
         return CheckInResponse.from(saved);
+    }
+
+    /**
+     * AI 인증 콜에서 판정 결과를 받아 verification_decisions를 확정한다.
+     * verification_type=AI면 GPS 무관, GPS_PHOTO_AI면 GPS AND AI 조건.
+     */
+    public void finalizeDecisionAfterAi(Long submissionId, boolean aiPassed) {
+        VerificationSubmission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("VerificationSubmission", submissionId));
+        ChallengeCheckIn checkIn = checkInRepository.findById(submission.getCheckInId())
+                .orElseThrow(() -> new ResourceNotFoundException("ChallengeCheckIn", submission.getCheckInId()));
+        Challenge challenge = challengeRepository.findById(checkIn.getChallengeId())
+                .orElseThrow(() -> new ResourceNotFoundException("Challenge", checkIn.getChallengeId()));
+        VerificationDecision decision = decisionRepository.findBySubmissionId(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "VerificationDecision for submissionId=" + submissionId));
+
+        if (decision.getDecisionStatus() == DecisionStatus.CONFIRMED) {
+            throw new IllegalStateException(
+                    "Verification decision already confirmed: submissionId=" + submissionId);
+        }
+
+        VerificationType vt = challenge.getVerificationType();
+        boolean gpsPassed;
+        if (vt == VerificationType.AI) {
+            gpsPassed = true;
+        } else if (vt == VerificationType.GPS_PHOTO_AI) {
+            gpsPassed = gpsResultRepository.findBySubmissionId(submissionId)
+                    .map(GpsVerificationResult::isWithinRadius)
+                    .orElse(false);
+        } else {
+            throw new IllegalStateException(
+                    "finalizeDecisionAfterAi called for non-AI type: " + vt);
+        }
+
+        boolean finalPassed = gpsPassed && aiPassed;
+        String failureReason;
+        if (finalPassed) {
+            failureReason = null;
+        } else if (!gpsPassed) {
+            failureReason = "GPS_OUT_OF_RADIUS";
+        } else {
+            failureReason = "AI_REJECTED";
+        }
+        decision.confirm(finalPassed, failureReason);
+        decisionRepository.save(decision);
+
+        CheckInStatus finalStatus = finalPassed ? CheckInStatus.SUCCESS : CheckInStatus.FAILED;
+        LocalDateTime verifiedAt = finalPassed ? LocalDateTime.now() : null;
+        checkIn.updateStatus(finalStatus, verifiedAt);
+        checkInRepository.save(checkIn);
+
+        if (finalPassed && checkIn.getTeamId() != null) {
+            updateTeamParticipationRate(checkIn.getTeamId());
+        }
+
+        log.info("Decision finalized after AI: submissionId={}, finalPassed={}, verificationType={}",
+                submissionId, finalPassed, vt);
     }
 
     @Transactional(readOnly = true)

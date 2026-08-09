@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Env / secrets
+.env
+.env.local
+
+# Storage (uploaded images)
+storage/*
+!storage/.gitkeep
+
+# Sample test images (personal, may include private photos)
+samples/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
