@@ -3,6 +3,7 @@ package com.booster.recovery.scheduler;
 import com.booster.recovery.service.RecoveryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +22,7 @@ public class DailyMissionScheduler {
     private final RecoveryService recoveryService;
 
     @Scheduled(cron = "0 1 0 * * *", zone = "Asia/Seoul")
+    @SchedulerLock(name = "dailyMission", lockAtMostFor = "PT30M")
     public void runDaily() {
         log.info("[DailyMissionScheduler] start");
         int expired = recoveryService.expireOverdueMissions();   // ①

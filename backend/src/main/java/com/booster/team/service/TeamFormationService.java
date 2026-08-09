@@ -13,7 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Random;
 
 @Slf4j
 @Service
@@ -49,8 +51,8 @@ public class TeamFormationService {
 
         log.info("Forming teams for challenge {}", challengeId);
 
-        List<ChallengeParticipant> shuffled = new ArrayList<>(confirmed);
-        Collections.shuffle(shuffled);
+        // 결정적 배정 — 어느 인스턴스가 실행해도 동일 결과 (시드=challengeId)
+        List<ChallengeParticipant> shuffled = orderForAssignment(confirmed, challengeId);
 
         Team teamA = teamRepository.save(Team.builder()
                 .challengeId(challengeId)
@@ -72,6 +74,21 @@ public class TeamFormationService {
         }
 
         log.info("Teams formed: teamA={} teamB={}", teamA.getId(), teamB.getId());
+    }
+
+    /**
+     * 팀 배정용 참여자 순서를 결정적으로 만든다.
+     *
+     * <p>{@code findByChallengeIdAndStatus} 는 ORDER BY 가 없어 DB row 순서가 비보장이다.
+     * seed 셔플만으로는 <em>입력 순서</em>가 인스턴스마다 다르면 결과도 달라진다. 따라서 먼저
+     * id 로 안정 정렬해 입력 순서를 고정한 뒤 seed(=challengeId) 셔플을 적용해야, 크로스
+     * 인스턴스 결정성(어느 인스턴스가 실행해도 동일 A/B 배정)이 성립한다.
+     */
+    static List<ChallengeParticipant> orderForAssignment(List<ChallengeParticipant> confirmed, long seed) {
+        List<ChallengeParticipant> ordered = new ArrayList<>(confirmed);
+        ordered.sort(Comparator.comparing(ChallengeParticipant::getId)); // 안정 입력순서 고정
+        Collections.shuffle(ordered, new Random(seed));                  // seed=challengeId 결정적 셔플
+        return ordered;
     }
 
     @Transactional(readOnly = true)
