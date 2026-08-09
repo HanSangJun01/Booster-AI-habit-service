@@ -84,12 +84,14 @@ class _VerifyScreenState extends State<VerifyScreen> {
         _recovery = results[2] as RecoveryStatus;
         _challenge = challenge;
         _challengeCheckIns = challengeCheckIns;
-        _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-      setState(() => _loading = false);
+    } finally {
+      // 어떤 예외로 빠져나가든 스피너는 반드시 걷는다. 안 그러면 이 탭이
+      // 앱 재시작 전까지 죽는다.
+      if (mounted) setState(() => _loading = false);
     }
   }
 

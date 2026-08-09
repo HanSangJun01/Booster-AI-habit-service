@@ -89,8 +89,15 @@ class _MyPageScreenState extends State<MyPageScreen> {
     }
   }
 
+  /// 로그아웃·탈퇴 후 로그인 화면으로.
+  ///
+  /// 반드시 **루트** Navigator여야 한다. 이 화면은 `MainScaffold`의
+  /// `IndexedStack` 안에 있는 탭별 Navigator 위에 올라가 있어서, 그냥
+  /// `Navigator.of(context)`를 쓰면 마이페이지 탭의 스택만 갈아치운다.
+  /// 그러면 `MainScaffold`와 나머지 탭 넷이 그대로 살아 있어서, 뒤로가기를
+  /// 누르면 세션이 비워진 채 홈 탭으로 돌아가 401만 반복하게 된다.
   void _toLogin() {
-    Navigator.of(context).pushAndRemoveUntil(
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
     );

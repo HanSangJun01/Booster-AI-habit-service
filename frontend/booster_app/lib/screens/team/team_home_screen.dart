@@ -68,15 +68,14 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
       if (!mounted) return;
       setState(() {
         _challenge = challenge;
-        _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-      setState(() {
-        _challenge = null;
-        _loading = false;
-      });
+      setState(() => _challenge = null);
+    } finally {
+      // 어떤 예외로 빠져나가든 스피너는 반드시 걷는다.
+      if (mounted) setState(() => _loading = false);
     }
   }
 

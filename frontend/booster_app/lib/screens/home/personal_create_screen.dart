@@ -82,14 +82,19 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
       setState(() {
         _latitude = position.latitude;
         _longitude = position.longitude;
-        _locating = false;
       });
     } on LocationException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _locationError = e.message;
-        _locating = false;
-      });
+      setState(() => _locationError = e.message);
+    } catch (_) {
+      // LocationException만 잡으면 부족하다. LocationService가 감싸는 건
+      // getCurrentPosition뿐이고, 그 앞의 권한 확인·요청 단계에서 geolocator가
+      // PlatformException 같은 걸 그대로 던진다. 여기서 안 받으면 _locating이
+      // true로 남아 저장 버튼이 영영 비활성이 되고, 위치를 등록할 방법이 없어진다.
+      if (!mounted) return;
+      setState(() => _locationError = '위치를 확인하지 못했어요. 잠시 후 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _locating = false);
     }
   }
 

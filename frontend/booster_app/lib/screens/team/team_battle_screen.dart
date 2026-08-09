@@ -50,14 +50,15 @@ class _TeamBattleScreenState extends State<TeamBattleScreen> {
         _detail = detail;
         _settlement = settlement;
         _error = null;
-        _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.message;
-        _loading = false;
       });
+    } finally {
+      // 어떤 예외로 빠져나가든 스피너는 반드시 걷는다.
+      if (mounted) setState(() => _loading = false);
     }
   }
 

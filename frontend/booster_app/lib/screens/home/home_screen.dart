@@ -74,12 +74,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _location = results[1] as PersonalLocation?;
         _recovery = results[2] as RecoveryStatus;
         _totalAttendance = (results[3] as AppUser).totalAttendance;
-        _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-      setState(() => _loading = false);
+    } finally {
+      // ApiException이 아닌 예외(플러그인 오류 등)가 나면 _loading이 true로
+      // 남는데, 그러면 RefreshIndicator 자체가 안 그려져서 당겨서 새로고침도
+      // 못 한다 — 앱을 껐다 켜는 것 말고 빠져나갈 길이 없어진다.
+      if (mounted) setState(() => _loading = false);
     }
   }
 

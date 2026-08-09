@@ -480,14 +480,18 @@ class _JoinLocationSheetState extends State<_JoinLocationSheet> {
       setState(() {
         _latitude = position.latitude;
         _longitude = position.longitude;
-        _locating = false;
       });
     } on LocationException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _locating = false;
-      });
+      setState(() => _error = e.message);
+    } catch (_) {
+      // 권한 확인·요청 단계에서 geolocator가 던지는 PlatformException 등.
+      // 안 받으면 _locating이 true로 남아 "이 위치로 참가하기"가 영영
+      // 비활성이 되고, 시트를 닫는 것 말고는 챌린지에 참가할 길이 없어진다.
+      if (!mounted) return;
+      setState(() => _error = '위치를 확인하지 못했어요. 잠시 후 다시 시도해주세요');
+    } finally {
+      if (mounted) setState(() => _locating = false);
     }
   }
 

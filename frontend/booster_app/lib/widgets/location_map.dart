@@ -277,7 +277,13 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
           // 화면 중앙 고정 핀. 지도 레이어 위에 얹되 제스처는 통과시킨다.
           IgnorePointer(
             child: Center(
-              // 핀 끝(뾰족한 아래쪽)이 중앙에 오도록 아이콘 높이의 절반만큼 띄운다.
+              // 핀 끝(뾰족한 아래쪽)을 화면 정중앙에 맞춘다.
+              //
+              // Center는 패딩까지 포함한 상자를 기준으로 가운데를 잡는다. 아래쪽에
+              // 아이콘 높이와 같은 여백을 주면 상자 높이가 아이콘의 두 배가 되고,
+              // 아이콘은 그 위쪽 절반을 차지하므로 아이콘의 밑변이 정확히 중앙에
+              // 놓인다. (여백을 절반만 주면 핀의 한가운데가 중앙에 온다 — 그러면
+              // 사용자가 찍는 지점이 핀 끝보다 위로 밀린다.)
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 42),
                 child: _pin(size: 42),
