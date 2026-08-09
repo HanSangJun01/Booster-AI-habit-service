@@ -16,6 +16,7 @@ import com.booster.challengecheckin.repository.VerificationSubmissionRepository;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.ResourceNotFoundException;
+import com.booster.shared.common.UnauthorizedException;
 import com.booster.shared.gps.GpsVerificationEvaluator;
 import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
@@ -23,6 +24,7 @@ import jakarta.persistence.OptimisticLockException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -122,20 +124,32 @@ public class ChallengeCheckInService {
         }
 
         // 4. 체크인 레코드 생성 (PENDING → 판정 후 SUCCESS/FAILED로 갱신)
+        // (BS-39 I1) 삽입은 REQUIRES_NEW 헬퍼에서만 하고, UNIQUE 위반(같은 유저 동시 첫 체크인)은
+        // 여기 — 오염되지 않은 바깥 트랜잭션 — 에서 잡아 재조회한다. 헬퍼 안에서 잡아 재조회하면
+        // 오염된 세션이 flush되며 AssertionFailure(500)로 터진다.
         ChallengeCheckIn checkIn;
         if (existing.isPresent()) {
             checkIn = existing.get();
         } else {
-            checkIn = checkInInsertHelper.insertOrFetch(
-                    ChallengeCheckIn.builder()
-                            .participantId(participant.getId())
-                            .challengeId(challengeId)
-                            .teamId(participant.getTeamId())
-                            .checkInDate(today)
-                            .status(CheckInStatus.PENDING)
-                            .build(),
-                    participant.getId(),
-                    today);
+            try {
+                checkIn = checkInInsertHelper.insertInNewTransaction(
+                        ChallengeCheckIn.builder()
+                                .participantId(participant.getId())
+                                .challengeId(challengeId)
+                                .teamId(participant.getTeamId())
+                                .checkInDate(today)
+                                .status(CheckInStatus.PENDING)
+                                .build());
+            } catch (DataIntegrityViolationException e) {
+                // 경쟁에서 짐 — 다른 요청이 먼저 오늘자 레코드를 넣었다. 바깥 세션에서 깨끗하게 재조회.
+                checkIn = checkInRepository.findByParticipantIdAndCheckInDate(participant.getId(), today)
+                        .orElseThrow(() -> new IllegalStateException("Check-in conflict unresolvable"));
+                // 이미 SUCCESS로 확정된 레코드면 멱등 반환(동시 요청이 먼저 판정 완료한 경우).
+                // 앞선 요청이 참여율까지 반영했으므로 teamId=null(재계산 불필요).
+                if (checkIn.getStatus() == CheckInStatus.SUCCESS) {
+                    return new CheckInOutcome(CheckInResponse.from(checkIn), null);
+                }
+            }
         }
 
         // 5. VerificationSubmission 생성
@@ -189,7 +203,12 @@ public class ChallengeCheckInService {
     }
 
     @Transactional(readOnly = true)
-    public List<CheckInResponse> getTeamCheckIns(Long challengeId, LocalDate date) {
+    public List<CheckInResponse> getTeamCheckIns(Long userId, Long challengeId, LocalDate date) {
+        // (BS-39 I14) 멤버십 검사. 예전엔 컨트롤러에 @AuthenticationPrincipal도, 여기에 검사도 없어
+        // 비참여자가 임의 challengeId로 남의 팀 체크인 현황을 통째로 조회할 수 있었다(I2 팀채팅 읽기와
+        // 동일 계열). team-detail(getTeamComparison)과 같은 CONFIRMED 참여 게이트를 적용한다.
+        participantRepository.findConfirmedByUserAndChallenge(challengeId, userId)
+                .orElseThrow(() -> new UnauthorizedException("Not a participant of this challenge"));
         return checkInRepository.findByChallengeIdAndCheckInDate(challengeId, date)
                 .stream()
                 .map(CheckInResponse::from)

@@ -40,10 +40,12 @@ public class ChallengeCheckInController {
 
     @GetMapping("/{challengeId}/check-ins")
     public ApiResponse<List<CheckInResponse>> getTeamCheckIns(
+            @AuthenticationPrincipal Long userId,
             @PathVariable Long challengeId,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyyMMdd") LocalDate date) {
+        // (BS-39 I14) 비참여자의 타 챌린지 체크인 현황 열람 차단 — 서비스에서 멤버십 검증.
         LocalDate targetDate = date != null ? date : LocalDate.now(ZoneId.of("Asia/Seoul"));
-        return ApiResponse.success(challengeCheckInService.getTeamCheckIns(challengeId, targetDate));
+        return ApiResponse.success(challengeCheckInService.getTeamCheckIns(userId, challengeId, targetDate));
     }
 
     @GetMapping("/{challengeId}/team-detail")

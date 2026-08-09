@@ -1,5 +1,6 @@
 package com.booster.shared.security;
 
+import com.booster.user.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +28,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String PREFIX = "Bearer ";
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final UserRepository userRepository;
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request,
@@ -36,7 +38,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = resolveToken(request);
         if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             Long userId = jwtTokenProvider.parseUserId(token);
-            if (userId != null) {
+            // (BS-39 I16) 토큰이 유효해도 비활성(탈퇴) 계정이면 인증을 채우지 않는다.
+            // 예전엔 is_active를 로그인 시점에만 검사해, 탈퇴 후에도 발급된 JWT가 만료 전까지
+            // 그대로 먹혀 좀비 세션(탈퇴 유저의 참여·체크인·코인 소비)이 가능했다.
+            if (userId != null && userRepository.existsByIdAndActiveTrue(userId)) {
                 var authentication = new UsernamePasswordAuthenticationToken(
                         userId, null, List.of());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

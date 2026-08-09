@@ -22,20 +22,17 @@ public class TeamChatService {
     private final ChallengeParticipantRepository participantRepository;
 
     @Transactional(readOnly = true)
-    public Page<ChatMessageResponse> getMessages(Long teamId, Pageable pageable) {
+    public Page<ChatMessageResponse> getMessages(Long userId, Long teamId, Pageable pageable) {
+        // (BS-39 I2) 읽기에도 멤버십 검사 — 이전엔 검사가 없어 비참여자가 남의 팀 채팅을 통째로 읽었다.
+        // (쓰기엔 이미 있었다). 팀 멤버가 아니면 403.
+        assertMember(userId, teamId);
         return chatMessageRepository
                 .findByTeamIdAndDeletedAtIsNullOrderByCreatedAtDesc(teamId, pageable)
                 .map(ChatMessageResponse::from);
     }
 
     public ChatMessageResponse sendMessage(Long senderId, Long teamId, String content) {
-        boolean isMember = participantRepository.findByTeamId(teamId).stream()
-                .anyMatch(p -> p.getUserId().equals(senderId));
-
-        if (!isMember) {
-            log.warn("Unauthorized chat access: userId={}, teamId={}", senderId, teamId);
-            throw new UnauthorizedException("User " + senderId + " is not a member of team " + teamId);
-        }
+        assertMember(senderId, teamId);
 
         ChatMessage message = ChatMessage.builder()
                 .teamId(teamId)
@@ -63,5 +60,15 @@ public class TeamChatService {
         message.softDelete();
         chatMessageRepository.save(message);
         log.info("Chat message deleted: messageId={}, userId={}", messageId, senderId);
+    }
+
+    /** 해당 유저가 팀의 참여자인지 확인 — 아니면 403. 읽기/쓰기 공통 가드. */
+    private void assertMember(Long userId, Long teamId) {
+        boolean isMember = participantRepository.findByTeamId(teamId).stream()
+                .anyMatch(p -> p.getUserId().equals(userId));
+        if (!isMember) {
+            log.warn("Unauthorized chat access: userId={}, teamId={}", userId, teamId);
+            throw new UnauthorizedException("User " + userId + " is not a member of team " + teamId);
+        }
     }
 }
