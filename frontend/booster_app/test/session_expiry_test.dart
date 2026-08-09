@@ -5,7 +5,7 @@
 // 서버의 동작이 아니기 때문이다.
 //
 // 스텁 서버가 떠 있어야 하는 테스트는 서버가 없으면 skip된다:
-//   python3 <scratchpad>/stub_server.py
+//   python3 tool/stub_server.py
 //   flutter test --dart-define=API_BASE_URL=http://localhost:8080/api
 
 import 'dart:io';
@@ -19,12 +19,20 @@ import 'package:http/http.dart' as http;
 
 const _stubBase = 'http://localhost:8080';
 
+/// :8080에 떠 있는 것이 **스텁이 맞는지**까지 확인한다.
+///
+/// 응답이 왔다는 것만으로 스텁이라고 판단하면 안 된다. 같은 포트에 진짜
+/// 백엔드(Spring)가 떠 있으면 `/__stub/ok`에 404를 주는데, 그것도 "응답"이라
+/// 스텁으로 오인한다. 그러면 skip되지 않고 [_setMode]까지 가서
+/// `StateError`로 죽는다 — 서버를 띄워둔 사람에게만 테스트가 깨진다.
+///
+/// 그래서 200 여부와 스텁 전용 응답 형태(`{"mode": ...}`)를 함께 본다.
 Future<bool> _stubAlive() async {
   try {
-    await http
+    final res = await http
         .get(Uri.parse('$_stubBase/__stub/ok'))
         .timeout(const Duration(seconds: 2));
-    return true;
+    return res.statusCode == 200 && res.body.contains('"mode"');
   } catch (_) {
     return false;
   }
