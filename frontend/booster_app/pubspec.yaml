@@ -23,3 +23,24 @@ flutter:
   uses-material-design: true
   assets:
     - assets/booster_emblem.png
+
+  # Pretendard (SIL OFL 1.1) — 라이선스 전문은 assets/fonts/OFL.txt.
+  #
+  # 앱에서 실제로 쓰는 굵기만 넣는다. 9종을 다 넣으면 14MB인데 Thin·Light 등은
+  # 한 번도 안 쓴다. TTF가 아니라 OTF인 이유도 같다 — 같은 글립을 담고도 파일이
+  # 40% 작다(1.5MB vs 2.5MB).
+  fonts:
+    - family: Pretendard
+      fonts:
+        - asset: assets/fonts/Pretendard-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Pretendard-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Pretendard-SemiBold.otf
+          weight: 600
+        - asset: assets/fonts/Pretendard-Bold.otf
+          weight: 700
+        - asset: assets/fonts/Pretendard-ExtraBold.otf
+          weight: 800
+        - asset: assets/fonts/Pretendard-Black.otf
+          weight: 900
