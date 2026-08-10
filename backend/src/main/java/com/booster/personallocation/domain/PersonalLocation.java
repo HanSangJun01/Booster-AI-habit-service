@@ -38,6 +38,17 @@ public class PersonalLocation {
     @Column(name = "place_name")
     private String placeName;
 
+    /** 주간 목표(주당 인증 횟수, 2~7). 주간 채점의 기준값. */
+    @Column(name = "weekly_target_days", nullable = false)
+    private int weeklyTargetDays = 3;
+
+    /**
+     * 목표 변경 예약값. 즉시 반영하면 주 중간에 목표를 낮춰 그 주 채점을 통과할 수 있으므로,
+     * 다음 주 월요일 채점 시점에 {@link #applyPendingTargetIfAny()} 로 승격한다.
+     */
+    @Column(name = "pending_target_days")
+    private Integer pendingTargetDays;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -64,5 +75,18 @@ public class PersonalLocation {
         this.lng = lng;
         this.radiusMeters = radiusMeters;
         this.placeName = placeName;
+    }
+
+    /** 목표 변경 예약. 다음 주 월요일 채점 때 반영된다(진행 중인 주의 기준은 바뀌지 않는다). */
+    public void reserveWeeklyTarget(int targetDays) {
+        this.pendingTargetDays = targetDays;
+    }
+
+    /** 예약된 목표가 있으면 승격한다. 주간 채점 직후 호출. */
+    public void applyPendingTargetIfAny() {
+        if (this.pendingTargetDays != null) {
+            this.weeklyTargetDays = this.pendingTargetDays;
+            this.pendingTargetDays = null;
+        }
     }
 }

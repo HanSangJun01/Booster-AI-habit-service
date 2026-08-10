@@ -26,12 +26,12 @@ class BAxisIsolationTest {
 
     private static final List<String> FORBIDDEN_SYMBOLS = List.of(
             "PersonalCheckIn",
-            "RecoveryMission",
+            "WeeklyEvaluation",
             "Streak"
     );
 
     @Test
-    void bAxisShouldNotDependOnPersonalCheckInOrStreakOrRecoveryMission() throws IOException {
+    void bAxisShouldNotDependOnPersonalCheckInOrStreakOrWeeklyEvaluation() throws IOException {
         StringBuilder violations = new StringBuilder();
 
         for (String pkg : B_AXIS_PACKAGES) {

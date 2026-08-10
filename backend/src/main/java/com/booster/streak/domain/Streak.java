@@ -57,44 +57,23 @@ public class Streak {
     }
 
     /**
-     * 인증 성공 기록. 연속성 인지:
-     * <ul>
-     *   <li>직전 성공일이 하루 이상 비어 있으면(갭) currentStreak 을 1로 새로 시작한다.</li>
-     *   <li>최초/연속/당일 재기록은 +1 누적.</li>
-     * </ul>
-     * (BS-30 B1) 갭을 무시하고 무조건 +1 하면 끊긴 스트릭이 7일 마일스톤에 도달해 보상이
-     * 부당 지급된다. 결정: 잠정/끊긴 스트릭에는 보상 보류 → 연속성으로 강제한다.
+     * 인증 성공 기록 — 무조건 +1.
+     *
+     * <p>[주간 목표 모델] 스트릭은 "목표를 지키는 동안 누적된 실제 인증 횟수"다. 날짜 갭을 보지
+     * 않는다 — 주 3회 목표라면 월·수·금 사이의 빈 날은 정상이기 때문이다.
+     *
+     * <p>과거 모델은 여기서 갭을 검사해 리셋했고(BS-30 B1), 그래서 리셋 책임이 체크인과 복귀 만료
+     * 두 곳에 흩어져 있었다. 새 모델은 리셋을 <b>주간 채점 한 곳</b>으로 모은다(3.2 참조).
      */
     public void recordSuccess(LocalDate date) {
-        boolean brokenGap = lastSuccessDate != null && lastSuccessDate.isBefore(date.minusDays(1));
-        if (brokenGap) {
-            this.currentStreak = 1;
-        } else {
-            this.currentStreak += 1;
-        }
+        this.currentStreak += 1;
         if (this.currentStreak > this.maxStreak) {
             this.maxStreak = this.currentStreak;
         }
         this.lastSuccessDate = date;
     }
 
-    /**
-     * 복귀 성공 = '복귀한 날의 인증'으로 완전 간주(F2 팀 결정: 복귀 당일 별도 인증 불가).
-     * 미인증일이 SUCCESS로 보정되어 갭이 메워졌으므로 연속성 검사 없이 +1 하고, lastSuccessDate를
-     * 복귀일로 전진한다(단조). 이로써 복귀일이 다음 날 다시 미인증으로 잡히는 무한 복귀 루프가 없고,
-     * 같은 날 인증-vs-복귀 순서 의존(F7)도 사라진다(복귀일 일반 인증은 서비스에서 차단).
-     */
-    public void recordRecoverySuccess(LocalDate recoveryDay) {
-        this.currentStreak += 1;
-        if (this.currentStreak > this.maxStreak) {
-            this.maxStreak = this.currentStreak;
-        }
-        if (this.lastSuccessDate == null || this.lastSuccessDate.isBefore(recoveryDay)) {
-            this.lastSuccessDate = recoveryDay;
-        }
-    }
-
-    /** 복귀 실패: 스트릭 초기화. */
+    /** 주간 목표 미달 + 구제권 없음: 스트릭 초기화. */
     public void reset() {
         this.currentStreak = 0;
         this.lastSuccessDate = null;

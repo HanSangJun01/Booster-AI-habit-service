@@ -63,26 +63,6 @@ public class PersonalCheckIn {
                 .build();
     }
 
-    /** 스케줄러: 미인증일을 복귀 대기 상태로 생성. */
-    public static PersonalCheckIn recoveryPending(Long userId, LocalDate date) {
-        return PersonalCheckIn.builder()
-                .userId(userId)
-                .date(date)
-                .status(PersonalCheckInStatus.RECOVERY_PENDING)
-                .build();
-    }
-
-    /** 복귀 미션 성공 시 미인증일 보정. */
-    public void markSuccess(OffsetDateTime verifiedAt) {
-        this.status = PersonalCheckInStatus.SUCCESS;
-        this.verifiedAt = verifiedAt;
-    }
-
-    /** 복귀 미션 데드라인 초과 시 최종 실패. */
-    public void markFailed() {
-        this.status = PersonalCheckInStatus.FAILED;
-    }
-
     public boolean isSuccess() {
         return this.status == PersonalCheckInStatus.SUCCESS;
     }

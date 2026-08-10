@@ -11,8 +11,6 @@ import com.booster.personalcheckin.service.PersonalCheckInService;
 import com.booster.personallocation.dto.LocationRequest;
 import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
-import com.booster.recovery.repository.RecoveryMissionRepository;
-import com.booster.recovery.service.RecoveryService;
 import com.booster.streak.repository.StreakRepository;
 import com.booster.user.repository.UserRepository;
 import jakarta.persistence.EntityManager;
@@ -75,13 +73,11 @@ public abstract class ConcurrencyTestBase {
     @Autowired protected AuthService authService;
     @Autowired protected PersonalLocationService personalLocationService;
     @Autowired protected PersonalCheckInService personalCheckInService;
-    @Autowired protected RecoveryService recoveryService;
     @Autowired protected CoinService coinService;
 
     @Autowired protected UserRepository userRepository;
     @Autowired protected StreakRepository streakRepository;
     @Autowired protected PersonalCheckInRepository personalCheckInRepository;
-    @Autowired protected RecoveryMissionRepository recoveryMissionRepository;
     @Autowired protected CoinTransactionRepository coinTransactionRepository;
     @Autowired protected PersonalLocationRepository personalLocationRepository;
 

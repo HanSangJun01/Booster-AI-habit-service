@@ -27,5 +27,9 @@ booster:
     reward-coins: 100
   coin:
     signup-bonus: 500
-    recovery-success-penalty: 50
-    recovery-failure-penalty: 100
+  # 주간 목표 모델
+  weekly:
+    # 목표 미달 + 구제권 없음 → 스트릭 초기화와 함께 차감
+    miss-penalty: 500
+    # 구제권 1개 코인 가격 (구매 한도 없음)
+    ticket-price: 800
