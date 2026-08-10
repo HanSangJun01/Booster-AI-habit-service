@@ -21,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import com.booster.shared.common.BusinessException;
 
 @Slf4j
 @Service
@@ -40,11 +42,11 @@ public class ParticipationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
         if (challenge.getStatus() != ChallengeStatus.READY) {
-            throw new IllegalStateException("Challenge is not in READY status");
+            throw BusinessException.conflict("CHALLENGE_NOT_READY", "모집이 끝난 챌린지입니다.");
         }
 
         if (participantRepository.findByChallengeIdAndUserId(challengeId, userId).isPresent()) {
-            throw new IllegalStateException("Already applied to this challenge");
+            throw BusinessException.conflict("ALREADY_APPLIED", "이미 참가 신청한 챌린지입니다.");
         }
 
         long confirmedCount = participantRepository.countByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
@@ -87,6 +89,73 @@ public class ParticipationService {
         return ParticipantResponse.from(participant);
     }
 
+    /**
+     * 참가자 목록 조회.
+     *
+     * <p>없을 때 방장은 누가 신청했는지 볼 수 없었고, 승인 API 가 요구하는 {@code participantId} 를
+     * 얻을 방법이 없어 <b>방장 승인(approvalType=LEADER) 기능이 사실상 작동하지 않았다.</b>
+     *
+     * <p>★권한: 방장 또는 CONFIRMED 참여자만. 아무나 조회하면 남의 챌린지 참가자 명단이
+     * 통째로 노출된다(BS-39 I2 팀채팅 / I14 체크인 열람과 동일 계열).
+     *
+     * @param status null 이면 전체, 지정하면 해당 상태만(방장 화면은 보통 PENDING)
+     */
+    @Transactional(readOnly = true)
+    public List<ParticipantResponse> getParticipants(Long userId, Long challengeId, ParticipantStatus status) {
+        Challenge challenge = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
+
+        boolean isLeader = challenge.getCreatedBy().equals(userId);
+        boolean isMember = participantRepository
+                .findConfirmedByUserAndChallenge(challengeId, userId).isPresent();
+        if (!isLeader && !isMember) {
+            throw new UnauthorizedException("Not a participant of this challenge");
+        }
+
+        List<ChallengeParticipant> participants = (status == null)
+                ? participantRepository.findByChallengeIdOrderByIdAsc(challengeId)
+                : participantRepository.findByChallengeIdAndStatus(challengeId, status);
+
+        return participants.stream().map(ParticipantResponse::from).toList();
+    }
+
+    /**
+     * 챌린지 생성자를 CONFIRMED 참가자로 등록한다 (챌린지 생성 트랜잭션 안에서 호출).
+     *
+     * <p>예전에는 생성과 참가가 분리돼 있어 방장이 자기 챌린지의 참가자가 아니었다. 그 결과
+     * 방장은 자기 챌린지에서 인증을 못 하고, 정원 인원수에도 잡히지 않아 10명 채우기가 더
+     * 어려웠으며, 참가하려면 공개 탐색에서 자기 챌린지를 찾아 다시 신청해야 했다.
+     *
+     * <p>{@code requestParticipation} 과 달리 <b>approvalType 과 무관하게 항상 CONFIRMED</b> 다
+     * (방장이 자기 자신을 승인할 일은 없다). 예치금은 동일하게 차감한다 — 방장만 공짜로
+     * 참가하면 정산 풀({@code 예치금 × 참여자수})과 실제 징수액이 어긋난다.
+     *
+     * <p>생성과 같은 트랜잭션이므로 중간에 실패하면 챌린지도 함께 롤백된다 → "참가자가 없는
+     * 빈 챌린지"가 남지 않는다(챌린지 삭제 API 가 없어 한 번 생기면 정리할 수 없다).
+     */
+    @Transactional
+    public void registerCreatorAsParticipant(Challenge challenge, Long userId,
+                                             ParticipationRequest request) {
+        coinService.deduct(userId, challenge.getDepositCoins(),
+                CoinTransactionReason.CHALLENGE_DEPOSIT, challenge.getId());
+
+        ChallengeParticipant leader = ChallengeParticipant.builder()
+                .challenge(challenge)
+                .userId(userId)
+                .personalStatement(request.getPersonalStatement())
+                .gpsLat(request.getGpsLat())
+                .gpsLng(request.getGpsLng())
+                .gpsRadiusMeters(request.getGpsRadiusMeters())
+                .gpsPlaceName(request.getGpsPlaceName())
+                .gpsLocked(false)
+                .status(ParticipantStatus.CONFIRMED)
+                .build();
+        leader.confirm(LocalDateTime.now());
+        participantRepository.save(leader);
+
+        log.info("Creator registered as participant: userId={}, challengeId={}", userId, challenge.getId());
+    }
+
     @Transactional
     public ParticipantResponse approveParticipation(Long leaderId, Long challengeId, Long participantId) {
         Challenge challenge = challengeRepository.findByIdWithLock(challengeId)
@@ -97,14 +166,14 @@ public class ParticipationService {
         }
 
         if (challenge.getStatus() != ChallengeStatus.READY) {
-            throw new IllegalStateException("Cannot approve participants after challenge has started");
+            throw BusinessException.conflict("CHALLENGE_ALREADY_STARTED", "챌린지가 시작된 뒤에는 승인할 수 없습니다.");
         }
 
         ChallengeParticipant participant = participantRepository.findById(participantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Participant", participantId));
 
         if (participant.getStatus() != ParticipantStatus.PENDING) {
-            throw new IllegalStateException("Participant is not in PENDING status");
+            throw BusinessException.conflict("PARTICIPANT_NOT_PENDING", "승인 대기 상태의 참가자가 아닙니다.");
         }
 
         long confirmedCount = participantRepository.countByChallengeIdAndStatus(challengeId, ParticipantStatus.CONFIRMED);
@@ -130,7 +199,7 @@ public class ParticipationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
 
         if (challenge.getStatus() != ChallengeStatus.READY) {
-            throw new IllegalStateException("Cannot cancel after challenge has started");
+            throw BusinessException.conflict("CHALLENGE_ALREADY_STARTED", "챌린지가 시작된 뒤에는 취소할 수 없습니다.");
         }
 
         ChallengeParticipant participant = participantRepository.findByChallengeIdAndUserId(challengeId, userId)

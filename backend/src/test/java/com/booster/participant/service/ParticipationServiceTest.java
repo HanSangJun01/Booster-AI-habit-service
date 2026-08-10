@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import com.booster.shared.common.BusinessException;
 
 @ExtendWith(MockitoExtension.class)
 class ParticipationServiceTest {
@@ -45,27 +46,27 @@ class ParticipationServiceTest {
     private final Long challengeId = 10L;
     private final Long participantId = 100L;
 
-    // ── 이슈 3: approveParticipation - 챌린지가 ACTIVE일 때 IllegalStateException 기대 ──
+    // ── 이슈 3: approveParticipation - 챌린지가 ACTIVE일 때 409 충돌(BusinessException) 기대 ──
 
     @Test
-    void approveParticipation_whenChallengeIsActive_shouldThrowIllegalStateException() {
+    void approveParticipation_whenChallengeIsActive_shouldThrowConflict() {
         Challenge challenge = mock(Challenge.class);
         when(challenge.getCreatedBy()).thenReturn(leaderId);
         when(challenge.getStatus()).thenReturn(ChallengeStatus.ACTIVE);
         when(challengeRepository.findByIdWithLock(challengeId)).thenReturn(Optional.of(challenge));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> participationService.approveParticipation(leaderId, challengeId, participantId));
     }
 
     @Test
-    void approveParticipation_whenChallengeIsEnded_shouldThrowIllegalStateException() {
+    void approveParticipation_whenChallengeIsEnded_shouldThrowConflict() {
         Challenge challenge = mock(Challenge.class);
         when(challenge.getCreatedBy()).thenReturn(leaderId);
         when(challenge.getStatus()).thenReturn(ChallengeStatus.ENDED);
         when(challengeRepository.findByIdWithLock(challengeId)).thenReturn(Optional.of(challenge));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> participationService.approveParticipation(leaderId, challengeId, participantId));
     }
 

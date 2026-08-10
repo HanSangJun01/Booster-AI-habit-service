@@ -54,7 +54,10 @@ public class AuthService {
         streakRepository.save(Streak.init(user.getId()));
         coinService.grant(user.getId(), signupBonus, CoinTransactionReason.SIGNUP_BONUS, null);
 
-        return SignupResponse.from(user);
+        // 가입 응답에 토큰을 함께 준다. 없으면 클라이언트가 곧바로 login 을 한 번 더 호출해야 해
+        // BCrypt 가 두 번(해싱 + 검증) 돌아 체감 지연이 두 배가 된다.
+        String accessToken = jwtTokenProvider.createAccessToken(user.getId());
+        return SignupResponse.from(user, accessToken);
     }
 
     /** 로그인 → JWT Access Token 발급. */

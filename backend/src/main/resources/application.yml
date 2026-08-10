@@ -39,6 +39,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # AI 사진 인증 업로드. Spring 기본값은 max-file-size 1MB 라 폰 사진(2~5MB)이 전부 거부된다.
+  # ai-service 와 AiVerificationService 가 모두 10MB 를 상한으로 두므로 여기서도 맞춘다.
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
 server:
   port: 8080
 

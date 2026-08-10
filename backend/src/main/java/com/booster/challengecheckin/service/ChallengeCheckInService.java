@@ -36,6 +36,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import com.booster.shared.common.BusinessException;
 
 @Slf4j
 @Service
@@ -66,13 +67,13 @@ public class ChallengeCheckInService {
         Challenge challenge = challengeRepository.findById(challengeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
         if (challenge.getStatus() != ChallengeStatus.ACTIVE) {
-            throw new IllegalStateException("Check-in is only allowed when challenge is ACTIVE");
+            throw BusinessException.conflict("CHALLENGE_NOT_ACTIVE", "진행 중인 챌린지에서만 인증할 수 있습니다.");
         }
 
         // 팀 배정 없는 참여자의 체크인 차단 — 정산 계산에서 누락되므로 허용 불가
         if (participant.getTeamId() == null) {
-            throw new IllegalStateException(
-                    "Check-in not allowed: participant has no team assignment, userId=" + userId);
+            throw BusinessException.conflict("TEAM_NOT_ASSIGNED",
+                    "팀 배정이 완료되기 전에는 인증할 수 없습니다.");
         }
 
         // 2. KST 기준 오늘 날짜
@@ -106,7 +107,8 @@ public class ChallengeCheckInService {
             } catch (DataIntegrityViolationException e) {
                 // 경쟁에서 짐 — 다른 요청이 먼저 오늘자 레코드를 넣었다. 바깥 세션에서 깨끗하게 재조회.
                 checkIn = checkInRepository.findByParticipantIdAndCheckInDate(participant.getId(), today)
-                        .orElseThrow(() -> new IllegalStateException("Check-in conflict unresolvable"));
+                        .orElseThrow(() -> BusinessException.conflict("CHECK_IN_CONFLICT",
+                                "동시 요청 처리 중 충돌했습니다. 다시 시도해 주세요."));
                 // 이미 SUCCESS로 확정된 레코드면 멱등 반환(동시 요청이 먼저 판정 완료한 경우).
                 if (checkIn.getStatus() == CheckInStatus.SUCCESS) {
                     return CheckInResponse.from(checkIn);
@@ -120,8 +122,8 @@ public class ChallengeCheckInService {
         if (verificationType != VerificationType.GPS
                 && verificationType != VerificationType.AI
                 && verificationType != VerificationType.GPS_PHOTO_AI) {
-            throw new IllegalStateException(
-                    "Unsupported verification type: " + verificationType);
+            throw BusinessException.conflict("UNSUPPORTED_VERIFICATION_TYPE",
+                    "지원하지 않는 인증 방식입니다: " + verificationType);
         }
         boolean needsGps = (verificationType == VerificationType.GPS
                 || verificationType == VerificationType.GPS_PHOTO_AI);
@@ -208,7 +210,9 @@ public class ChallengeCheckInService {
             log.info("CheckIn FAILED (GPS): participantId={}, date={}", participant.getId(), today);
         }
 
-        return CheckInResponse.from(saved);
+        // submissionId 를 함께 반환한다 — AI 인증 2단계 호출의 입력이며, 이게 없으면
+        // 클라이언트가 그 값을 얻을 경로가 아예 없다.
+        return CheckInResponse.from(saved, submission.getId());
     }
 
     /**
@@ -227,8 +231,8 @@ public class ChallengeCheckInService {
                         "VerificationDecision for submissionId=" + submissionId));
 
         if (decision.getDecisionStatus() == DecisionStatus.CONFIRMED) {
-            throw new IllegalStateException(
-                    "Verification decision already confirmed: submissionId=" + submissionId);
+            throw BusinessException.conflict("DECISION_ALREADY_CONFIRMED",
+                    "이미 판정이 확정된 인증입니다.");
         }
 
         VerificationType vt = challenge.getVerificationType();
@@ -240,6 +244,8 @@ public class ChallengeCheckInService {
                     .map(GpsVerificationResult::isWithinRadius)
                     .orElse(false);
         } else {
+            // 호출부 계약 위반(AI를 쓰지 않는 챌린지에 AI 확정을 요청) — 클라이언트 오류가 아니라
+            // 서버 내부 버그이므로 409가 아닌 500으로 드러낸다.
             throw new IllegalStateException(
                     "finalizeDecisionAfterAi called for non-AI type: " + vt);
         }
