@@ -22,9 +22,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
+import java.util.List;
 
 /**
  * 주간 목표 채점.
@@ -58,6 +60,8 @@ public class WeeklyEvaluationService {
 
     @Value("${booster.weekly.miss-penalty}")
     private long missPenalty;
+    @Value("${booster.weekly.rescue-grace-days}")
+    private int rescueGraceDays;
 
     /** 오늘(KST) 기준 직전 주의 월요일. */
     public LocalDate lastWeekStart() {
@@ -108,6 +112,7 @@ public class WeeklyEvaluationService {
 
         // 6) 판정
         EvaluationResult result;
+        OffsetDateTime rescueDeadline = null;
         if (successCount >= targetDays) {
             result = EvaluationResult.ACHIEVED;
         } else if (user.consumeRecoveryTicket()) {
@@ -115,22 +120,57 @@ public class WeeklyEvaluationService {
             result = EvaluationResult.RESCUED;
             log.info("[WeeklyGoal] rescued: userId={}, week={}, {}/{}", userId, weekStart, successCount, targetDays);
         } else {
-            result = EvaluationResult.FAILED;
-            streak.reset();
-            coinService.charge(userId, missPenalty, CoinTransactionReason.WEEKLY_MISS_PENALTY, null);
-            log.info("[WeeklyGoal] failed: userId={}, week={}, {}/{}", userId, weekStart, successCount, targetDays);
+            // 구제권이 없어도 즉시 실패시키지 않는다. 자동 채점이 새벽에 도는 탓에 사용자는 아무
+            // 예고 없이 스트릭 0 + 코인 차감을 맞게 되는데, 오래 쌓은 사용자일수록 그 순간 이탈한다.
+            // 기한까지 사후 구매할 기회를 주고, 그 사이 스트릭·코인은 건드리지 않는다.
+            result = EvaluationResult.PENDING_RESCUE;
+            rescueDeadline = LocalDate.now(clock).plusDays(rescueGraceDays)
+                    .atTime(23, 59, 59).atZone(clock.getZone()).toOffsetDateTime();
+            log.info("[WeeklyGoal] pending rescue: userId={}, week={}, {}/{}, deadline={}",
+                    userId, weekStart, successCount, targetDays, rescueDeadline);
         }
 
         // 7) 기록 — UNIQUE(user_id, week_start) 위반은 다른 인스턴스가 먼저 처리했다는 뜻이므로 무시한다.
         try {
             evaluationRepository.saveAndFlush(
-                    WeeklyEvaluation.of(userId, weekStart, targetDays, successCount, result));
+                    WeeklyEvaluation.of(userId, weekStart, targetDays, successCount, result, rescueDeadline));
         } catch (DataIntegrityViolationException e) {
             log.warn("[WeeklyGoal] concurrent evaluation detected, skipping: userId={}, week={}", userId, weekStart);
             throw e; // 트랜잭션 롤백 → 코인/스트릭 변경도 함께 취소되어 이중 처리되지 않는다
         }
 
         return result;
+    }
+
+    /**
+     * 구제 기한이 지난 {@code PENDING_RESCUE} 를 실패로 확정한다.
+     *
+     * <p>여기서야 비로소 스트릭 초기화와 코인 차감이 일어난다. 채점 시점에는 유예만 걸어두고
+     * 아무것도 깎지 않기 때문에, 사용자가 기한 안에 사후 구매하면 손실이 전혀 없다.
+     */
+    @Transactional
+    public int expireOverdueRescues() {
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        List<WeeklyEvaluation> overdue = evaluationRepository
+                .findByResultAndRescueDeadlineLessThanEqual(EvaluationResult.PENDING_RESCUE, now);
+
+        int processed = 0;
+        for (WeeklyEvaluation evaluation : overdue) {
+            Long userId = evaluation.getUserId();
+            // 사용자 행을 잠가 사후 구매와 직렬화한다 — 만료 처리와 구매가 겹쳐도 둘 중 하나만 이긴다.
+            User user = userRepository.findByIdForUpdate(userId).orElse(null);
+            if (user == null || !evaluation.isPendingRescue()) {
+                continue;   // 락 대기 중 사후 구매가 먼저 확정함
+            }
+
+            evaluation.markFailed();
+            streakRepository.findById(userId).ifPresent(Streak::reset);
+            coinService.charge(userId, missPenalty, CoinTransactionReason.WEEKLY_MISS_PENALTY, null);
+            processed++;
+            log.info("[WeeklyGoal] rescue expired → failed: userId={}, week={}",
+                    userId, evaluation.getWeekStart());
+        }
+        return processed;
     }
 
 }

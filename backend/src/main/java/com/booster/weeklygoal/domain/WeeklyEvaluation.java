@@ -58,18 +58,48 @@ public class WeeklyEvaluation {
     @Column(nullable = false, length = 20)
     private EvaluationResult result;
 
+    /**
+     * 구제 기한. {@code PENDING_RESCUE} 일 때만 채워진다.
+     * 이 시각이 지나면 만료 스케줄러가 {@code FAILED} 로 확정한다.
+     */
+    @Column(name = "rescue_deadline")
+    private OffsetDateTime rescueDeadline;
+
     @CreationTimestamp
     @Column(name = "evaluated_at", nullable = false, updatable = false)
     private OffsetDateTime evaluatedAt;
 
     public static WeeklyEvaluation of(Long userId, LocalDate weekStart, int targetDays,
                                       int successCount, EvaluationResult result) {
+        return of(userId, weekStart, targetDays, successCount, result, null);
+    }
+
+    public static WeeklyEvaluation of(Long userId, LocalDate weekStart, int targetDays,
+                                      int successCount, EvaluationResult result,
+                                      OffsetDateTime rescueDeadline) {
         return WeeklyEvaluation.builder()
                 .userId(userId)
                 .weekStart(weekStart)
                 .targetDays(targetDays)
                 .successCount(successCount)
                 .result(result)
+                .rescueDeadline(rescueDeadline)
                 .build();
+    }
+
+    /** 사후 구매로 구제 확정. */
+    public void markRescued() {
+        this.result = EvaluationResult.RESCUED;
+        this.rescueDeadline = null;
+    }
+
+    /** 기한 경과로 실패 확정. */
+    public void markFailed() {
+        this.result = EvaluationResult.FAILED;
+        this.rescueDeadline = null;
+    }
+
+    public boolean isPendingRescue() {
+        return this.result == EvaluationResult.PENDING_RESCUE;
     }
 }

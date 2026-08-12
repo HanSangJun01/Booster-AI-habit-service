@@ -45,7 +45,18 @@ public class WeeklyGoalController {
     public ResponseEntity<WeeklyGoalResponse> updateWeeklyGoal(
             @AuthenticationPrincipal Long userId,
             @Valid @RequestBody WeeklyGoalUpdateRequest request) {
-        return ResponseEntity.ok(weeklyGoalService.reserveTarget(userId, request.targetDays()));
+        return ResponseEntity.ok(weeklyGoalService.reserveTarget(userId, request.targetDays(), request.verificationType()));
+    }
+
+    /**
+     * 미달 확정 전 사후 구매. 구제 대기 중인 주를 코인으로 즉시 구제한다.
+     * 앱은 {@code GET /weekly-goal} 의 {@code pendingRescueWeek} 가 있을 때 안내 팝업을 띄우고
+     * 사용자가 "구매하고 지키기" 를 누르면 이걸 호출한다.
+     */
+    @PostMapping("/rescue")
+    public ResponseEntity<WeeklyGoalResponse> purchaseLateRescue(@AuthenticationPrincipal Long userId) {
+        recoveryTicketService.purchaseLateRescue(userId);
+        return ResponseEntity.ok(weeklyGoalService.getStatus(userId));
     }
 
     @PostMapping("/recovery-tickets")

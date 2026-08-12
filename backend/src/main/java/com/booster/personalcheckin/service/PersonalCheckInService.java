@@ -71,47 +71,84 @@ public class PersonalCheckInService {
                 .orElseThrow(() -> BusinessException.badRequest(
                         "LOCATION_NOT_REGISTERED", "개인 GPS 위치를 먼저 등록하세요."));
 
-        // 당일 중복 인증 방지. 이 테이블에는 SUCCESS 만 저장되므로 레코드 존재 = 이미 인증 완료.
-        if (personalCheckInRepository.existsByUserIdAndDate(userId, today)) {
-            throw BusinessException.conflict("DUPLICATE_CHECK_IN", "오늘 이미 인증을 완료했습니다.");
-        }
+        // 당일 중복 방지. PENDING(사진 대기) 도 진행 중이므로 새 체크인을 만들지 않는다.
+        personalCheckInRepository.findByUserIdAndDate(userId, today).ifPresent(existing -> {
+            throw existing.isPending()
+                    ? BusinessException.conflict("CHECK_IN_AWAITING_PHOTO",
+                            "사진 인증이 남아 있습니다. 사진을 올려 완료해 주세요.")
+                    : BusinessException.conflict("DUPLICATE_CHECK_IN", "오늘 이미 인증을 완료했습니다.");
+        });
 
-        // GPS 반경 판정 — 실패 시 레코드를 만들지 않고 즉시 거절한다.
-        // 얼마나 벗어났는지까지 알려준다(팀 챌린지 체크인과 동일한 메시지 형식).
-        double distanceMeters = gpsEvaluator.calculateDistanceMeters(
-                location.getLat(), location.getLng(), currentLat, currentLng);
-        if (distanceMeters > location.getRadiusMeters()) {
-            throw BusinessException.badRequest("GPS_OUT_OF_RANGE",
-                    String.format("등록된 위치에서 %.0fm 떨어져 있습니다. (허용 %dm)",
-                            distanceMeters, location.getRadiusMeters()));
+        // GPS 반경 판정 — 인증 방식이 GPS 를 요구할 때만. 실패 시 레코드를 만들지 않고 즉시 거절하고
+        // 얼마나 벗어났는지까지 알려준다(팀 챌린지 체크인과 동일한 형식).
+        if (location.needsGps()) {
+            double distanceMeters = gpsEvaluator.calculateDistanceMeters(
+                    location.getLat(), location.getLng(), currentLat, currentLng);
+            if (distanceMeters > location.getRadiusMeters()) {
+                throw BusinessException.badRequest("GPS_OUT_OF_RANGE",
+                        String.format("등록된 위치에서 %.0fm 떨어져 있습니다. (허용 %dm)",
+                                distanceMeters, location.getRadiusMeters()));
+            }
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
+
+        // AI 를 쓰는 목표는 여기서 확정하지 않는다. PENDING 으로 만들어두고 사진이 올라오면
+        // PersonalAiVerificationService 가 확정한다(스트릭·보상도 그때 처리).
+        if (location.needsAi()) {
+            PersonalCheckIn pending = savePending(userId, today);
+            Streak streak = streakRepository.findById(userId)
+                    .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
+            return new CheckInResponse(today, PersonalCheckInStatus.PENDING, null,
+                    streak.getCurrentStreak(), streak.getMaxStreak(), user.getCoinBalance(), false,
+                    pending.getId());
+        }
+
         // (BS-30 C4) 첫 인증 동시요청 시 둘 다 존재하지 않음으로 판정 후 INSERT → 두 번째가
         // UNIQUE(user_id, date) 위반. IDENTITY 전략이라 save()에서 즉시 INSERT되어 여기서 잡히므로,
         // 원시 DataIntegrityViolationException(→500)이 아닌 409 충돌로 변환한다.
+        PersonalCheckIn saved;
         try {
-            personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now));
+            saved = personalCheckInRepository.save(PersonalCheckIn.success(userId, today, now));
         } catch (DataIntegrityViolationException e) {
             throw BusinessException.conflict("DUPLICATE_CHECK_IN", "오늘 이미 인증을 완료했습니다.");
         }
 
+        SuccessOutcome outcome = applySuccess(userId, user, today);
+        return new CheckInResponse(today, PersonalCheckInStatus.SUCCESS, now,
+                outcome.streak().getCurrentStreak(), outcome.streak().getMaxStreak(),
+                user.getCoinBalance(), outcome.rewardGranted(), saved.getId());
+    }
+
+    /** 확정 처리 결과. 서비스는 싱글톤이므로 상태를 필드에 담지 않고 반환값으로 넘긴다. */
+    public record SuccessOutcome(Streak streak, boolean rewardGranted) {}
+
+    private PersonalCheckIn savePending(Long userId, LocalDate today) {
+        try {
+            return personalCheckInRepository.save(PersonalCheckIn.pending(userId, today));
+        } catch (DataIntegrityViolationException e) {
+            throw BusinessException.conflict("DUPLICATE_CHECK_IN", "오늘 이미 인증을 진행 중입니다.");
+        }
+    }
+
+    /**
+     * 출석·스트릭·마일스톤 보상 확정 — GPS 인증과 AI 인증이 공유한다.
+     * (AI 는 사진이 통과한 시점에 {@code PersonalAiVerificationService} 가 호출한다)
+     */
+    public SuccessOutcome applySuccess(Long userId, User user, LocalDate date) {
         user.increaseAttendance();
 
         Streak streak = streakRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("STREAK_NOT_FOUND", "스트릭 정보가 없습니다."));
-        streak.recordSuccess(today);
+        streak.recordSuccess(date);
 
-        // 마일스톤 보상은 인증하는 그 순간 지급한다(7·14·21…회마다 +100). 주 마감까지 미루면
-        // 성취의 피드백이 최대 일주일 늦어져 동기부여가 죽는다.
+        // 마일스톤 보상은 인증이 확정되는 그 순간 지급한다(7·14·21…회마다 +100).
         boolean rewardGranted = false;
         if (streak.isRewardMilestone(rewardIntervalDays)) {
             coinService.grant(userId, rewardCoins, CoinTransactionReason.STREAK_REWARD, null);
             rewardGranted = true;
         }
-
-        return new CheckInResponse(today, PersonalCheckInStatus.SUCCESS, now,
-                streak.getCurrentStreak(), streak.getMaxStreak(), user.getCoinBalance(), rewardGranted);
+        return new SuccessOutcome(streak, rewardGranted);
     }
 
     @Transactional(readOnly = true)

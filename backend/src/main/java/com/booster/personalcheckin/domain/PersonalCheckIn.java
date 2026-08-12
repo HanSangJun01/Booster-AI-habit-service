@@ -63,6 +63,25 @@ public class PersonalCheckIn {
                 .build();
     }
 
+    /** AI 판정을 기다리는 체크인. 사진이 올라와 통과해야 SUCCESS 로 확정된다. */
+    public static PersonalCheckIn pending(Long userId, LocalDate date) {
+        return PersonalCheckIn.builder()
+                .userId(userId)
+                .date(date)
+                .status(PersonalCheckInStatus.PENDING)
+                .build();
+    }
+
+    /** AI 통과 → 확정. */
+    public void confirm(OffsetDateTime verifiedAt) {
+        this.status = PersonalCheckInStatus.SUCCESS;
+        this.verifiedAt = verifiedAt;
+    }
+
+    public boolean isPending() {
+        return this.status == PersonalCheckInStatus.PENDING;
+    }
+
     public boolean isSuccess() {
         return this.status == PersonalCheckInStatus.SUCCESS;
     }

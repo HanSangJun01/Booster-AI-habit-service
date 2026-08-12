@@ -18,6 +18,7 @@ import java.time.LocalDate;
  * <pre>
  *   매주 월 00:01 KST — 지난주(월~일) 채점
  *   매월  1일 00:05 KST — 무료 구제권 1개 지급 + 예약된 목표 변경 반영
+ *   매일     00:10 KST — 기한이 지난 구제 대기 건을 실패로 확정
  * </pre>
  *
  * <p>★실행 순서: 1일이 월요일인 경우 채점(00:01)이 지급(00:05)보다 먼저 돈다. 지난달의 마지막
@@ -54,6 +55,18 @@ public class WeeklyGoalScheduler {
             }
         }
         log.info("[WeeklyGoalScheduler] done. evaluated={}, failed={}", evaluated, failed);
+    }
+
+    /**
+     * 구제 유예가 끝난 건을 실패로 확정한다. 주간 채점(월요일)에서 유예만 걸어두고
+     * 스트릭·코인을 건드리지 않았으므로, 실제 차감은 여기서 일어난다.
+     */
+    @Scheduled(cron = "0 10 0 * * *", zone = "Asia/Seoul")
+    public void expireOverdueRescues() {
+        int expired = weeklyEvaluationService.expireOverdueRescues();
+        if (expired > 0) {
+            log.info("[WeeklyGoalScheduler] rescue deadline passed → failed: {} 건", expired);
+        }
     }
 
     @Scheduled(cron = "0 5 0 1 * *", zone = "Asia/Seoul")

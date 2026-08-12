@@ -1,6 +1,7 @@
 package com.booster.weeklygoal.dto;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 
 /**
  * 주간 목표 현황.
@@ -22,7 +23,11 @@ import java.time.LocalDate;
  * @param paidTickets        그중 구매분 (소멸하지 않음)
  * @param ticketPrice        구제권 1개 코인 가격
  * @param coinBalance        현재 코인 잔액
- * @param lastWeekResult     지난주 채점 결과(ACHIEVED/RESCUED/FAILED, 없으면 null)
+ * @param verificationType   인증 방식 (GPS / AI / GPS_PHOTO_AI)
+ * @param lastWeekResult     지난주 채점 결과(ACHIEVED/RESCUED/PENDING_RESCUE/FAILED, 없으면 null)
+ * @param pendingRescueWeek  구제 대기 중인 주의 월요일(없으면 null)
+ * @param rescueDeadline     그 구제의 기한(없으면 null)
+ * @param lateRescuePrice    사후 구매 가격 — 미리 사두는 것보다 비싸다
  */
 public record WeeklyGoalResponse(
         LocalDate weekStart,
@@ -35,6 +40,10 @@ public record WeeklyGoalResponse(
         int paidTickets,
         long ticketPrice,
         long coinBalance,
-        String lastWeekResult
+        String verificationType,
+        String lastWeekResult,
+        LocalDate pendingRescueWeek,
+        OffsetDateTime rescueDeadline,
+        long lateRescuePrice
 ) {
 }

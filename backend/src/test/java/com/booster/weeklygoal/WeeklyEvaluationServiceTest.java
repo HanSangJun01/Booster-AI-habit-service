@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.booster.personalcheckin.dto.CheckInResponse;
+import com.booster.weeklygoal.dto.WeeklyGoalResponse;
 
 /**
  * [주간 목표 모델] 주간 채점 · 구제권 회귀 테스트.
@@ -130,8 +131,8 @@ class WeeklyEvaluationServiceTest {
     }
 
     @Test
-    @DisplayName("미달 + 구제권 없음: 스트릭 0 + 코인 차감")
-    void shortOfTarget_withoutTicket_failsAndResetsStreak() {
+    @DisplayName("미달 + 구제권 없음: 즉시 실패가 아니라 구제 대기 (스트릭·코인 그대로)")
+    void shortOfTarget_withoutTicket_entersPendingRescue() {
         Long userId = newUser();
         userRepository.findById(userId).orElseThrow().consumeRecoveryTicket();  // 구제권 소진
         checkInOnDay(userId, 0);
@@ -139,9 +140,81 @@ class WeeklyEvaluationServiceTest {
 
         EvaluationResult result = weeklyEvaluationService.evaluateUser(userId, WEEK);
 
-        assertThat(result).isEqualTo(EvaluationResult.FAILED);
-        assertThat(streakOf(userId)).as("스트릭 초기화").isZero();
-        assertThat(coinsOf(userId)).as("미달 벌금 500 차감 (500 → 0)").isZero();
+        assertThat(result).isEqualTo(EvaluationResult.PENDING_RESCUE);
+        assertThat(streakOf(userId)).as("아직 확정 전이므로 스트릭은 그대로").isEqualTo(2);
+        assertThat(coinsOf(userId)).as("아직 아무것도 차감하지 않는다").isEqualTo(500L);
+
+        WeeklyGoalResponse status = weeklyGoalService.getStatus(userId);
+        assertThat(status.pendingRescueWeek()).as("앱이 안내 팝업을 띄울 수 있게 노출").isEqualTo(WEEK);
+        assertThat(status.rescueDeadline()).isNotNull();
+        assertThat(status.lateRescuePrice()).isEqualTo(1200L);
+    }
+
+    @Test
+    @DisplayName("구제 기한 경과: 그때서야 스트릭 0 + 코인 차감으로 확정된다")
+    void rescueDeadlinePassed_confirmsFailure() {
+        Long userId = newUser();
+        userRepository.findById(userId).orElseThrow().consumeRecoveryTicket();
+        checkInOnDay(userId, 0);        // 1/3 미달
+        clock.setDate(WEEK.plusDays(7));                       // 채점일(다음 주 월요일)
+        weeklyEvaluationService.evaluateUser(userId, WEEK);
+
+        clock.setDate(WEEK.plusDays(7 + 3));                   // 유예 2일이 지난 시점
+        int expired = weeklyEvaluationService.expireOverdueRescues();
+
+        assertThat(expired).isEqualTo(1);
+        assertThat(streakOf(userId)).as("이 시점에 비로소 초기화").isZero();
+        assertThat(coinsOf(userId)).as("이 시점에 비로소 벌금 500 차감").isZero();
+    }
+
+    @Test
+    @DisplayName("사후 구매: 기한 내 구매하면 구제되고 스트릭이 지켜진다")
+    void lateRescuePurchase_savesStreak() {
+        Long userId = newUser();
+        userRepository.findById(userId).orElseThrow().consumeRecoveryTicket();
+        coinService.grant(userId, 1000L, CoinTransactionReason.STREAK_REWARD, null);  // 1500
+        checkInOnDay(userId, 0);
+        checkInOnDay(userId, 2);        // 2/3 미달
+        clock.setDate(WEEK.plusDays(7));
+        weeklyEvaluationService.evaluateUser(userId, WEEK);
+
+        recoveryTicketService.purchaseLateRescue(userId);
+
+        assertThat(streakOf(userId)).as("스트릭 유지").isEqualTo(2);
+        assertThat(coinsOf(userId)).as("사후 구매가 1200 차감 (1500 → 300)").isEqualTo(300L);
+        assertThat(weeklyGoalService.getStatus(userId).pendingRescueWeek())
+                .as("대기 상태 해소").isNull();
+
+        // 확정된 뒤에는 만료 처리 대상이 아니다
+        clock.setDate(WEEK.plusDays(7 + 3));
+        assertThat(weeklyEvaluationService.expireOverdueRescues()).isZero();
+        assertThat(coinsOf(userId)).as("벌금이 추가로 부과되면 안 된다").isEqualTo(300L);
+    }
+
+    @Test
+    @DisplayName("사후 구매: 기한이 지나면 거절된다")
+    void lateRescuePurchase_afterDeadline_isRejected() {
+        Long userId = newUser();
+        userRepository.findById(userId).orElseThrow().consumeRecoveryTicket();
+        coinService.grant(userId, 1000L, CoinTransactionReason.STREAK_REWARD, null);
+        checkInOnDay(userId, 0);
+        clock.setDate(WEEK.plusDays(7));
+        weeklyEvaluationService.evaluateUser(userId, WEEK);
+
+        clock.setDate(WEEK.plusDays(7 + 3));   // 기한 경과
+
+        assertThatThrownBy(() -> recoveryTicketService.purchaseLateRescue(userId))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    @DisplayName("사후 구매: 대기 중인 건이 없으면 거절된다")
+    void lateRescuePurchase_withoutPending_isRejected() {
+        Long userId = newUser();
+        coinService.grant(userId, 1000L, CoinTransactionReason.STREAK_REWARD, null);
+
+        assertThatThrownBy(() -> recoveryTicketService.purchaseLateRescue(userId))
+                .isInstanceOf(BusinessException.class);
     }
 
     @Test
@@ -253,7 +326,7 @@ class WeeklyEvaluationServiceTest {
         checkInOnDay(userId, 2);
         checkInOnDay(userId, 4);        // 3/3 달성
 
-        weeklyGoalService.reserveTarget(userId, 5);
+        weeklyGoalService.reserveTarget(userId, 5, null);
 
         assertThat(weeklyGoalService.getStatus(userId).targetDays())
                 .as("진행 중인 주의 기준은 그대로 3이어야 한다(주 중간 하향으로 통과하는 회피 차단)")

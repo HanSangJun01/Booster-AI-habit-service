@@ -20,6 +20,10 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import org.springframework.beans.factory.annotation.Value;
+import com.booster.weeklygoal.domain.EvaluationResult;
+import com.booster.challenge.domain.VerificationType;
+import java.util.EnumSet;
+import java.util.Set;
 
 /** 주간 목표 조회 · 변경 예약. */
 @Service
@@ -34,6 +38,8 @@ public class WeeklyGoalService {
 
     @Value("${booster.weekly.ticket-price}")
     private long ticketPrice;
+    @Value("${booster.weekly.late-rescue-price}")
+    private long lateRescuePrice;
 
     @Transactional(readOnly = true)
     public WeeklyGoalResponse getStatus(Long userId) {
@@ -57,6 +63,11 @@ public class WeeklyGoalService {
                 .map(Enum::name)
                 .orElse(null);
 
+        // 구제 대기 건이 있으면 앱이 "구매하고 지킬까요?" 팝업을 띄울 수 있도록 함께 내려준다.
+        WeeklyEvaluation pendingRescue = evaluationRepository
+                .findFirstByUserIdAndResultOrderByWeekStartDesc(userId, EvaluationResult.PENDING_RESCUE)
+                .orElse(null);
+
         return new WeeklyGoalResponse(
                 weekStart,
                 location.getWeeklyTargetDays(),
@@ -68,7 +79,11 @@ public class WeeklyGoalService {
                 user.getPaidRecoveryTickets(),
                 ticketPrice,
                 user.getCoinBalance(),
-                lastWeekResult);
+                location.getVerificationType().name(),
+                lastWeekResult,
+                pendingRescue != null ? pendingRescue.getWeekStart() : null,
+                pendingRescue != null ? pendingRescue.getRescueDeadline() : null,
+                lateRescuePrice);
     }
 
     /**
@@ -80,12 +95,23 @@ public class WeeklyGoalService {
      * @return 예약 반영 후의 현황
      */
     @Transactional
-    public WeeklyGoalResponse reserveTarget(Long userId, int targetDays) {
+    public WeeklyGoalResponse reserveTarget(Long userId, int targetDays, VerificationType verificationType) {
         PersonalLocation location = locationRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.badRequest(
                         "LOCATION_NOT_REGISTERED", "개인 GPS 위치를 먼저 등록하세요."));
         location.reserveWeeklyTarget(targetDays);
+        if (verificationType != null) {
+            if (!SUPPORTED_VERIFICATION_TYPES.contains(verificationType)) {
+                throw BusinessException.badRequest("UNSUPPORTED_VERIFICATION_TYPE",
+                        "지원하지 않는 인증 방식입니다: " + verificationType + " (지원: GPS, AI, GPS_PHOTO_AI)");
+            }
+            location.changeVerificationType(verificationType);
+        }
         locationRepository.flush();
         return getStatus(userId);
     }
+
+    /** 개인 트랙이 지원하는 인증 방식. 팀 챌린지와 동일한 3종. */
+    private static final Set<VerificationType> SUPPORTED_VERIFICATION_TYPES =
+            EnumSet.of(VerificationType.GPS, VerificationType.AI, VerificationType.GPS_PHOTO_AI);
 }

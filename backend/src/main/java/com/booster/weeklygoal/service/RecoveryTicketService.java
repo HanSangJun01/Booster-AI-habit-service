@@ -14,6 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import com.booster.personallocation.domain.PersonalLocation;
 import com.booster.personallocation.repository.PersonalLocationRepository;
+import com.booster.weeklygoal.domain.EvaluationResult;
+import com.booster.weeklygoal.domain.WeeklyEvaluation;
+import com.booster.weeklygoal.repository.WeeklyEvaluationRepository;
+import java.time.Clock;
+import java.time.OffsetDateTime;
 
 /**
  * 구제권 지급 · 구매.
@@ -33,9 +38,13 @@ public class RecoveryTicketService {
     private final UserRepository userRepository;
     private final PersonalLocationRepository locationRepository;
     private final CoinService coinService;
+    private final WeeklyEvaluationRepository evaluationRepository;
+    private final Clock clock;
 
     @Value("${booster.weekly.ticket-price}")
     private long ticketPrice;
+    @Value("${booster.weekly.late-rescue-price}")
+    private long lateRescuePrice;
 
     /**
      * 구제권 1개 구매. 잔액이 부족하면 {@code InsufficientCoinException}(→ 400)으로 거절한다.
@@ -87,7 +96,50 @@ public class RecoveryTicketService {
         return granted;
     }
 
+    /**
+     * 미달 확정 전 사후 구매 — 구제 대기 중인 주를 코인으로 즉시 구제한다.
+     *
+     * <p>미리 사두지 않은 사용자를 위한 마지막 기회다. 미리 사두는 쪽이 이득이어야 하므로
+     * 가격이 더 비싸다({@code late-rescue-price} &gt; {@code ticket-price}).
+     *
+     * <p>사용자 행을 잠가 만료 스케줄러와 직렬화한다 — 기한 경계에서 둘이 겹쳐도
+     * 구제와 실패가 동시에 적용되는 일은 없다.
+     *
+     * @return 구제된 주의 시작일
+     */
+    @Transactional
+    public LocalDate purchaseLateRescue(Long userId) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        if (!user.isActive()) {
+            throw BusinessException.forbidden("INACTIVE_USER", "비활성(탈퇴) 계정입니다.");
+        }
+
+        WeeklyEvaluation pending = evaluationRepository
+                .findFirstByUserIdAndResultOrderByWeekStartDesc(userId, EvaluationResult.PENDING_RESCUE)
+                .orElseThrow(() -> BusinessException.notFound(
+                        "NO_PENDING_RESCUE", "구제 대기 중인 주가 없습니다."));
+
+        if (pending.getRescueDeadline() != null
+                && !OffsetDateTime.now(clock).isBefore(pending.getRescueDeadline())) {
+            throw BusinessException.badRequest("RESCUE_DEADLINE_PASSED",
+                    "구제 기한이 지났습니다.");
+        }
+
+        coinService.chargeStrict(userId, lateRescuePrice,
+                CoinTransactionReason.LATE_RESCUE_PURCHASE, null);
+        pending.markRescued();
+
+        log.info("[RecoveryTicket] late rescue purchased: userId={}, week={}, price={}",
+                userId, pending.getWeekStart(), lateRescuePrice);
+        return pending.getWeekStart();
+    }
+
     public long getTicketPrice() {
         return ticketPrice;
+    }
+
+    public long getLateRescuePrice() {
+        return lateRescuePrice;
     }
 }
