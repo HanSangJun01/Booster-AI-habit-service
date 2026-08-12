@@ -29,6 +29,10 @@ public class Team {
     @Builder.Default
     private BigDecimal participationRate = BigDecimal.ZERO;
 
+    // 참여율 동시 갱신(인스턴스 간) Lost Update 방지용 낙관적 락 버전. JPA가 관리하므로 setter를 두지 않는다.
+    @Version
+    private Long version;
+
     @Enumerated(EnumType.STRING)
     @Column(length = 10)
     private TeamResult result;

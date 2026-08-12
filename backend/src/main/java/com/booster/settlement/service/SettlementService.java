@@ -52,23 +52,33 @@ public class SettlementService {
 
         // Idempotency gate: COMPLETED 또는 PENDING 모두 skip (이중 지급 방지)
         Optional<Settlement> existing = settlementRepository.findByChallengeId(challengeId);
+        Settlement settlement;
         if (existing.isPresent()) {
             SettlementStatus status = existing.get().getStatus();
             if (status == SettlementStatus.COMPLETED || status == SettlementStatus.PENDING) {
                 log.info("Settlement already in progress or completed for challengeId={}", challengeId);
                 return;
             }
-        }
 
-        // PENDING row 선점: unique constraint가 동시 호출을 직렬화하는 포인트
-        Settlement settlement;
-        try {
-            settlement = existing.orElseGet(() -> settlementRepository.save(
-                    Settlement.builder().challengeId(challengeId).status(SettlementStatus.PENDING).build()
-            ));
-        } catch (DataIntegrityViolationException e) {
-            log.warn("Concurrent settlement attempt for challengeId={}, skipping", challengeId);
-            return;
+            // [이중지급 차단] 재시도 경로(FAILED): 기존 행은 INSERT가 없어 unique 제약이 걸리지
+            // 않는다 → 두 호출자가 동시에 게이트를 통과해 코인을 이중 지급할 수 있다. FAILED→PENDING
+            // 원자적 CAS로 오직 한 호출자만 재시도 소유권을 얻게 직렬화한다. 0이면 이미 선점당함.
+            int claimed = settlementRepository.claimFailedForRetry(challengeId);
+            if (claimed == 0) {
+                log.info("다른 호출자가 이미 재시도를 선점함, skip: challengeId={}", challengeId);
+                return;
+            }
+            settlement = existing.get();
+        } else {
+            // 신규 정산: PENDING row INSERT — unique(challenge_id)가 동시 INSERT를 직렬화하는 포인트
+            try {
+                settlement = settlementRepository.save(
+                        Settlement.builder().challengeId(challengeId).status(SettlementStatus.PENDING).build()
+                );
+            } catch (DataIntegrityViolationException e) {
+                log.warn("Concurrent settlement attempt for challengeId={}, skipping", challengeId);
+                return;
+            }
         }
 
         try {
