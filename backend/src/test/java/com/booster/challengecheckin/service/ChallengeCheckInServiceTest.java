@@ -164,6 +164,10 @@ class ChallengeCheckInServiceTest {
 
         Challenge challenge = mock(Challenge.class);
         when(challenge.getStatus()).thenReturn(ChallengeStatus.ACTIVE);
+        // 타입 검증과 GPS 판정이 레코드 생성보다 앞으로 옮겨져, 경쟁 구간에 도달하려면 둘 다 통과해야 한다
+        when(challenge.getVerificationType()).thenReturn(VerificationType.GPS);
+        when(gpsVerificationEvaluator.calculateDistanceMeters(anyDouble(), anyDouble(), anyDouble(), anyDouble()))
+                .thenReturn(0.0);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
@@ -237,12 +241,11 @@ class ChallengeCheckInServiceTest {
         when(challenge.getVerificationType()).thenReturn(VerificationType.PHOTO);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
-        // 초기 조회 empty → 신규 insert 성공을 흉내내야 verificationType 스코프 체크(4-1)까지 도달함
+        // verificationType 스코프 검증은 이제 레코드 생성보다 먼저 일어난다.
+        // (예전엔 insert 이후였어서 insert 성공을 흉내내야 도달했다)
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
         when(checkInRepository.findByParticipantIdAndCheckInDate(any(), eq(today)))
                 .thenReturn(Optional.empty());
-        when(checkInInsertHelper.insertInNewTransaction(any()))
-                .thenAnswer(inv -> inv.getArgument(0));
 
         assertThrows(BusinessException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));

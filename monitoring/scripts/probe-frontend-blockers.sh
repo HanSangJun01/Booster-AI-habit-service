@@ -158,12 +158,25 @@ r=$(upload 11000000)  # 11MB — 상한 초과
                  || bug "11MB → $r (413 기대. 500이면 상한 초과가 서버 오류로 나감)"
 rm -rf "$UPDIR"
 
-# ── F10. 인증 결과 상세 조회 (#8) ──────────────────────────────
-hdr "F10 인증 결과 상세 조회 API (#8)"
+# ── F10. GPS 실패 응답이 개인/팀 동일한가 (#8 대체) ────────────
+# 프론트 #8("스펙엔 있는데 컨트롤러가 없다")은 조회 API 를 만드는 대신,
+# 팀 챌린지도 개인처럼 GPS 실패를 400 + 사유로 즉시 응답하게 통일해서 해소했다.
+# → 조회 API 자체가 불필요해져 제거됨.
+hdr "F10 GPS 실패 응답 통일 (개인 = 팀)"
+
+# 개인: 반경 밖 좌표로 인증 → 400 + 거리 포함 메시지
+mkuser gpsfail
+setloc
+r=$(body -X POST "$BASE/personal/check-in" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d '{"lat":38.5,"lng":128.0}')          # 등록 위치(37.5,127.0)에서 한참 밖
+ec=$(jget "$r" errorCode)
+[ "$ec" = "GPS_OUT_OF_RANGE" ] && ok "개인: 400 GPS_OUT_OF_RANGE" || bug "개인 errorCode=$ec"
+grep -qE "떨어져 있습니다.*허용" <<<"$r" \
+  && ok "개인: 메시지에 거리·허용반경 포함" || bug "개인 메시지에 거리 없음: $(head -c 120 <<<"$r")"
+
+# 제거된 조회 API 는 더 이상 없어야 한다
 c=$(code "$BASE/check-ins/999999/verification-submissions" -H "$AUTH")
-[ "$c" = "404" ] && ok "엔드포인트 존재 (없는 checkInId → 404)" || bug "→ $c (404 기대, 405/500이면 미구현)"
-c=$(code "$BASE/check-ins/999999/verification-submissions")
-[ "$c" = "401" ] && ok "토큰 없이 호출 → 401" || bug "→ $c (401 기대)"
+[ "$c" = "404" ] && ok "인증결과 조회 API 제거됨 (404)" || bug "→ $c (제거됐어야 함)"
 
 echo
 echo "════════════════════════════════"

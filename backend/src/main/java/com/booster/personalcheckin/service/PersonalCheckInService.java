@@ -76,12 +76,14 @@ public class PersonalCheckInService {
             throw BusinessException.conflict("DUPLICATE_CHECK_IN", "오늘 이미 인증을 완료했습니다.");
         }
 
-        // GPS 반경 판정 — 실패 시 레코드 생성하지 않음
-        boolean within = gpsEvaluator.isWithinRadius(
-                location.getLat(), location.getLng(), location.getRadiusMeters(),
-                currentLat, currentLng);
-        if (!within) {
-            throw BusinessException.badRequest("GPS_OUT_OF_RANGE", "등록된 위치 반경을 벗어났습니다.");
+        // GPS 반경 판정 — 실패 시 레코드를 만들지 않고 즉시 거절한다.
+        // 얼마나 벗어났는지까지 알려준다(팀 챌린지 체크인과 동일한 메시지 형식).
+        double distanceMeters = gpsEvaluator.calculateDistanceMeters(
+                location.getLat(), location.getLng(), currentLat, currentLng);
+        if (distanceMeters > location.getRadiusMeters()) {
+            throw BusinessException.badRequest("GPS_OUT_OF_RANGE",
+                    String.format("등록된 위치에서 %.0fm 떨어져 있습니다. (허용 %dm)",
+                            distanceMeters, location.getRadiusMeters()));
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
