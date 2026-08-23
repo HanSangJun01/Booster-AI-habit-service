@@ -34,6 +34,15 @@ class Session {
 
   static bool get isLoggedIn => userId != null;
 
+  /// 세션이 비워질 때 함께 비워야 하는 로컬 상태를 연결하는 훅
+  /// (`main.dart`에서 [Inventory.clear]를 건다).
+  ///
+  /// 보유 아이템처럼 세션 밖에 사는 값이 남아 있으면, 한 기기에서 계정을 바꿔
+  /// 로그인했을 때 앞사람 것이 그대로 보인다. 로그아웃 지점이 여러 곳이라
+  /// (마이페이지 로그아웃·회원 탈퇴·401 만료) 각자 비우게 두면 언젠가 하나를
+  /// 빠뜨린다 — `ApiClient.onUnauthorized`와 같은 이유로 한 곳에 모은다.
+  static void Function()? onClear;
+
   static void set({
     required int userId,
     required String nickname,
@@ -53,5 +62,6 @@ class Session {
     accessToken = null;
     coinBalance = 0;
     currentChallengeId = null;
+    onClear?.call();
   }
 }

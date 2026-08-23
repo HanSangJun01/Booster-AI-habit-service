@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'core/api_client.dart';
+import 'core/inventory.dart';
 import 'core/session.dart';
 import 'theme/booster_theme.dart';
 import 'screens/auth/login_screen.dart';
@@ -11,6 +12,9 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() {
   ApiClient.onUnauthorized = handleSessionExpired;
+  // 보유 아이템은 세션 밖(기기 저장소)에 살아서 Session.clear()가 모른다.
+  // 로그아웃 지점마다 따로 비우면 언젠가 하나를 빠뜨리므로 여기서 한 번 건다.
+  Session.onClear = Inventory.clear;
   runApp(const BoosterApp());
 }
 
