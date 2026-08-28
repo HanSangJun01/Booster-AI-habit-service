@@ -13,6 +13,10 @@ class Participant {
   final int? teamId;
   final String? personalStatement;
 
+  /// 신청자 닉네임. 서버가 필드명을 `nickname`으로 줄지 `userNickname`으로 줄지
+  /// 확정돼 있지 않아 둘 다 받아본다. 없으면 null이다.
+  final String? nickname;
+
   /// `ParticipantStatus` — PENDING | CONFIRMED | REJECTED | CANCELLED | LEFT.
   final String status;
   final DateTime? joinedAt;
@@ -24,6 +28,7 @@ class Participant {
     required this.userId,
     this.teamId,
     this.personalStatement,
+    this.nickname,
     required this.status,
     this.joinedAt,
     this.approvedAt,
@@ -36,6 +41,7 @@ class Participant {
       userId: asInt(json['userId']),
       teamId: asIntOrNull(json['teamId']),
       personalStatement: json['personalStatement'] as String?,
+      nickname: (json['nickname'] ?? json['userNickname']) as String?,
       status: asString(json['status'], fallback: 'PENDING'),
       joinedAt: asDateTime(json['joinedAt']),
       approvedAt: asDateTime(json['approvedAt']),
@@ -44,6 +50,11 @@ class Participant {
 
   bool get isPending => status == 'PENDING';
   bool get isConfirmed => status == 'CONFIRMED';
+
+  /// 목록에 쓸 이름. 서버가 닉네임을 안 주면 사용자 번호로 대신한다 —
+  /// 빈칸으로 두면 방장이 누구를 승인하는지 모른 채 누르게 된다.
+  String get displayName =>
+      (nickname != null && nickname!.isNotEmpty) ? nickname! : '참가자 #$userId';
 }
 
 /// 챌린지 참가 신청 요청 (`ParticipationRequest`).

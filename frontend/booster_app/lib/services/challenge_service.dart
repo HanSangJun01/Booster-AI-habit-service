@@ -1,4 +1,6 @@
 import '../core/api_client.dart';
+import '../core/session.dart';
+import '../models/ai_verification.dart';
 import '../models/challenge.dart';
 import '../models/check_in.dart';
 import '../models/team.dart';
@@ -19,6 +21,21 @@ class ChallengeService {
   static Future<Challenge> fetchDetail(int challengeId) async {
     final data = ApiClient.asObject(await ApiClient.get('/challenges/$challengeId'));
     return Challenge.fromJson(data);
+  }
+
+  /// GET /api/users/me/challenges. 내가 참여 중인 챌린지.
+  ///
+  /// 앱 재시작 후 복원용이다. 이게 없던 동안은 참여한 챌린지 id를 메모리에만
+  /// 들고 있어서, 앱을 껐다 켜면 자기 챌린지를 잃어버리고 서버에서 취소·종료된
+  /// 것도 알 수 없었다.
+  ///
+  /// 서버가 목록을 그대로 줄 수도, Spring `Page`로 감싸 줄 수도 있어서 둘 다
+  /// 받아낸다 — 한쪽만 가정하면 형태가 바뀌는 날 목록이 통째로 빈다.
+  static Future<List<Challenge>> fetchMine() async {
+    final data = await ApiClient.get('/users/me/challenges');
+    final list = data is List ? data : (data is Map ? data['content'] : null);
+    if (list is! List) return const [];
+    return list.whereType<Map<String, dynamic>>().map(Challenge.fromJson).toList();
   }
 
   /// GET /api/challenges. 공개 챌린지 검색(페이징).
@@ -82,6 +99,32 @@ class ChallengeService {
     });
     if (data is! List) return const [];
     return data.whereType<Map<String, dynamic>>().map(CheckIn.fromJson).toList();
+  }
+
+  /// POST /api/verification-submissions/{submissionId}/ai-verification.
+  /// 팀 챌린지 사진 인증.
+  ///
+  /// 경로가 `/challenges/...` 밑이 아니다 — 제출물이 챌린지가 아니라 참가자
+  /// 단위로 관리돼서 별도 컨트롤러에 있다.
+  ///
+  /// [aiCategory]는 `EXERCISE`/`STUDY`만 유효하다. 챌린지의 `category`를 그대로
+  /// 넘기면 안 된다 — 자유 문자열이라 `WAKE_UP`이나 옛 한글이 들어 있을 수 있고,
+  /// 그러면 500이 난다(`ChallengeCategory.aiValueOf` 참조).
+  static Future<AiVerificationResult> verifyPhoto({
+    required int submissionId,
+    required String filePath,
+    required List<int> bytes,
+    required String aiCategory,
+  }) async {
+    final data = ApiClient.asObject(await ApiClient.postImage(
+      '/verification-submissions/$submissionId/ai-verification',
+      filePath: filePath,
+      bytes: bytes,
+      fields: {'category': aiCategory},
+    ));
+    final result = AiVerificationResult.fromJson(data);
+    Session.coinBalance = result.coinBalance;
+    return result;
   }
 
   /// GET /api/challenges/{challengeId}/team-detail.

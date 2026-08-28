@@ -14,6 +14,10 @@ dependencies:
   flutter_map: ^8.3.1
   latlong2: ^0.10.1
   shared_preferences: ^2.5.5
+  image_picker: ^1.1.2
+  # MultipartFile의 contentType을 지정하려면 필요하다. http가 이미 끌어오는
+  # 패키지지만, 직접 import하므로 명시한다.
+  http_parser: ^4.0.2
 
 dev_dependencies:
   flutter_lints: ^3.0.0

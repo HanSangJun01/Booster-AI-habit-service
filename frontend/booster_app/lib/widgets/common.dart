@@ -36,7 +36,7 @@ class CoinDot extends StatelessWidget {
 /// 코인 잔액 알약.
 ///
 /// [amount]를 주지 않으면 Session에 마지막으로 반영된 잔액을 보여준다.
-/// 체크인·복귀 미션 응답이 갱신된 잔액을 함께 주기 때문에(`coinBalance`),
+/// 체크인 응답이 갱신된 잔액을 함께 주기 때문에(`coinBalance`),
 /// 별도 조회 없이도 최신 값이 유지된다.
 class CoinPill extends StatelessWidget {
   final String? amount;

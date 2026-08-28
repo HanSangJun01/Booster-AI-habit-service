@@ -3,24 +3,26 @@ import '../../core/api_client.dart';
 import '../../core/location.dart';
 import '../../core/session.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
 import '../../models/check_in.dart';
 import '../../models/personal_location.dart';
-import '../../models/recovery.dart';
 import '../../services/challenge_service.dart';
 import '../../services/personal_service.dart';
-import '../../services/recovery_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../home/personal_create_screen.dart';
 import '../main_scaffold.dart';
+import 'photo_verify_sheet.dart';
 
-/// 인증 화면. 세 갈래가 있다:
+/// 인증 화면. 두 갈래가 있다:
 /// - 개인 습관 인증 — `POST /api/personal/check-in`
-/// - 복귀 미션 — `POST /api/personal/recovery` (놓친 날이 있을 때만)
 /// - 팀 챌린지 인증 — `POST /api/challenges/{challengeId}/check-ins`
 ///
-/// 세 경우 모두 체크인 생성과 GPS 판정이 **한 번의 호출**로 끝난다. 예전
-/// 스펙의 "체크인 생성 → 인증 제출" 2단계 구조는 백엔드에 존재하지 않는다.
+/// 둘 다 체크인 생성과 GPS 판정이 **한 번의 호출**로 끝난다. 예전 스펙의
+/// "체크인 생성 → 인증 제출" 2단계 구조는 백엔드에 존재하지 않는다.
+///
+/// 복귀 미션은 폐지됐다 — 백엔드에서 `RecoveryController`가 통째로 사라지고
+/// 주간 목표 채점으로 대체됐다. 놓친 날을 그날그날 만회하는 흐름이 없어졌다.
 class VerifyScreen extends StatefulWidget {
   const VerifyScreen({super.key});
   @override
@@ -31,13 +33,47 @@ class _VerifyScreenState extends State<VerifyScreen> {
   bool _loading = true;
   TodayStatus? _today;
   PersonalLocation? _location;
-  RecoveryStatus _recovery = RecoveryStatus.none;
 
-  /// 참여 중인 팀 챌린지. 백엔드에 "내가 참여 중인 챌린지 목록" 엔드포인트가
-  /// 없어서(GET /api/challenges는 공개 챌린지 검색이다), 이번 세션에서 참가
-  /// 하거나 연 챌린지만 Session으로 추적한다. 앱을 재시작하면 사라진다.
+  /// 지금 인증할 팀 챌린지. 팀 탭이 `GET /api/users/me/challenges`로 목록을
+  /// 복원하면서 [Session.currentChallengeId]를 채워주므로, 앱을 재시작해도
+  /// 남아 있다.
   Challenge? _challenge;
   List<CheckIn> _challengeCheckIns = [];
+
+  /// 사진이 남은 개인 체크인의 id.
+  ///
+  /// ⚠️ `GET /api/personal/check-in/today`는 `checkInId`를 주지 않는다(계약상
+  /// date·status·verifiedAt뿐). 그래서 이 값은 **이번 세션에서 체크인한 경우에만**
+  /// 알 수 있고, 앱을 껐다 켜면 PENDING인 걸 알면서도 이어서 올릴 수 없다.
+  /// 서버가 today 응답에 id를 실어주면 [TodayStatus.checkInId]로 자동으로 메워진다.
+  int? _personalCheckInId;
+
+  /// 사진이 남은 개인 체크인 id. 서버가 주면 그 값을, 아니면 이번 세션 값을 쓴다.
+  int? get _pendingPhotoCheckInId => _today?.checkInId ?? _personalCheckInId;
+
+  /// 오늘 팀 인증에 사진이 남았는지. 목록에서 PENDING 제출물을 찾는다.
+  ///
+  /// 개인과 달리 팀은 목록 응답에 `submissionId`가 들어 있어서, 앱을 다시 켜도
+  /// 이어서 올릴 수 있다.
+  int? get _pendingTeamSubmissionId {
+    for (final checkIn in _todayTeamCheckIns) {
+      if (checkIn.awaitsPhoto && checkIn.submissionId != null) {
+        return checkIn.submissionId;
+      }
+    }
+    return null;
+  }
+
+  Iterable<CheckIn> get _todayTeamCheckIns {
+    final today = DateTime.now();
+    return _challengeCheckIns.where((c) {
+      final date = c.checkInDate;
+      return date != null &&
+          date.year == today.year &&
+          date.month == today.month &&
+          date.day == today.day;
+    });
+  }
 
   bool _didInitialLoad = false;
   int? _lastActiveTabIndex;
@@ -68,7 +104,6 @@ class _VerifyScreenState extends State<VerifyScreen> {
       final results = await Future.wait([
         PersonalService.fetchToday(),
         PersonalService.fetchLocation(),
-        RecoveryService.fetchStatus(),
       ]);
       Challenge? challenge;
       var challengeCheckIns = <CheckIn>[];
@@ -81,7 +116,6 @@ class _VerifyScreenState extends State<VerifyScreen> {
       setState(() {
         _today = results[0] as TodayStatus;
         _location = results[1] as PersonalLocation?;
-        _recovery = results[2] as RecoveryStatus;
         _challenge = challenge;
         _challengeCheckIns = challengeCheckIns;
       });
@@ -98,66 +132,106 @@ class _VerifyScreenState extends State<VerifyScreen> {
   /// 팀 챌린지에서 내가 오늘 인증했는지. 서버가 팀 전체 체크인을 주므로
   /// 내 참가자 기록만 골라야 하는데, 참가자 id를 앱이 들고 있지 않아
   /// 오늘 날짜의 성공 기록 존재 여부로 판단한다.
-  bool get _teamDoneToday {
-    final today = DateTime.now();
-    return _challengeCheckIns.any((c) {
-      final date = c.checkInDate;
-      return date != null &&
-          date.year == today.year &&
-          date.month == today.month &&
-          date.day == today.day &&
-          c.isSuccess;
-    });
-  }
+  bool get _teamDoneToday => _todayTeamCheckIns.any((c) => c.isSuccess);
 
   // ───────────────────────── 인증 실행 ─────────────────────────
 
   /// 개인 습관 인증.
+  ///
+  /// 인증 방식이 AI 계열이면 GPS 단계가 `PENDING`으로 끝나고 사진이 남는다.
+  /// 거기서 멈추면 PENDING이 하루를 점유해 스트릭도 코인도 오르지 않으므로,
+  /// 곧바로 사진 단계로 이어준다.
   Future<void> _startPersonalVerify() async {
     if (_location == null) {
       await _promptLocationSetup();
       return;
     }
+
+    int? pendingCheckInId;
     final passed = await _runVerifySheet((latitude, longitude) async {
       final result = await PersonalService.checkIn(
         latitude: latitude,
         longitude: longitude,
       );
-      return result.isSuccess;
+      if (result.awaitsPhoto) pendingCheckInId = result.checkInId;
+      // 사진이 남았어도 GPS 단계는 통과한 것이다. 여기서 실패로 그리면
+      // 사용자가 위치를 잘못 잡은 줄 안다.
+      return result.isSuccess || result.awaitsPhoto;
     });
     if (passed == null || !mounted) return;
+
+    final checkInId = pendingCheckInId;
+    if (checkInId != null) {
+      _personalCheckInId = checkInId;
+      await _uploadPersonalPhoto(checkInId);
+      if (!mounted) return;
+    }
     await _load();
   }
 
-  /// 복귀 미션 수행.
-  Future<void> _startRecovery() async {
-    if (_location == null) {
-      await _promptLocationSetup();
-      return;
-    }
-    final passed = await _runVerifySheet((latitude, longitude) async {
-      final result = await RecoveryService.perform(
-        latitude: latitude,
-        longitude: longitude,
-      );
-      return result.isCompleted;
-    });
-    if (passed == null || !mounted) return;
-    await _load();
+  /// 개인 사진 인증. GPS 단계 직후에도, 남아 있는 PENDING을 이어서 할 때도 쓴다.
+  Future<void> _uploadPersonalPhoto(int checkInId) async {
+    await showPhotoVerifySheet(
+      context,
+      request: PhotoVerifyRequest(
+        subtitle: '오늘의 습관을 찍어서 올려주세요.',
+        // 개인 트랙에는 카테고리를 저장하는 컬럼이 아예 없다. 그래서 서버에서
+        // 가져올 수가 없고 사용자가 매번 고른다.
+        fixedAiCategory: null,
+        upload: (path, bytes, aiCategory) => PersonalService.verifyPhoto(
+          checkInId: checkInId,
+          filePath: path,
+          bytes: bytes,
+          aiCategory: aiCategory,
+        ),
+      ),
+    );
+    if (mounted) _personalCheckInId = null;
   }
 
   /// 팀 챌린지 인증.
   Future<void> _startTeamVerify(Challenge challenge) async {
+    int? pendingSubmissionId;
     final passed = await _runVerifySheet((latitude, longitude) async {
       final checkIn = await ChallengeService.checkIn(
         challenge.id,
         latitude: latitude,
         longitude: longitude,
       );
-      return checkIn.isSuccess;
+      if (checkIn.awaitsPhoto) pendingSubmissionId = checkIn.submissionId;
+      return checkIn.isSuccess || checkIn.awaitsPhoto;
     });
     if (passed == null || !mounted) return;
+
+    final submissionId = pendingSubmissionId;
+    if (submissionId != null) {
+      await _uploadTeamPhoto(challenge, submissionId);
+      if (!mounted) return;
+    }
     await _load();
+  }
+
+  Future<void> _uploadTeamPhoto(Challenge challenge, int submissionId) async {
+    // 챌린지의 category를 그대로 넘기면 안 된다 — 자유 문자열이라 ai-service가
+    // 모르는 값(WAKE_UP·옛 한글)이 들어 있을 수 있고, 그러면 500이 난다.
+    final aiCategory = ChallengeCategory.aiValueOf(challenge.category);
+    if (aiCategory == null) {
+      showBoosterToast(context, '이 챌린지는 사진 인증을 지원하지 않아요');
+      return;
+    }
+    await showPhotoVerifySheet(
+      context,
+      request: PhotoVerifyRequest(
+        subtitle: '${challenge.title} 인증 사진을 올려주세요.',
+        fixedAiCategory: aiCategory,
+        upload: (path, bytes, category) => ChallengeService.verifyPhoto(
+          submissionId: submissionId,
+          filePath: path,
+          bytes: bytes,
+          aiCategory: category,
+        ),
+      ),
+    );
   }
 
   Future<bool?> _runVerifySheet(
@@ -205,10 +279,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                           const Text('등록한 장소에서 GPS로 인증해 보세요.',
                               style: TextStyle(fontSize: 13.5, color: BC.ink2)),
                           const SizedBox(height: 22),
-                          if (_recovery.hasPendingMission) ...[
-                            _recoveryCard(),
-                            const SizedBox(height: 24),
-                          ],
+                          ..._photoPendingBanners(),
                           _sectionTitle(Icons.person_rounded, BC.oMain, BC.oSoft, '개인 습관',
                               _location == null ? '0' : '1'),
                           const SizedBox(height: 12),
@@ -225,6 +296,92 @@ class _VerifyScreenState extends State<VerifyScreen> {
                     ),
             ),
             const BoosterBottomNav(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// "사진 인증이 남았어요" 배너들.
+  ///
+  /// GPS는 통과했는데 사진을 안 올린 상태다. 그냥 두면 PENDING이 하루를 점유해서
+  /// 스트릭도 코인도 안 오르는데, 화면에는 아무 표시가 없어 사용자는 인증이 끝난
+  /// 줄 안다.
+  List<Widget> _photoPendingBanners() {
+    final banners = <Widget>[];
+
+    if (_today?.awaitsPhoto == true) {
+      final checkInId = _pendingPhotoCheckInId;
+      banners.add(_photoBanner(
+        title: '개인 습관 · 사진 인증이 남았어요',
+        // id를 모르면 이어서 올릴 수가 없다. 누를 수 없는 버튼을 두느니
+        // 무엇이 막혀 있는지 말해준다.
+        description: checkInId == null
+            ? 'GPS는 통과했어요. 앱을 다시 켜서 이어 올리는 건 아직 안 돼요 — 오늘 안에 다시 인증해주세요.'
+            : 'GPS는 통과했어요. 사진을 올리면 인증이 확정돼요.',
+        onTap: checkInId == null ? null : () => _uploadAndReload(checkInId),
+      ));
+    }
+
+    final submissionId = _pendingTeamSubmissionId;
+    final challenge = _challenge;
+    if (submissionId != null && challenge != null) {
+      banners.add(_photoBanner(
+        title: '팀 챌린지 · 사진 인증이 남았어요',
+        description: 'GPS는 통과했어요. 사진을 올리면 인증이 확정돼요.',
+        onTap: () async {
+          await _uploadTeamPhoto(challenge, submissionId);
+          if (mounted) await _load();
+        },
+      ));
+    }
+
+    if (banners.isEmpty) return const [];
+    return [
+      for (final banner in banners) ...[banner, const SizedBox(height: 12)],
+      const SizedBox(height: 10),
+    ];
+  }
+
+  Future<void> _uploadAndReload(int checkInId) async {
+    await _uploadPersonalPhoto(checkInId);
+    if (mounted) await _load();
+  }
+
+  Widget _photoBanner({
+    required String title,
+    required String description,
+    required VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: BC.oSoft,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: BC.oSoft2, width: 1.5),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.photo_camera_rounded, size: 22, color: BC.oMain),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14.5, fontWeight: FontWeight.w800, color: BC.oMain)),
+                  const SizedBox(height: 3),
+                  Text(description,
+                      style: const TextStyle(
+                          fontSize: 12.5, color: BC.ink2, height: 1.4)),
+                ],
+              ),
+            ),
+            if (onTap != null) const Icon(Icons.chevron_right_rounded, color: BC.oMain),
           ],
         ),
       ),
@@ -250,68 +407,6 @@ class _VerifyScreenState extends State<VerifyScreen> {
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: fg)),
         ),
       ],
-    );
-  }
-
-  /// 복귀 미션 배너. 데드라인이 실제 서버 값(`deadlineAt`)이라 남은 시간을
-  /// 그대로 보여줄 수 있다.
-  Widget _recoveryCard() {
-    final remaining = _recovery.remaining;
-    final missed = _recovery.missedDate;
-    return AppCard(
-      padding: EdgeInsets.zero,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              Container(width: 5, color: BC.blue),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.refresh_rounded, size: 19, color: BC.blue),
-                          const SizedBox(width: 7),
-                          const Text('복귀 미션',
-                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                          const Spacer(),
-                          MiniTag(
-                            remaining == null
-                                ? '기한 지남'
-                                : '${remaining.inHours}시간 남음',
-                            bg: BC.blueSoft,
-                            fg: BC.blue,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        missed == null
-                            ? '놓친 인증을 만회할 수 있어요.'
-                            : '${missed.month}월 ${missed.day}일 인증을 놓쳤어요. 지금 만회할 수 있어요.',
-                        style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.4),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text('복귀에 성공하면 50코인, 기한을 넘기면 100코인이 차감돼요.',
-                          style: TextStyle(fontSize: 12, color: BC.ink3)),
-                      const SizedBox(height: 14),
-                      PrimaryButton(
-                        label: '복귀 미션 수행하기',
-                        leadingIcon: Icons.refresh_rounded,
-                        onTap: _startRecovery,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -431,7 +526,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(challenge.category,
+                    Text(ChallengeCategory.labelOf(challenge.category),
                         style: const TextStyle(fontSize: 13, color: BC.ink3)),
                     Text(challenge.title,
                         maxLines: 1,

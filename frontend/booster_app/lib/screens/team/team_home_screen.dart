@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../core/session.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
 import '../../services/challenge_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
@@ -16,10 +17,14 @@ import 'team_waiting_screen.dart';
 /// 백엔드 모델에서 "팀"은 챌린지 안에서 서버가 편성하는 하위 개념이라, 사용자가
 /// 다루는 단위는 **챌린지**다. 그래서 이 화면은 내 챌린지를 보여준다.
 ///
-/// 한계: 백엔드에 "내가 참여 중인 챌린지 목록" 엔드포인트가 없다
-/// (`GET /api/challenges`는 공개 챌린지 검색이다). 그래서 이번 세션에서
-/// 만들었거나 참가한 챌린지 하나만 [Session.currentChallengeId]로 추적하고,
-/// 앱을 재시작하면 초대 코드나 탐색으로 다시 찾아 들어가야 한다.
+/// ## 참여 목록은 서버가 갖고 있다
+/// 예전엔 이번 세션에서 만들었거나 참가한 챌린지 **하나**를
+/// [Session.currentChallengeId]로만 기억했다. 그래서 앱을 껐다 켜면 자기
+/// 챌린지를 잃어버렸고(메모리에만 있었다), 여러 개에 참여해도 하나만 보였고,
+/// 서버에서 취소·종료된 챌린지를 계속 진행 중인 것처럼 보여줬다.
+///
+/// 지금은 `GET /api/users/me/challenges`로 매번 서버에 묻는다. 로컬 id는
+/// 화면 전이용 힌트로만 남는다.
 class TeamHomeScreen extends StatefulWidget {
   const TeamHomeScreen({super.key});
   @override
@@ -28,7 +33,7 @@ class TeamHomeScreen extends StatefulWidget {
 
 class _TeamHomeScreenState extends State<TeamHomeScreen> {
   bool _loading = true;
-  Challenge? _challenge;
+  List<Challenge> _challenges = const [];
   bool _didInitialLoad = false;
   int? _lastActiveTabIndex;
 
@@ -54,25 +59,25 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final challengeId = Session.currentChallengeId;
-    if (challengeId == null) {
-      if (!mounted) return;
-      setState(() {
-        _challenge = null;
-        _loading = false;
-      });
-      return;
-    }
     try {
-      final challenge = await ChallengeService.fetchDetail(challengeId);
+      final challenges = await ChallengeService.fetchMine();
       if (!mounted) return;
-      setState(() {
-        _challenge = challenge;
-      });
+      setState(() => _challenges = challenges);
+
+      // 다른 화면들이 "지금 보고 있는 챌린지"를 이 값으로 찾는다. 서버 목록에
+      // 없는 id가 남아 있으면(취소·종료됐거나 다른 계정으로 로그인) 지운다.
+      final current = Session.currentChallengeId;
+      if (current != null && !challenges.any((c) => c.id == current)) {
+        Session.currentChallengeId = null;
+      }
+      if (Session.currentChallengeId == null && challenges.isNotEmpty) {
+        Session.currentChallengeId = challenges.first.id;
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       showBoosterToast(context, e.message);
-      setState(() => _challenge = null);
+      // 조회에 실패했을 뿐 참여가 사라진 게 아니다. 목록을 비우면 "참여 중인
+      // 챌린지 없음" 화면이 떠서 사용자가 다시 만들려고 든다.
     } finally {
       // 어떤 예외로 빠져나가든 스피너는 반드시 걷는다.
       if (mounted) setState(() => _loading = false);
@@ -94,6 +99,9 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
   }
 
   Future<void> _goChallenge(Challenge challenge) async {
+    // 들어가는 챌린지를 "지금 보는 챌린지"로 잡아둔다 — 인증 탭이 이 값으로
+    // 어느 챌린지를 인증할지 정한다.
+    Session.currentChallengeId = challenge.id;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => challenge.isActive
           ? TeamBattleScreen(challenge: challenge)
@@ -114,7 +122,7 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator(color: BC.oMain))
-                  : (_challenge == null ? _empty() : _populated(_challenge!)),
+                  : (_challenges.isEmpty ? _empty() : _populated(_challenges)),
             ),
             const BoosterBottomNav(),
           ],
@@ -124,17 +132,24 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
   }
 
   // ───────────── 내 챌린지 있음 ─────────────
-  Widget _populated(Challenge challenge) {
+  Widget _populated(List<Challenge> challenges) {
     return RefreshIndicator(
       onRefresh: _load,
       color: BC.oMain,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
         children: [
-          const Text('내 챌린지',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          Row(
+            children: [
+              const Text('내 챌린지',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              const SizedBox(width: 8),
+              MiniTag('${challenges.length}개', bg: BC.oSoft, fg: BC.oMain),
+            ],
+          ),
           const SizedBox(height: 13),
-          _challengeCard(challenge, onTap: () => _goChallenge(challenge)),
+          for (final challenge in challenges)
+            _challengeCard(challenge, onTap: () => _goChallenge(challenge)),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -216,7 +231,8 @@ class _TeamHomeScreenState extends State<TeamHomeScreen> {
                         bg: BC.oSoft, fg: BC.oMain),
                   ]),
                   const SizedBox(height: 5),
-                  Text(challenge.description ?? challenge.category,
+                  Text(challenge.description ??
+                      ChallengeCategory.labelOf(challenge.category),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13.5, color: BC.ink2)),

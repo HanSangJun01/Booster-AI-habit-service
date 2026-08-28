@@ -37,6 +37,22 @@ class ParticipantService {
     if (Session.currentChallengeId == challengeId) Session.currentChallengeId = null;
   }
 
+  /// GET /api/challenges/{challengeId}/participants?status=PENDING.
+  /// 승인 대기 중인 신청자 목록.
+  ///
+  /// **승인에 필요한 `participantId`를 얻는 유일한 경로다.** 참가 신청 응답을
+  /// 받는 건 신청자 본인이지 방장이 아니라서, 방장에게는 이 목록 말고 id를 알
+  /// 방법이 없다.
+  static Future<List<Participant>> fetchPending(int challengeId) async {
+    final data = await ApiClient.get(
+      '/challenges/$challengeId/participants',
+      query: {'status': 'PENDING'},
+    );
+    final list = data is List ? data : (data is Map ? data['content'] : null);
+    if (list is! List) return const [];
+    return list.whereType<Map<String, dynamic>>().map(Participant.fromJson).toList();
+  }
+
   /// POST /api/challenges/{challengeId}/participants/{participantId}/approve.
   /// 방장이 대기 중인 참가 신청을 승인한다(approvalType=LEADER인 챌린지).
   static Future<Participant> approve(int challengeId, int participantId) async {

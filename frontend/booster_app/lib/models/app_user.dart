@@ -90,9 +90,11 @@ class SignupResult {
 
 /// 백엔드 `CoinTransactionResponse` (GET /api/users/me/coins 항목).
 class CoinTransaction {
-  /// `CoinTransactionReason` — SIGNUP_BONUS / STREAK_REWARD / RECOVERY_SUCCESS /
-  /// RECOVERY_FAILURE / CHALLENGE_DEPOSIT / SETTLEMENT_WIN / DEPOSIT_REFUND /
-  /// DEPOSIT_CANCEL_REFUND.
+  /// `CoinTransactionReason`.
+  ///
+  /// RECOVERY_SUCCESS / RECOVERY_FAILURE는 폐지된 복귀 미션의 사유다. 백엔드
+  /// enum에는 남아 있고 예전 거래 기록도 그대로라, 내역 화면이 원문 문자열을
+  /// 그대로 노출하지 않도록 라벨은 유지한다.
   final String type;
   final int amount;
   final int balanceAfter;
@@ -126,10 +128,19 @@ class CoinTransaction {
         return '가입 보너스';
       case 'STREAK_REWARD':
         return '연속 인증 보상';
+      // 폐지된 사유 — 지난 기록에만 남는다.
       case 'RECOVERY_SUCCESS':
         return '복귀 미션 성공';
       case 'RECOVERY_FAILURE':
         return '복귀 미션 실패';
+      // 주간 목표 모델에서 새로 생긴 사유. 앱이 주간 목표를 아직 안 붙였어도
+      // 서버 스케줄러가 기록을 남기므로 내역 화면에 그대로 올라온다.
+      case 'WEEKLY_MISS_PENALTY':
+        return '주간 목표 미달';
+      case 'RECOVERY_TICKET_PURCHASE':
+        return '구제권 구매';
+      case 'LATE_RESCUE_PURCHASE':
+        return '구제권 사후 구매';
       case 'CHALLENGE_DEPOSIT':
         return '챌린지 예치금';
       case 'SETTLEMENT_WIN':

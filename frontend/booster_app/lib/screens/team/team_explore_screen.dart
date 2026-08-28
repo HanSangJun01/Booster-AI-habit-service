@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
 import '../../services/challenge_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
@@ -19,7 +20,12 @@ class TeamExploreScreen extends StatefulWidget {
 
 class _TeamExploreScreenState extends State<TeamExploreScreen> {
   static const _pageSize = 20;
-  static const _categories = ['전체', '운동', '공부', '독서', '기상'];
+
+  /// 필터 칩. 첫 칸('전체')은 카테고리를 안 보내는 자리라 null이다.
+  ///
+  /// 독서가 빠진 건 공부와 **전송값이 같아서**다(둘 다 `STUDY`). 따로 두면 같은
+  /// 결과를 주는 버튼이 두 개가 된다 — [ChallengeCategory] 참조.
+  static const _categories = <ChallengeCategory?>[null, ...ChallengeCategory.filters];
 
   final _searchCtrl = TextEditingController();
   final _scrollController = ScrollController();
@@ -51,7 +57,7 @@ class _TeamExploreScreenState extends State<TeamExploreScreen> {
     if (position.pixels >= position.maxScrollExtent - 200) _loadMore();
   }
 
-  String? get _category => _categoryIndex == 0 ? null : _categories[_categoryIndex];
+  String? get _category => _categories[_categoryIndex]?.value;
 
   Future<void> _search() async {
     setState(() {
@@ -211,7 +217,9 @@ class _TeamExploreScreenState extends State<TeamExploreScreen> {
                 itemCount: _categories.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (_, i) => SelectChip(
-                  label: _categories[i],
+                  label: _categories[i] == null
+                      ? '전체'
+                      : ChallengeCategory.labelOf(_categories[i]!.value),
                   selected: _categoryIndex == i,
                   onTap: () {
                     setState(() => _categoryIndex = i);
@@ -314,7 +322,7 @@ class _TeamExploreScreenState extends State<TeamExploreScreen> {
                       style: const TextStyle(fontSize: 13.5, color: BC.ink2)),
                   const SizedBox(height: 9),
                   Wrap(spacing: 6, runSpacing: 6, children: [
-                    MiniTag(challenge.category),
+                    MiniTag(ChallengeCategory.labelOf(challenge.category)),
                     MiniTag('${challenge.durationDays}일'),
                     if (challenge.needsLeaderApproval)
                       const MiniTag('방장 승인', bg: BC.blueSoft, fg: BC.blue),

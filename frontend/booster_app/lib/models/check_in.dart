@@ -14,12 +14,17 @@ class CheckIn {
   final String status;
   final DateTime? verifiedAt;
 
+  /// 사진 업로드(`POST /api/verification-submissions/{id}/ai-verification`)의
+  /// 입력. **이게 없으면 AI 인증을 시작할 수 없다.**
+  final int? submissionId;
+
   CheckIn({
     required this.id,
     this.participantId,
     this.checkInDate,
     required this.status,
     this.verifiedAt,
+    this.submissionId,
   });
 
   factory CheckIn.fromJson(Map<String, dynamic> json) {
@@ -29,6 +34,7 @@ class CheckIn {
       checkInDate: asDateOnly(json['checkInDate']),
       status: asString(json['status'], fallback: 'PENDING'),
       verifiedAt: asDateTime(json['verifiedAt']),
+      submissionId: asIntOrNull(json['submissionId']),
     );
   }
 
@@ -36,6 +42,9 @@ class CheckIn {
 
   /// 기한을 넘겨 늦게 성공한 기록.
   bool get isLate => status == 'LATE_SUCCESS';
+
+  /// GPS는 통과했고 사진만 남은 상태.
+  bool get awaitsPhoto => status == 'PENDING';
 }
 
 /// 개인 습관 체크인 결과 — 백엔드 `personalcheckin.CheckInResponse`.
@@ -46,7 +55,7 @@ class CheckIn {
 class PersonalCheckInResult {
   final DateTime? date;
 
-  /// `PersonalCheckInStatus` — SUCCESS | RECOVERY_PENDING | FAILED.
+  /// `PersonalCheckInStatus` — SUCCESS | PENDING.
   final String status;
   final DateTime? verifiedAt;
   final int currentStreak;
@@ -56,6 +65,10 @@ class PersonalCheckInResult {
   /// 이번 체크인으로 스트릭 보상(`STREAK_REWARD` +100)이 지급됐는지.
   final bool rewardGranted;
 
+  /// 사진 업로드(`POST /api/personal/check-in/{checkInId}/ai-verification`)의
+  /// 입력. **이게 없으면 AI 인증을 시작할 수 없다.**
+  final int? checkInId;
+
   PersonalCheckInResult({
     this.date,
     required this.status,
@@ -64,6 +77,7 @@ class PersonalCheckInResult {
     required this.maxStreak,
     required this.coinBalance,
     required this.rewardGranted,
+    this.checkInId,
   });
 
   factory PersonalCheckInResult.fromJson(Map<String, dynamic> json) {
@@ -75,13 +89,14 @@ class PersonalCheckInResult {
       maxStreak: asInt(json['maxStreak']),
       coinBalance: asInt(json['coinBalance']),
       rewardGranted: asBool(json['rewardGranted']),
+      checkInId: asIntOrNull(json['checkInId']),
     );
   }
 
   bool get isSuccess => status == 'SUCCESS';
 
-  /// 미인증으로 복귀 미션이 열린 상태.
-  bool get needsRecovery => status == 'RECOVERY_PENDING';
+  /// GPS는 끝났고 사진만 남은 상태. 인증 방식이 AI 계열일 때 나온다.
+  bool get awaitsPhoto => status == 'PENDING';
 }
 
 /// 오늘의 개인 체크인 상태 — 백엔드 `TodayStatusResponse`.
@@ -94,16 +109,29 @@ class TodayStatus {
   final String status;
   final DateTime? verifiedAt;
 
-  TodayStatus({this.date, required this.status, this.verifiedAt});
+  /// 사진 업로드에 필요한 체크인 id.
+  ///
+  /// ⚠️ **계약상 이 응답에는 없다**(date·status·verifiedAt뿐). 그래서 status가
+  /// PENDING이어도 앱은 이어서 올릴 id를 모른다 — 앱을 껐다 켜면 사진 인증을
+  /// 끝낼 방법이 없다. 서버가 나중에 실어주면 여기로 그대로 들어온다.
+  final int? checkInId;
+
+  TodayStatus({this.date, required this.status, this.verifiedAt, this.checkInId});
 
   factory TodayStatus.fromJson(Map<String, dynamic> json) {
     return TodayStatus(
       date: asDateOnly(json['date']),
       status: asString(json['status']),
       verifiedAt: asDateTime(json['verifiedAt']),
+      checkInId: asIntOrNull(json['checkInId']),
     );
   }
 
   bool get isDone => status == 'SUCCESS' || verifiedAt != null;
-  bool get needsRecovery => status == 'RECOVERY_PENDING';
+
+  /// 사진 인증이 남아 있는 상태.
+  ///
+  /// 이걸 [isDone]으로 묶으면 안 된다 — 오늘 인증이 끝난 것처럼 보이는데 실제로는
+  /// PENDING이 하루를 점유한 채 스트릭도 코인도 안 올라간다.
+  bool get awaitsPhoto => status == 'PENDING';
 }

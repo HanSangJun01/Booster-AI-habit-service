@@ -3,21 +3,23 @@ import 'package:flutter/services.dart';
 import '../../core/api_client.dart';
 import '../../core/session.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
 import '../../services/challenge_service.dart';
 import '../../services/participant_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import 'team_approval_screen.dart';
 import 'team_battle_screen.dart';
 
 /// 챌린지 모집 현황 — 아직 시작되지 않은(READY) 챌린지.
 ///
-/// 보여줄 수 있는 게 제한적이다. 백엔드에 **참가자 목록 조회 API가 없어서**
-/// (`ParticipantController`는 신청/취소/승인만 있고 조회가 없다) 누가 신청했는지
-/// 나열할 수 없다. 승인(`POST .../participants/{participantId}/approve`)도
-/// participantId를 알아낼 방법이 없어 이 화면에서는 노출하지 않는다.
+/// 다루는 값은 확정 인원(`confirmedCount`), 정원, 초대 코드, 참가 취소다.
 ///
-/// 그래서 여기서 다루는 건 서버가 실제로 주는 값뿐이다:
-/// 확정 인원(`confirmedCount`), 정원, 초대 코드, 그리고 참가 취소.
+/// `approvalType`이 `LEADER`인 챌린지에서는 **방장에게만** 승인 화면 진입점을
+/// 띄운다([TeamApprovalScreen]). 대기자 목록은
+/// `GET /api/challenges/{id}/participants?status=PENDING`으로 받는다 — 예전에는
+/// 이 경로를 안 써서 승인에 필요한 participantId를 얻을 방법이 없었고, 그래서
+/// LEADER 챌린지는 정원이 영영 안 차 시작조차 못 했다.
 class TeamWaitingScreen extends StatefulWidget {
   final Challenge challenge;
   const TeamWaitingScreen({super.key, required this.challenge});
@@ -91,6 +93,49 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
     }
   }
 
+  /// 승인 화면으로. 방장이 아니면 이 자리가 아예 안 그려진다.
+  ///
+  /// 승인 없이는 정원이 안 차고, 정원이 안 차면 서버가 팀을 편성하지 않아
+  /// 챌린지가 시작조차 못 한다 — 방장이 이 버튼을 못 찾으면 챌린지가 멈춘다.
+  Future<void> _goApproval() async {
+    final changed = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => TeamApprovalScreen(challenge: _challenge)));
+    if (changed == true && mounted) _refresh();
+  }
+
+  Widget _approvalEntry() {
+    return GestureDetector(
+      onTap: _goApproval,
+      behavior: HitTestBehavior.opaque,
+      child: AppCard(
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
+              child: const Icon(Icons.how_to_reg_rounded, size: 21, color: BC.oMain),
+            ),
+            const SizedBox(width: 13),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('참가 승인',
+                      style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
+                  SizedBox(height: 2),
+                  Text('신청한 사람을 승인해야 인원에 반영돼요',
+                      style: TextStyle(fontSize: 12.5, color: BC.ink3)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: BC.ink3),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final confirmed = _challenge.confirmedCount ?? 0;
@@ -111,6 +156,10 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                   children: [
                     _statusHero(confirmed, capacity, remaining),
+                    if (_isOwner && _challenge.needsLeaderApproval) ...[
+                      const SizedBox(height: 16),
+                      _approvalEntry(),
+                    ],
                     const SizedBox(height: 16),
                     _infoCard(),
                     if (_challenge.inviteCode != null &&
@@ -242,7 +291,8 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
     return AppCard(
       child: Column(
         children: [
-          _infoRow(Icons.category_rounded, '카테고리', _challenge.category),
+          _infoRow(Icons.category_rounded, '카테고리',
+              ChallengeCategory.labelOf(_challenge.category)),
           const Divider(height: 22, color: BC.line),
           _infoRow(Icons.calendar_today_rounded, '기간', '${_challenge.durationDays}일'),
           const Divider(height: 22, color: BC.line),

@@ -3,9 +3,13 @@ import 'package:flutter/services.dart';
 import '../../core/api_client.dart';
 import '../../core/session.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
+import '../../models/personal_location.dart';
 import '../../services/challenge_service.dart';
+import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import '../home/personal_create_screen.dart';
 import 'team_waiting_screen.dart';
 
 /// 챌린지 생성 — `POST /api/challenges` (`CreateChallengeRequest`).
@@ -14,8 +18,15 @@ import 'team_waiting_screen.dart';
 /// 사람이 모이면 서버가 편성한다.
 ///
 /// 서버가 검증하는 값: durationDays >= 1, depositCoins >= 0,
-/// maxParticipants 2~10, title 200자 이내, category/verificationType/
-/// visibility/approvalType 필수.
+/// **maxParticipants = 10 고정**, title 200자 이내,
+/// category/verificationType/visibility/approvalType 필수.
+///
+/// 화면에 보이는 카테고리 이름과 서버로 보내는 값은 다르다
+/// ([ChallengeCategory]) — 한글을 그대로 보내면 AI 인증이 전부 실패한다.
+///
+/// 방장은 생성과 동시에 CONFIRMED 참가자가 되고 예치금도 같이 차감된다. 그래서
+/// 인증 위치가 필요하고, 없으면 생성 자체가 400으로 막힌다 — [_onCreate]가
+/// 먼저 확인한다.
 class TeamCreateScreen extends StatefulWidget {
   const TeamCreateScreen({super.key});
   @override
@@ -25,18 +36,46 @@ class TeamCreateScreen extends StatefulWidget {
 class _TeamCreateScreenState extends State<TeamCreateScreen> {
   int step = 0; // 0 기본, 1 공개설정
 
-  /// 서버는 category를 자유 문자열로 받는다. 자주 쓸 값만 골라 둔다.
-  static const _categories = ['운동', '공부', '독서', '기상'];
+  /// 화면에 보이는 이름과 서버로 보내는 값이 다르다([ChallengeCategory]).
+  static const _categories = ChallengeCategory.choices;
   int _categoryIndex = 0;
+
+  ChallengeCategory get _category => _categories[_categoryIndex];
+
+  /// 서버가 받는 3종. `PHOTO`·`GPS_PHOTO`는 체크인이 처리하지 못해 400이다.
+  static const _verificationTypes = <(String, String, String)>[
+    ('GPS', '위치', '등록한 장소 반경 안에서 인증해요'),
+    ('AI', '사진', 'GPS를 안 봐요. 사진으로만 판정해요'),
+    ('GPS_PHOTO_AI', '위치 + 사진', 'GPS를 통과한 뒤 사진으로 확정해요'),
+  ];
+
+  String _verificationType = 'GPS';
+
+  /// 지금 카테고리에서 고를 수 있는 인증 방식.
+  ///
+  /// 기상은 `ai-service`에 대응하는 어휘가 없어서 AI 계열을 붙이면 사진 업로드가
+  /// 500으로 터진다 — 만들 수는 있는데 아무도 인증을 끝낼 수 없는 챌린지가 된다.
+  /// 그래서 선택지에서 아예 뺀다(계획서 §4.1).
+  List<(String, String, String)> get _availableVerificationTypes =>
+      _category.aiValue == null
+          ? _verificationTypes.where((t) => t.$1 == 'GPS').toList()
+          : _verificationTypes;
 
   static const _durations = [7, 14, 21, 30];
   int _durationIndex = 1;
 
-  /// 정원. 서버 제약이 2~10이라 그 안에서 고른다.
-  static const _capacities = [4, 6, 8, 10];
-  int _capacityIndex = 3;
+  /// 정원은 고를 수 없다 — 서버가 10명으로 못 박았다(`@Min(10) @Max(10)`).
+  ///
+  /// 팀 편성이 "10명이 차면 5:5"라서, 4·6·8명으로 만들면 정원을 채워도 팀이
+  /// 안 짜이고 아무도 인증할 수 없는 챌린지가 된다. 예전엔 그런 값을 고를 수
+  /// 있었고, 지금 그대로 보내면 400으로 거절당한다.
+  static const _capacity = 10;
 
   bool isPublic = true;
+
+  /// 방장의 인증 기준 위치. 없으면 챌린지를 만들 수 없다.
+  PersonalLocation? _location;
+  bool _locationChecked = false;
 
   /// 참가 승인 방식. AUTO면 신청 즉시 확정, LEADER면 방장이 승인해야 한다.
   bool _leaderApproval = false;
@@ -46,6 +85,27 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _depositCtrl = TextEditingController(text: '300');
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocation();
+  }
+
+  /// 방장의 개인 인증 위치를 미리 확인한다. 조회에 실패하면 없는 것으로 두지
+  /// 않고(=경고를 띄우지 않고) 넘어간다 — 실제 판정은 서버가 한다.
+  Future<void> _loadLocation() async {
+    try {
+      final location = await PersonalService.fetchLocation();
+      if (!mounted) return;
+      setState(() {
+        _location = location;
+        _locationChecked = true;
+      });
+    } on ApiException {
+      // 조회 실패는 "위치 없음"과 다르다. 경고를 띄우지 않고 생성 시점에 맡긴다.
+    }
+  }
 
   @override
   void dispose() {
@@ -133,6 +193,54 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
     );
   }
 
+  /// 카테고리를 바꾸면 인증 방식이 유효한지 다시 본다.
+  ///
+  /// 사진 인증을 골라둔 채 기상으로 넘어가면 보낼 카테고리가 없어져서, 만들어도
+  /// 사진 업로드가 500으로 터지는 챌린지가 된다.
+  void _onCategoryChanged(int index) {
+    setState(() {
+      _categoryIndex = index;
+      if (_categories[index].aiValue == null) _verificationType = 'GPS';
+    });
+  }
+
+  Widget _verificationOption(String value, String label, String description) {
+    final on = _verificationType == value;
+    return GestureDetector(
+      onTap: () => setState(() => _verificationType = value),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: BoxDecoration(
+          color: on ? BC.oSoft : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: on ? BC.oMain : BC.line, width: 1.5),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: on ? BC.oMain : BC.ink)),
+                  const SizedBox(height: 2),
+                  Text(description,
+                      style: const TextStyle(fontSize: 12, color: BC.ink3, height: 1.4)),
+                ],
+              ),
+            ),
+            Icon(on ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                color: on ? BC.oMain : BC.ink3, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _chipRow(List<String> items, int sel, ValueChanged<int> onTap) {
     return Row(children: [
       for (int i = 0; i < items.length; i++) ...[
@@ -155,8 +263,8 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
               decoration: _deco('예) 매일 아침 러닝'),
             )),
         _card('2. 카테고리',
-            child: _chipRow(
-                _categories, _categoryIndex, (i) => setState(() => _categoryIndex = i))),
+            child: _chipRow([for (final c in _categories) c.label], _categoryIndex,
+                _onCategoryChanged)),
         _card('3. 소개글',
             sub: '어떤 챌린지인지 짧게 소개해 주세요.',
             child: TextField(
@@ -170,26 +278,35 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
             child: _chipRow([for (final d in _durations) '$d일'], _durationIndex,
                 (i) => setState(() => _durationIndex = i))),
         _card('5. 정원',
-            sub: '인원이 모이면 서버가 팀을 나눠 대결을 붙여요.',
-            child: _chipRow([for (final c in _capacities) '$c명'], _capacityIndex,
-                (i) => setState(() => _capacityIndex = i))),
-        _card('6. 인증 방법',
-            sub: 'GPS 위치 인증만 지원해요. 인증 위치는 참가할 때 각자 등록해요.',
+            sub: '$_capacity명이 모이면 서버가 5:5로 팀을 나눠 대결을 붙여요.',
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-              decoration: BoxDecoration(
-                  color: BC.oSoft, borderRadius: BorderRadius.circular(14)),
+              decoration:
+                  BoxDecoration(color: BC.oSoft, borderRadius: BorderRadius.circular(14)),
               child: Row(
                 children: const [
-                  Icon(Icons.location_on_rounded, color: BC.oMain, size: 22),
+                  Icon(Icons.groups_rounded, color: BC.oMain, size: 22),
                   SizedBox(width: 10),
                   Expanded(
-                    child: Text('GPS 위치 인증',
+                    child: Text('$_capacity명 고정',
                         style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
                   Icon(Icons.check_circle_rounded, color: BC.oMain, size: 20),
                 ],
               ),
+            )),
+        _card('6. 인증 방법',
+            sub: _category.aiValue == null
+                ? '기상은 사진 판정 기준이 없어서 위치 인증만 지원해요.'
+                : '참가자는 각자 자기 인증 위치에서 인증해요.',
+            child: Column(
+              children: [
+                for (final (value, label, description) in _availableVerificationTypes) ...[
+                  if (value != _availableVerificationTypes.first.$1)
+                    const SizedBox(height: 10),
+                  _verificationOption(value, label, description),
+                ],
+              ],
             )),
         _card('7. 예치코인',
             sub: '참가할 때 각자 차감되는 코인이에요. 이긴 팀이 정산에서 나눠 가져요.',
@@ -231,6 +348,26 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
                   : '비공개 챌린지를 만들면 초대 코드가 발급돼요. 친구에게 코드를 공유해 모아보세요.',
               style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.5)),
         ),
+        const SizedBox(height: 12),
+        // 방장도 참가자다 — 만드는 순간 인원 1명이 차고 예치금도 빠진다.
+        // 모르고 만들면 코인이 왜 줄었는지 알 수 없어서 미리 알린다.
+        NoteBox(
+          icon: Icons.account_balance_wallet_rounded,
+          child: Text(
+              '챌린지를 만들면 나도 바로 참가자가 돼요. 예치코인도 같이 차감돼요.',
+              style: const TextStyle(fontSize: 13, color: BC.ink2, height: 1.5)),
+        ),
+        if (_locationChecked && _location == null) ...[
+          const SizedBox(height: 12),
+          const NoteBox(
+            icon: Icons.location_off_rounded,
+            bg: BC.blueSoft,
+            iconColor: BC.blue,
+            child: Text(
+                '인증 장소가 아직 없어요. 만들기를 누르면 등록 화면으로 안내할게요.',
+                style: TextStyle(fontSize: 13, color: BC.ink2, height: 1.5)),
+          ),
+        ],
       ],
     );
   }
@@ -287,24 +424,56 @@ class _TeamCreateScreenState extends State<TeamCreateScreen> {
     );
   }
 
+  /// 인증 위치를 확보한다. 없으면 등록 화면으로 보내고, 등록하고 돌아오면
+  /// 그대로 생성을 이어간다.
+  ///
+  /// 서버 에러를 그냥 띄우면("인증 위치가 필요합니다") 어디서 뭘 해야 하는지
+  /// 알 수 없다 — 위치 등록은 팀 탭이 아니라 홈에 있다.
+  Future<bool> _ensureLocation() async {
+    if (_location != null) return true;
+
+    showBoosterToast(context, '먼저 인증 장소를 등록해주세요');
+    final registered = await Navigator.of(context).push<PersonalLocation>(
+        MaterialPageRoute(builder: (_) => const PersonalCreateScreen()));
+    if (!mounted) return false;
+    if (registered == null) return false;
+
+    setState(() {
+      _location = registered;
+      _locationChecked = true;
+    });
+    return true;
+  }
+
   Future<void> _onCreate() async {
     final deposit = int.tryParse(_depositCtrl.text.trim());
     if (deposit == null || deposit < 0) {
       showBoosterToast(context, '예치코인을 입력해주세요');
       return;
     }
+    if (!await _ensureLocation()) return;
+    if (!mounted) return;
     setState(() => _creating = true);
     try {
       final description = _descCtrl.text.trim();
+      // _ensureLocation을 통과했으니 위치가 있다. 서버의 암묵적 재사용에 기대지
+      // 않고 앱이 아는 좌표를 그대로 실어 보낸다.
+      final location = _location;
       final challenge = await ChallengeService.create(CreateChallengeRequest(
-        category: _categories[_categoryIndex],
+        // 화면에 보인 건 '운동'이지만 서버로는 EXERCISE가 나간다. 한글을 그대로
+        // 보내면 AI 인증에서 사진 업로드가 500으로 터진다.
+        category: _category.value,
         title: _titleCtrl.text.trim(),
         description: description.isEmpty ? null : description,
+        verificationType: _verificationType,
         durationDays: _durations[_durationIndex],
         depositCoins: deposit,
         visibility: isPublic ? 'PUBLIC' : 'PRIVATE',
         approvalType: _leaderApproval ? 'LEADER' : 'AUTO',
-        maxParticipants: _capacities[_capacityIndex],
+        maxParticipants: _capacity,
+        gpsLat: location?.lat,
+        gpsLng: location?.lng,
+        gpsRadiusMeters: location?.radiusMeters,
       ));
       if (!mounted) return;
       Session.currentChallengeId = challenge.id;

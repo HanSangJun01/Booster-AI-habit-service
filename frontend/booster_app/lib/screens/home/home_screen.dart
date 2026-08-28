@@ -1,17 +1,19 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../models/app_user.dart';
 import '../../models/dashboard.dart';
 import '../../models/personal_location.dart';
-import '../../models/recovery.dart';
+import '../../models/weekly_goal.dart';
 import '../../services/personal_service.dart';
-import '../../services/recovery_service.dart';
 import '../../services/user_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
 import 'personal_create_screen.dart';
+import 'rescue_notice.dart';
+import 'weekly_goal_screen.dart';
 
 /// 홈 — 개인 습관 트랙.
 ///
@@ -28,19 +30,43 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loading = true;
   Dashboard? _dashboard;
   PersonalLocation? _location;
-  RecoveryStatus _recovery = RecoveryStatus.none;
   int _totalAttendance = 0;
   bool _didInitialLoad = false;
   int? _lastActiveTabIndex;
 
+  /// 이번 주 목표. 진행률의 분모이자 구제 대기 여부의 출처다.
+  WeeklyGoal? _goal;
+
+  /// 구제 안내 팝업이 떠 있는 동안 또 띄우지 않게 하는 빗장.
+  ///
+  /// 홈 진입과 포그라운드 복귀가 겹치면 같은 팝업이 두 겹으로 쌓인다. 뒤에
+  /// 깔린 쪽은 [나중에]를 눌러도 안 사라져서 사용자가 갇힌다.
+  bool _rescueNoticeOpen = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 앱이 다시 앞으로 나올 때 구제 대기 상태를 다시 본다.
+  ///
+  /// 홈 탭 진입만으로는 놓친다 — 앱을 켜둔 채 날짜가 넘어가면 이 화면의
+  /// didChangeDependencies는 다시 안 불리는데, 구제 기한은 2일뿐이다.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_syncRescueNotice());
   }
 
   @override
@@ -65,15 +91,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final results = await Future.wait([
         PersonalService.fetchDashboard(),
         PersonalService.fetchLocation(),
-        RecoveryService.fetchStatus(),
         UserService.fetchMe(),
       ]);
       if (!mounted) return;
       setState(() {
         _dashboard = results[0] as Dashboard;
         _location = results[1] as PersonalLocation?;
-        _recovery = results[2] as RecoveryStatus;
-        _totalAttendance = (results[3] as AppUser).totalAttendance;
+        _totalAttendance = (results[2] as AppUser).totalAttendance;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -84,17 +108,45 @@ class _HomeScreenState extends State<HomeScreen> {
       // 못 한다 — 앱을 껐다 켜는 것 말고 빠져나갈 길이 없어진다.
       if (mounted) setState(() => _loading = false);
     }
+    // 팝업을 기다리지 않는다 — 기다리면 당겨서 새로고침 표시가 팝업이 닫힐
+    // 때까지 계속 돈다.
+    unawaited(_syncRescueNotice());
+  }
+
+  /// 지난주 목표를 못 채워 구제 대기 중이면 안내 팝업을 띄운다.
+  ///
+  /// 기한이 지나면 서버가 스트릭 0 + 코인 −500으로 확정해버린다. 앱이 알리지
+  /// 않으면 사용자는 그걸 새벽에 예고 없이 맞는다.
+  Future<void> _syncRescueNotice() async {
+    if (_rescueNoticeOpen) return;
+
+    WeeklyGoal? goal;
+    try {
+      goal = await PersonalService.fetchWeeklyGoal();
+    } on ApiException {
+      // 주간 목표는 홈에 얹히는 정보라, 못 읽었다고 토스트를 띄우면 정작
+      // 봐야 할 대시보드 위에 에러만 겹친다. 다음 진입 때 다시 본다.
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _goal = goal);
+    if (goal == null || !goal.needsRescue) return;
+
+    _rescueNoticeOpen = true;
+    try {
+      final changed = await showRescueNotice(context, goal);
+      // 구제했거나 서버가 이미 처리했다고 답한 경우. 화면에 남은 스트릭·코인이
+      // 낡았다는 뜻이라 다시 읽는다.
+      if (changed && mounted) await _load();
+    } finally {
+      _rescueNoticeOpen = false;
+    }
   }
 
   Future<void> _onLocationRegistered(PersonalLocation location) async {
     setState(() => _location = location);
     await _load();
   }
-
-  /// 복귀 모드 판정. 대시보드의 오늘 상태나 복귀 미션 상태 중 하나라도
-  /// 걸려 있으면 복귀 모드다.
-  bool get _isRecovery =>
-      _recovery.hasPendingMission || (_dashboard?.needsRecovery ?? false);
 
   @override
   Widget build(BuildContext context) {
@@ -117,22 +169,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ───────────────────────── 진행 중 / 복귀 ─────────────────────────
+  // ───────────────────────── 진행 중 ─────────────────────────
   Widget _activeBody() {
     final dashboard = _dashboard;
     if (dashboard == null) return _emptyBody();
-    final recovery = _isRecovery;
     return RefreshIndicator(
       onRefresh: _load,
       color: BC.oMain,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
         children: [
-          _hero(recovery, dashboard),
+          _hero(dashboard),
           const SizedBox(height: 14),
-          _statCard1(recovery, dashboard),
+          _weeklyGoalCard(),
           const SizedBox(height: 14),
-          _statCard2(recovery, dashboard),
+          _statCard1(dashboard),
+          const SizedBox(height: 14),
+          _statCard2(dashboard),
           const SizedBox(height: 14),
           CalendarCard(
             year: dashboard.calendarYear,
@@ -146,38 +199,32 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 주간 진행률. 백엔드에 "주 N회 목표" 개념이 없어서 7일 기준으로 본다
-  /// (스트릭 보상도 7일 단위다).
-  double _weeklyPct(Dashboard dashboard) =>
-      (dashboard.weeklySuccessCount / 7).clamp(0, 1).toDouble();
-
-  /// 복귀 미션 데드라인까지 남은 시간. 미션이 없으면 오늘 인증 여부를 보여준다.
-  String _statusText(Dashboard dashboard) {
-    final remaining = _recovery.remaining;
-    if (remaining != null) {
-      final h = remaining.inHours;
-      final m = remaining.inMinutes % 60;
-      return h > 0 ? '복귀 미션 마감까지 $h시간 $m분' : '복귀 미션 마감까지 $m분';
-    }
-    if (_recovery.hasPendingMission) return '복귀 미션 기한이 지났어요';
-    return dashboard.isTodayDone ? '오늘 인증을 마쳤어요' : '오늘 아직 인증하지 않았어요';
+  /// 주간 진행률.
+  ///
+  /// 분모는 사용자가 정한 목표 횟수다. 7로 박아두면 목표가 주 3회인 사람에게
+  /// 3/7=43%로 보여서, 목표를 다 채운 주에도 절반도 못 한 것처럼 읽힌다.
+  ///
+  /// 목표를 아직 못 읽었으면(위치 미등록·조회 실패) 7로 둔다 — 채점 주기가
+  /// 일주일이라 최댓값이고, 실제보다 높게 보여 안심시키는 것보다 낫다.
+  double _weeklyPct(Dashboard dashboard) {
+    final target = _goal?.targetDays ?? 7;
+    return (dashboard.weeklySuccessCount / (target == 0 ? 7 : target))
+        .clamp(0, 1)
+        .toDouble();
   }
 
-  Widget _hero(bool recovery, Dashboard dashboard) {
-    final grad = recovery
-        ? const LinearGradient(
-            begin: Alignment(-0.6, -1),
-            end: Alignment(0.8, 1),
-            colors: [Color(0xFF4E9BFF), Color(0xFF1F6FEB)])
-        : BC.heroGrad;
+  String _statusText(Dashboard dashboard) =>
+      dashboard.isTodayDone ? '오늘 인증을 마쳤어요' : '오늘 아직 인증하지 않았어요';
+
+  Widget _hero(Dashboard dashboard) {
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
       decoration: BoxDecoration(
-        gradient: grad,
+        gradient: BC.heroGrad,
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-              color: (recovery ? BC.blue : BC.o2).withValues(alpha: .32),
+              color: BC.o2.withValues(alpha: .32),
               blurRadius: 26,
               offset: const Offset(0, 12)),
         ],
@@ -190,8 +237,8 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: .22),
                 borderRadius: BorderRadius.circular(999)),
-            child: Text(recovery ? '복귀 모드' : '오늘의 습관',
-                style: const TextStyle(
+            child: const Text('오늘의 습관',
+                style: TextStyle(
                     color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
           ),
           const SizedBox(height: 12),
@@ -277,18 +324,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: Colors.white, borderRadius: BorderRadius.circular(15)),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(recovery ? Icons.refresh_rounded : Icons.calendar_today_rounded,
-                      color: recovery ? BC.blue : BC.oMain, size: 18),
-                  const SizedBox(width: 8),
-                  Text(recovery ? '복귀 미션 하러 가기' : '오늘 인증하러 가기',
+                children: const [
+                  Icon(Icons.calendar_today_rounded, color: BC.oMain, size: 18),
+                  SizedBox(width: 8),
+                  Text('오늘 인증하러 가기',
                       style: TextStyle(
-                          color: recovery ? BC.blue : BC.oMain,
+                          color: BC.oMain,
                           fontSize: 16,
                           fontWeight: FontWeight.w800)),
-                  const SizedBox(width: 4),
-                  Icon(Icons.chevron_right_rounded,
-                      color: recovery ? BC.blue : BC.oMain, size: 18),
+                  SizedBox(width: 4),
+                  Icon(Icons.chevron_right_rounded, color: BC.oMain, size: 18),
                 ],
               ),
             ),
@@ -321,19 +366,79 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _statCard1(bool recovery, Dashboard dashboard) {
+  /// 주간 목표 요약 + 설정 진입점.
+  ///
+  /// 서버는 "주 N회"로 채점하고 못 채우면 스트릭 0 + 코인 −500까지 간다. 그
+  /// 기준이 화면 어디에도 없으면 사용자는 무엇을 채워야 하는지 모른 채
+  /// 채점당한다.
+  Widget _weeklyGoalCard() {
+    final goal = _goal;
+    return GestureDetector(
+      onTap: _openWeeklyGoal,
+      behavior: HitTestBehavior.opaque,
+      child: AppCard(
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
+              child: const Icon(Icons.flag_rounded, size: 21, color: BC.oMain),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('주간 목표',
+                      style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(
+                    goal == null
+                        ? '목표를 정하면 여기에 나와요'
+                        : '주 ${goal.targetDays}회 중 ${goal.successCount}회 · ${goal.remainingDays}일 남음',
+                    style: const TextStyle(fontSize: 12.5, color: BC.ink3),
+                  ),
+                  if (goal?.pendingTargetDays != null) ...[
+                    const SizedBox(height: 4),
+                    // 목표 변경은 예약제라 이번 달엔 안 바뀐다. 말해주지 않으면
+                    // 사용자는 저장이 안 먹은 줄 안다.
+                    MiniTag('다음 달부터 주 ${goal!.pendingTargetDays}회',
+                        bg: BC.blueSoft, fg: BC.blue),
+                  ],
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: BC.ink3),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openWeeklyGoal() async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const WeeklyGoalScreen()));
+    if (mounted) await _load();
+  }
+
+  Widget _statCard1(Dashboard dashboard) {
     return AppCard(
       child: Row(
         children: [
+          // 스트릭은 **연속 일수가 아니라 누적 인증 횟수**다. 인증할 때마다 +1이고
+          // 날짜가 하루 비어도 끊기지 않는다 — 초기화는 주간 목표 미달이 FAILED로
+          // 확정될 때만 일어난다. '연속 N일'로 쓰면 하루 걸러 인증한 사용자에게
+          // 앱이 거짓말을 하게 된다.
           _stat(
             icon: Icons.local_fire_department_rounded,
-            iconColor: recovery ? BC.blue : BC.oMain,
-            iconBg: recovery ? BC.blueSoft : BC.oSoft,
-            label: '연속 인증',
+            iconColor: BC.oMain,
+            iconBg: BC.oSoft,
+            label: '누적 인증',
             value: '${dashboard.currentStreak}',
-            unit: '일',
-            valueColor: recovery ? BC.blue : BC.oMain,
-            tag: '최고 기록 ${dashboard.maxStreak}일',
+            unit: '회',
+            valueColor: BC.oMain,
+            tag: '최고 기록 ${dashboard.maxStreak}회',
           ),
           _divider(),
           _stat(
@@ -352,21 +457,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _statCard2(bool recovery, Dashboard dashboard) {
+  Widget _statCard2(Dashboard dashboard) {
     // 백엔드는 currentStreak가 7의 배수가 될 때마다 STREAK_REWARD(+100)를
-    // 지급한다. 남은 일수도 같은 규칙으로 계산한다.
-    const milestoneDays = 7;
-    final positionInCycle = dashboard.currentStreak % milestoneDays;
-    final daysToNextReward = milestoneDays - positionInCycle;
-    final progress = positionInCycle / milestoneDays;
+    // 지급한다. 7·14·21…"회"이지 7일이 아니다 — 남은 양도 횟수로 센다.
+    const milestoneCount = 7;
+    final positionInCycle = dashboard.currentStreak % milestoneCount;
+    final countToNextReward = milestoneCount - positionInCycle;
+    final progress = positionInCycle / milestoneCount;
     return AppCard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _stat(
             icon: Icons.emoji_events_rounded,
-            iconColor: recovery ? BC.blue : BC.oMain,
-            iconBg: recovery ? BC.blueSoft : BC.oSoft,
+            iconColor: BC.oMain,
+            iconBg: BC.oSoft,
             label: '누적 출석',
             value: '$_totalAttendance',
             unit: '일',
@@ -381,18 +486,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   width: 46,
                   height: 46,
                   decoration: BoxDecoration(
-                      color: recovery ? BC.blueSoft : BC.oSoft,
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Icon(Icons.star_rounded,
-                      size: 24, color: recovery ? BC.blue : BC.oMain),
+                      color: BC.oSoft, borderRadius: BorderRadius.circular(14)),
+                  child: const Icon(Icons.star_rounded, size: 24, color: BC.oMain),
                 ),
                 const SizedBox(height: 6),
                 const Text('다음 보상', style: TextStyle(fontSize: 12.5, color: BC.ink2)),
-                Text('+100',
+                const Text('+100',
                     style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: recovery ? BC.blue : BC.oMain)),
+                        fontSize: 22, fontWeight: FontWeight.w800, color: BC.oMain)),
                 const SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(99),
@@ -400,20 +501,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     value: progress,
                     minHeight: 7,
                     backgroundColor: BC.line,
-                    valueColor: AlwaysStoppedAnimation(recovery ? BC.blue : BC.oMain),
+                    valueColor: const AlwaysStoppedAnimation(BC.oMain),
                   ),
                 ),
                 const SizedBox(height: 6),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('7일 연속 인증',
+                    const Text('7회마다',
                         style: TextStyle(fontSize: 11, color: BC.ink3)),
-                    Text('$daysToNextReward일 남음',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: recovery ? BC.blue : BC.oMain,
-                            fontWeight: FontWeight.w700)),
+                    Text('$countToNextReward회 남음',
+                        style: const TextStyle(
+                            fontSize: 11, color: BC.oMain, fontWeight: FontWeight.w700)),
                   ],
                 ),
               ],
@@ -567,15 +666,13 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 12),
         // 아래 금액은 백엔드 `CoinTransactionReason`에 정의된 실제 값이다.
-        _infoCard(Icons.local_fire_department_rounded, BC.oSoft, BC.oMain, '7일 연속 인증',
-            '+100 코인', '연속 인증이 7일에 도달할 때마다 보상을 받아요.'),
-        const SizedBox(height: 10),
-        _infoCard(Icons.refresh_rounded, BC.oSoft, BC.oMain, '복귀 미션 성공', '-50 코인',
-            '인증을 놓쳐도 기한 안에 복귀하면 차감이 절반으로 줄어요.'),
-        const SizedBox(height: 10),
-        _infoCard(Icons.close_rounded, BC.oMain, Colors.white, '복귀 미션 실패', '-100 코인',
-            '기한을 넘기면 그날은 최종 실패로 기록돼요.',
-            solid: true),
+        //
+        // 복귀 미션(성공 -50 / 실패 -100) 안내는 뺐다 — 백엔드에서 복귀가
+        // 폐지되면서 없는 규칙이 됐다. 대신 들어온 주간 목표 미달 페널티
+        // (WEEKLY_MISS_PENALTY)는 앱이 주간 목표를 아직 안 붙여서, 금액을
+        // 지어내지 않고 연동할 때 함께 넣는다.
+        _infoCard(Icons.local_fire_department_rounded, BC.oSoft, BC.oMain, '7회마다',
+            '+100 코인', '인증 횟수가 7회 쌓일 때마다 보상을 받아요. 하루를 걸러도 끊기지 않아요.'),
         const SizedBox(height: 20),
         PrimaryButton(
           label: '인증 장소 등록하기',
@@ -591,8 +688,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _infoCard(IconData icon, Color iconBg, Color iconColor, String title, String amt,
-      String desc,
-      {bool solid = false}) {
+      String desc) {
     return AppCard(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -601,9 +697,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             width: 46,
             height: 46,
-            decoration: BoxDecoration(
-                color: solid ? BC.oMain : iconBg, shape: BoxShape.circle),
-            child: Icon(icon, size: 23, color: solid ? Colors.white : iconColor),
+            decoration: BoxDecoration(color: iconBg, shape: BoxShape.circle),
+            child: Icon(icon, size: 23, color: iconColor),
           ),
           const SizedBox(width: 13),
           Expanded(
@@ -719,15 +814,12 @@ class CalendarCard extends StatelessWidget {
     final dayCount = DateTime(year, month + 1, 0).day;
 
     final done = <int>{};
-    final pending = <int>{};
     final failed = <int>{};
     for (final day in days) {
       final date = day.date;
       if (date == null || date.year != year || date.month != month) continue;
       if (day.isSuccess) {
         done.add(date.day);
-      } else if (day.isRecoveryPending) {
-        pending.add(date.day);
       } else if (day.isFailed) {
         failed.add(date.day);
       }
@@ -742,9 +834,6 @@ class CalendarCard extends StatelessWidget {
       Color fg;
       if (done.contains(d)) {
         bg = BC.green;
-        fg = Colors.white;
-      } else if (pending.contains(d)) {
-        bg = BC.blue;
         fg = Colors.white;
       } else if (failed.contains(d)) {
         bg = BC.oMain;
@@ -795,8 +884,6 @@ class CalendarCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: const [
               _Legend(BC.green, '성공'),
-              SizedBox(width: 14),
-              _Legend(BC.blue, '복귀 대기'),
               SizedBox(width: 14),
               _Legend(BC.oMain, '실패'),
             ],

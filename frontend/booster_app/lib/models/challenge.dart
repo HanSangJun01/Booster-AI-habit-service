@@ -12,12 +12,17 @@ import 'json.dart';
 class Challenge {
   final int id;
 
-  /// 자유 문자열(예: "운동", "공부"). 서버가 enum으로 제한하지 않는다.
+  /// 서버가 저장한 값 그대로(`EXERCISE`·`STUDY`·`WAKE_UP`).
+  ///
+  /// 서버는 enum으로 제한하지 않아서 옛 챌린지에는 한글이 들어 있을 수 있다.
+  /// 화면에 쓸 이름은 `ChallengeCategory.labelOf`로 옮긴다 — 이 값을 그대로
+  /// 그리면 목록에 "EXERCISE"가 뜬다.
   final String category;
   final String title;
   final String? description;
 
-  /// `VerificationType` — MVP는 GPS만 쓴다.
+  /// `VerificationType` — `GPS` / `AI` / `GPS_PHOTO_AI` 3종.
+  /// `PHOTO`·`GPS_PHOTO`는 체크인이 처리하지 못해 생성 시점에 거절된다.
   final String verificationType;
   final int durationDays;
 
@@ -105,8 +110,16 @@ class Challenge {
 
 /// 챌린지 생성 요청 (`CreateChallengeRequest`, POST /api/challenges).
 ///
-/// 서버 검증: durationDays >= 1, depositCoins >= 0, maxParticipants 2~10,
-/// title 200자 이내.
+/// 서버 검증: durationDays >= 1, depositCoins >= 0, **maxParticipants = 10
+/// 고정**, title 200자 이내.
+///
+/// 정원은 고를 수 있는 값이 아니다 — 팀 편성이 "10명이 차면 5:5"라서 서버가
+/// `@Min(10) @Max(10)`으로 막는다. [verificationType]은 `GPS`/`AI`/
+/// `GPS_PHOTO_AI` 3종만 받는다 — `PHOTO`·`GPS_PHOTO`는 체크인이 처리하지 못해
+/// 그대로 두면 아무도 인증 못 하는 좀비 챌린지가 되므로 생성 시점에 거절된다.
+///
+/// [category]는 자유 문자열이라 서버가 통과시키지만, 값이 `ai-service`의 어휘가
+/// 아니면 사진 업로드에서 500이 난다. 보낼 값은 [ChallengeCategory]가 정한다.
 class CreateChallengeRequest {
   final String category;
   final String title;
@@ -118,6 +131,16 @@ class CreateChallengeRequest {
   final String approvalType;
   final int maxParticipants;
 
+  /// 방장의 인증 기준 좌표와 반경.
+  ///
+  /// 방장은 만드는 순간 참가자가 되므로 인증 위치가 있어야 한다. 생략하면
+  /// 서버가 개인 인증 위치를 재사용하고, 그것도 없으면 400
+  /// `LOCATION_REQUIRED`로 막는다. 앱은 이미 알고 있는 값을 명시해서 그
+  /// 암묵적 재사용에 기대지 않는다.
+  final double? gpsLat;
+  final double? gpsLng;
+  final int? gpsRadiusMeters;
+
   CreateChallengeRequest({
     required this.category,
     required this.title,
@@ -128,6 +151,9 @@ class CreateChallengeRequest {
     this.visibility = 'PUBLIC',
     this.approvalType = 'AUTO',
     this.maxParticipants = 10,
+    this.gpsLat,
+    this.gpsLng,
+    this.gpsRadiusMeters,
   });
 
   Map<String, dynamic> toJson() => {
@@ -140,5 +166,12 @@ class CreateChallengeRequest {
         'visibility': visibility,
         'approvalType': approvalType,
         'maxParticipants': maxParticipants,
+        // 셋은 한 벌이다. 좌표만 있고 반경이 없으면 서버가 반경 0으로 읽어
+        // 아무 데서도 인증이 안 되는 챌린지가 된다.
+        if (gpsLat != null && gpsLng != null && gpsRadiusMeters != null) ...{
+          'gpsLat': gpsLat,
+          'gpsLng': gpsLng,
+          'gpsRadiusMeters': gpsRadiusMeters,
+        },
       };
 }

@@ -3,6 +3,7 @@ import '../../core/api_client.dart';
 import '../../core/location.dart';
 import '../../core/session.dart';
 import '../../models/challenge.dart';
+import '../../models/challenge_category.dart';
 import '../../models/participant.dart';
 import '../../services/challenge_service.dart';
 import '../../services/participant_service.dart';
@@ -127,7 +128,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                           fontSize: 15, color: BC.ink2, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 12),
                   Wrap(spacing: 6, runSpacing: 6, children: [
-                    MiniTag(_challenge.category),
+                    MiniTag(ChallengeCategory.labelOf(_challenge.category)),
                     MiniTag('${_challenge.durationDays}일'),
                     MiniTag(_challenge.needsLeaderApproval ? '방장 승인' : '자동 승인'),
                   ]),
@@ -226,7 +227,8 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                   Row(children: [
                     Expanded(
                         child: _infoCard(
-                            Icons.category_rounded, '카테고리', _challenge.category)),
+                            Icons.category_rounded, '카테고리',
+                            ChallengeCategory.labelOf(_challenge.category))),
                     const SizedBox(width: 10),
                     Expanded(
                         child: _infoCard(Icons.how_to_reg_rounded, '승인',

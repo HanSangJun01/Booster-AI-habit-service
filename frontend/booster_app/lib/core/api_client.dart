@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'session.dart';
 
 /// API 요청 실패 시 던지는 예외.
@@ -30,7 +31,7 @@ class ApiException implements Exception {
 /// 백엔드는 성공 응답의 모양이 컨트롤러 계열마다 다르다:
 /// - B축(Challenge/CheckIn/Participant/Team/Social/Settlement): `ApiResponse<T>`
 ///   엔벨로프 → `{"success": true, "message": ..., "data": ...}`
-/// - A축(Auth/User/PersonalCheckIn/PersonalLocation/Recovery/Dashboard):
+/// - A축(Auth/User/PersonalCheckIn/PersonalLocation/Dashboard):
 ///   DTO를 그대로 반환 → `{"userId": 1, ...}` 처럼 엔벨로프가 없다.
 ///
 /// 에러는 양쪽 모두 `GlobalExceptionHandler`가 단일 규약으로 변환한다:
@@ -61,6 +62,9 @@ class ApiClient {
   /// 있어서, 상한이 없으면 응답 없는 서버에 화면이 영영 묶인다.
   static const Duration _timeout = Duration(seconds: 15);
 
+  /// 사진 업로드용 상한. 본문 전송에 더해 서버가 AI 판정을 기다렸다 답한다.
+  static const Duration _uploadTimeout = Duration(seconds: 60);
+
   /// 토큰 만료·누락으로 401을 받았을 때 호출된다(`main.dart`에서 연결).
   ///
   /// 화면마다 401을 따로 처리하게 두면 실수로 빠뜨린 화면에서 사용자가 갇힌다
@@ -79,11 +83,63 @@ class ApiClient {
     throw ApiException('서버 응답 형식이 예상과 달라요. 잠시 후 다시 시도해주세요');
   }
 
+  /// 업로드 상한. 서버가 10MB를 넘기면 413으로 끊는데, 그건 파일을 다 올려보낸
+  /// 뒤에 오는 답이다. 데이터와 시간을 버리기 전에 앱이 먼저 잘라낸다.
+  static const int maxUploadBytes = 10 * 1024 * 1024;
+
+  /// 서버가 받아주는 이미지 형식. 그 외는 415다.
+  static const Set<String> allowedImageExtensions = {'jpg', 'jpeg', 'png', 'webp'};
+
   static Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
       _send('GET', path, query: query);
   static Future<dynamic> post(String path, {Object? body}) => _send('POST', path, body: body);
   static Future<dynamic> put(String path, {Object? body}) => _send('PUT', path, body: body);
   static Future<dynamic> delete(String path) => _send('DELETE', path);
+
+  /// 이미지 한 장을 `multipart/form-data`로 올린다.
+  ///
+  /// AI 사진 인증이 유일한 사용처다. [fields]에는 `category`처럼 파일과 함께
+  /// 가야 하는 문자열을 넣는다.
+  ///
+  /// 타임아웃이 [_timeout]보다 길다 — 업로드는 요청 본문 전송 자체에 시간이
+  /// 걸리는 데다, 서버가 AI 서비스 응답까지 기다린 뒤에 답한다. 15초로 끊으면
+  /// 멀쩡히 처리되는 중인 인증을 앱이 먼저 포기한다.
+  static Future<dynamic> postImage(
+    String path, {
+    required String filePath,
+    required List<int> bytes,
+    Map<String, String> fields = const {},
+  }) async {
+    final extension = filePath.split('.').last.toLowerCase();
+    if (!allowedImageExtensions.contains(extension)) {
+      throw ApiException('JPG·PNG·WEBP 이미지만 올릴 수 있어요');
+    }
+    if (bytes.length > maxUploadBytes) {
+      throw ApiException('사진이 너무 커요. 10MB 이하로 올려주세요');
+    }
+
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+      ..headers.addAll(_headers())
+      ..fields.addAll(fields)
+      ..files.add(http.MultipartFile.fromBytes(
+        'image',
+        bytes,
+        filename: 'verification.$extension',
+        contentType: MediaType('image', extension == 'jpg' ? 'jpeg' : extension),
+      ));
+
+    late http.Response res;
+    try {
+      final streamed = await request.send().timeout(_uploadTimeout);
+      res = await http.Response.fromStream(streamed);
+    } on TimeoutException {
+      throw ApiException('사진 전송이 너무 오래 걸려요. 잠시 후 다시 시도해주세요');
+    } catch (_) {
+      throw ApiException('서버에 연결할 수 없습니다');
+    }
+
+    return _unwrap(res, path);
+  }
 
   /// 공통 헤더. 로그인 후 Session에 저장된 accessToken을 Bearer로 실어 보낸다.
   /// 백엔드는 `/api/auth/**`를 제외한 모든 경로에 인증을 요구하고

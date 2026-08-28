@@ -48,16 +48,17 @@ class Dashboard {
   }
 
   bool get isTodayDone => todayStatus == 'SUCCESS';
-
-  /// 복귀 미션이 걸린 상태 — 홈 화면을 "복귀 모드"로 전환하는 신호다.
-  bool get needsRecovery => todayStatus == 'RECOVERY_PENDING';
 }
 
 /// `DashboardResponse.CalendarDay` — 달력 한 칸.
 class CalendarDay {
   final DateTime? date;
 
-  /// `PersonalCheckInStatus` — SUCCESS | RECOVERY_PENDING | FAILED.
+  /// `PersonalCheckInStatus` — SUCCESS | PENDING.
+  ///
+  /// 복귀 미션이 폐지되면서 RECOVERY_PENDING이 사라졌고, "그날 안 했다"는 이제
+  /// 상태값이 아니라 **레코드 부재**로 표현된다. PENDING은 AI 사진 판정을
+  /// 기다리는 중이라는 뜻이다(앱은 아직 AI 인증을 붙이지 않았다).
   final String status;
 
   CalendarDay({this.date, required this.status});
@@ -70,6 +71,8 @@ class CalendarDay {
   }
 
   bool get isSuccess => status == 'SUCCESS';
+
+  /// 새 백엔드는 개인 체크인에 FAILED를 남기지 않는다(V14가 기존 행도 지웠다).
+  /// 예전 서버를 보는 동안에만 값이 올 수 있어 판정만 남겨둔다.
   bool get isFailed => status == 'FAILED';
-  bool get isRecoveryPending => status == 'RECOVERY_PENDING';
 }
