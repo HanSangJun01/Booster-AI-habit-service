@@ -269,10 +269,13 @@ class _PhotoVerifySheetState extends State<_PhotoVerifySheet> {
   List<Widget> _passed() {
     final result = _result!;
     final confidence = result.confidencePercent;
+    // 팀 인증은 스트릭을 주지 않아 currentStreak이 null로 온다. 예전엔 0으로
+    // 읽혀 "누적 인증 0회"가 떴다 — 팀에는 없는 개념이니 줄 자체를 그리지 않는다.
+    final streak = result.currentStreak;
     return [
       _resultHead(Icons.check_circle_rounded, BC.green, BC.greenSoft, '인증했어요'),
       const SizedBox(height: 14),
-      _resultRow('누적 인증', '${result.currentStreak}회'),
+      if (streak != null) _resultRow('누적 인증', '$streak회'),
       if (result.rewardGranted) ...[
         const SizedBox(height: 8),
         _resultRow('스트릭 보상', '+100 코인', highlight: true),

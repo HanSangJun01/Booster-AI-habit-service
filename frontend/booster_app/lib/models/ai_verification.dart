@@ -3,7 +3,15 @@ import 'json.dart';
 /// AI 사진 판정 결과 — `POST .../ai-verification`의 응답.
 ///
 /// 개인(`/personal/check-in/{id}/ai-verification`)과 팀
-/// (`/verification-submissions/{id}/ai-verification`)이 같은 모양을 준다.
+/// (`/verification-submissions/{id}/ai-verification`)은 **모양이 다르다.**
+///
+/// 공통으로 오는 건 판정부([passed]·[confidenceScore]·[detectedLabels]·[reason])
+/// 뿐이다. [currentStreak]·[coinBalance]·[rewardGranted]는 개인 트랙에만 있다 —
+/// 팀은 체크인마다 코인을 주지 않고, 챌린지가 끝날 때 예치금을 정산해 분배한다
+/// (`SettlementService`). 그래서 팀 응답에는 스트릭도 코인도 애초에 없다.
+///
+/// 없는 값을 0으로 읽으면 "인증은 됐는데 코인이 0"처럼 보이므로 null로 둔다.
+/// 화면은 null이면 그 줄을 그리지 않는다.
 ///
 /// ## 거절돼도 그날은 끝이 아니다
 /// [passed]가 false면 서버가 개인 체크인 레코드를 **삭제한다**. PENDING이 하루를
@@ -24,8 +32,13 @@ class AiVerificationResult {
   /// 거절 사유. 통과했으면 null이다. 사용자에게 그대로 보여줄 수 있는 문장이다.
   final String? reason;
 
-  final int currentStreak;
-  final int coinBalance;
+  /// 개인 트랙에서만 온다. 팀 인증이면 null이다.
+  final int? currentStreak;
+
+  /// 개인 트랙에서만 온다. 팀 인증이면 null이므로 세션 잔액을 덮어쓰면 안 된다.
+  final int? coinBalance;
+
+  /// 개인 트랙의 스트릭 보상 지급 여부. 팀 응답엔 없어서 false다.
   final bool rewardGranted;
 
   const AiVerificationResult({
@@ -34,8 +47,8 @@ class AiVerificationResult {
     this.confidenceScore,
     this.detectedLabels = const [],
     this.reason,
-    required this.currentStreak,
-    required this.coinBalance,
+    this.currentStreak,
+    this.coinBalance,
     required this.rewardGranted,
   });
 
@@ -49,8 +62,8 @@ class AiVerificationResult {
       detectedLabels:
           labels is List ? labels.whereType<String>().toList() : const <String>[],
       reason: json['reason'] as String?,
-      currentStreak: asInt(json['currentStreak']),
-      coinBalance: asInt(json['coinBalance']),
+      currentStreak: asIntOrNull(json['currentStreak']),
+      coinBalance: asIntOrNull(json['coinBalance']),
       rewardGranted: asBool(json['rewardGranted']),
     );
   }

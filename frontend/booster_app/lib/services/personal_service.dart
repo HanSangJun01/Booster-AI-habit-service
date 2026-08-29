@@ -108,7 +108,9 @@ class PersonalService {
       fields: {'category': aiCategory},
     ));
     final result = AiVerificationResult.fromJson(data);
-    Session.coinBalance = result.coinBalance;
+    // 개인 응답은 항상 coinBalance를 주지만, 모델이 nullable이므로 방어한다.
+    final balance = result.coinBalance;
+    if (balance != null) Session.coinBalance = balance;
     return result;
   }
 

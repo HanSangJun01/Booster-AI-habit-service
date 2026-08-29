@@ -123,7 +123,11 @@ class ChallengeService {
       fields: {'category': aiCategory},
     ));
     final result = AiVerificationResult.fromJson(data);
-    Session.coinBalance = result.coinBalance;
+    // 팀 응답에는 coinBalance가 없다(정산 전까지 코인이 움직이지 않으므로).
+    // 예전엔 그걸 0으로 읽어 세션 잔액을 0으로 덮어써서, 인증에 성공한 순간
+    // 앱 전체의 코인이 0으로 보였다. 서버가 준 경우에만 반영한다.
+    final balance = result.coinBalance;
+    if (balance != null) Session.coinBalance = balance;
     return result;
   }
 
