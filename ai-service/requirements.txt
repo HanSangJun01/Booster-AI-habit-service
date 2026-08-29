@@ -1,7 +1,13 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-anthropic>=0.40.0
+# AI 오케스트레이션은 LangChain 기준. anthropic SDK는 langchain-anthropic이
+# 의존성으로 끌어오므로 직접 적지 않는다 (직접 import하는 코드도 없다).
+langchain-anthropic>=1.7.0
+langchain-core>=1.6.0
 pydantic>=2.9.0
 python-dotenv>=1.0.1
 python-multipart>=0.0.12
 Pillow>=11.0.0
+# 판정 정책 파일(prompts/verification.yaml)을 읽는다. langchain이 이미 끌어오지만
+# 직접 import하므로 명시한다 — 남의 의존성 트리에 기대면 조용히 사라진다.
+PyYAML>=6.0
