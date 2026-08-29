@@ -10,3 +10,11 @@ scrape_configs:
       # 백엔드는 호스트(로컬)에서 gradlew bootRun 또는 8080 published 컨테이너로 실행한다고 가정.
       # Docker Desktop(Windows/Mac)에서 컨테이너->호스트 접근은 host.docker.internal 사용.
       - targets: ['host.docker.internal:8080']
+
+  # [버그 관측] DB 상태 지표. 커스텀 쿼리는 monitoring/postgres-exporter/queries.yaml.
+  # 앱 지표(위 job)로는 안 보이는 결함 — 반경 상한 부재, 구제 만료 이중 처벌, 코인 정합성 —
+  # 을 데이터에서 직접 센다. 쿼리가 매 scrape 마다 돌므로 앱보다 느슨하게 수집한다.
+  - job_name: 'booster-postgres'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['postgres-exporter:9187']
