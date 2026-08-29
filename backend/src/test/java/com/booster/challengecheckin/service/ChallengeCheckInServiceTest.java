@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import com.booster.shared.common.BusinessException;
 
 @ExtendWith(MockitoExtension.class)
 class ChallengeCheckInServiceTest {
@@ -104,7 +105,7 @@ class ChallengeCheckInServiceTest {
     // ── 재현 테스트: teamId가 null인 참여자는 체크인 불가 ──
 
     @Test
-    void recordCheckIn_whenParticipantHasNoTeam_shouldThrowIllegalStateException() {
+    void recordCheckIn_whenParticipantHasNoTeam_shouldThrowConflict() {
         // given: teamId = null인 참여자 (팀 배정 안 된 상태)
         ChallengeParticipant participant = confirmedParticipant(); // teamId = null
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
@@ -115,15 +116,15 @@ class ChallengeCheckInServiceTest {
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
         // 수정 전: teamId=null 그대로 저장 성공 → 정산에서 누락
-        // 수정 후: IllegalStateException 발생
-        assertThrows(IllegalStateException.class,
+        // 수정 후: BusinessException(409) 발생
+        assertThrows(BusinessException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
-    // ── 이슈 4: recordCheckIn - 챌린지 ENDED 상태일 때 IllegalStateException 기대 ──
+    // ── 이슈 4: recordCheckIn - 챌린지 ENDED 상태일 때 409 충돌(BusinessException) 기대 ──
 
     @Test
-    void recordCheckIn_whenChallengeIsEnded_shouldThrowIllegalStateException() {
+    void recordCheckIn_whenChallengeIsEnded_shouldThrowConflict() {
         ChallengeParticipant participant = confirmedParticipant();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
@@ -132,12 +133,12 @@ class ChallengeCheckInServiceTest {
         when(challenge.getStatus()).thenReturn(ChallengeStatus.ENDED);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
     @Test
-    void recordCheckIn_whenChallengeIsReady_shouldThrowIllegalStateException() {
+    void recordCheckIn_whenChallengeIsReady_shouldThrowConflict() {
         ChallengeParticipant participant = confirmedParticipant();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
@@ -146,7 +147,7 @@ class ChallengeCheckInServiceTest {
         when(challenge.getStatus()).thenReturn(ChallengeStatus.READY);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
@@ -163,6 +164,10 @@ class ChallengeCheckInServiceTest {
 
         Challenge challenge = mock(Challenge.class);
         when(challenge.getStatus()).thenReturn(ChallengeStatus.ACTIVE);
+        // 타입 검증과 GPS 판정이 레코드 생성보다 앞으로 옮겨져, 경쟁 구간에 도달하려면 둘 다 통과해야 한다
+        when(challenge.getVerificationType()).thenReturn(VerificationType.GPS);
+        when(gpsVerificationEvaluator.calculateDistanceMeters(anyDouble(), anyDouble(), anyDouble(), anyDouble()))
+                .thenReturn(0.0);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
@@ -226,7 +231,7 @@ class ChallengeCheckInServiceTest {
     //  V1 정의: GPS/AI/GPS_PHOTO_AI만 지원. PHOTO/GPS_PHOTO는 400.
 
     @Test
-    void recordCheckIn_whenVerificationTypeIsPhoto_shouldThrowIllegalState() {
+    void recordCheckIn_whenVerificationTypeIsPhoto_shouldThrowConflict() {
         ChallengeParticipant participant = confirmedParticipantWithTeam();
         when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
                 .thenReturn(Optional.of(participant));
@@ -236,14 +241,13 @@ class ChallengeCheckInServiceTest {
         when(challenge.getVerificationType()).thenReturn(VerificationType.PHOTO);
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
 
-        // 초기 조회 empty → 신규 insert 성공을 흉내내야 verificationType 스코프 체크(4-1)까지 도달함
+        // verificationType 스코프 검증은 이제 레코드 생성보다 먼저 일어난다.
+        // (예전엔 insert 이후였어서 insert 성공을 흉내내야 도달했다)
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
         when(checkInRepository.findByParticipantIdAndCheckInDate(any(), eq(today)))
                 .thenReturn(Optional.empty());
-        when(checkInInsertHelper.insertInNewTransaction(any()))
-                .thenAnswer(inv -> inv.getArgument(0));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
     }
 
@@ -371,7 +375,7 @@ class ChallengeCheckInServiceTest {
     // ── Phase 2: finalizeDecisionAfterAi — 이미 CONFIRMED된 결정에 두 번째 호출은 IllegalStateException ──
 
     @Test
-    void finalizeDecisionAfterAi_whenAlreadyConfirmed_shouldThrowIllegalState() {
+    void finalizeDecisionAfterAi_whenAlreadyConfirmed_shouldThrowConflict() {
         Long submissionId = 44L;
         VerificationSubmission submission = VerificationSubmission.builder()
                 .checkInId(200L).submittedLat(lat).submittedLng(lng).attemptNumber(1).build();
@@ -390,7 +394,7 @@ class ChallengeCheckInServiceTest {
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
         when(decisionRepository.findBySubmissionId(submissionId)).thenReturn(Optional.of(confirmed));
 
-        assertThrows(IllegalStateException.class,
+        assertThrows(BusinessException.class,
                 () -> checkInService.finalizeDecisionAfterAi(submissionId, true));
 
         // 이미 확정된 결정은 다시 저장/갱신하지 않아야 함

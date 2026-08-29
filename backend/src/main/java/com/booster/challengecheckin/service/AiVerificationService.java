@@ -26,6 +26,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import com.booster.shared.common.BusinessException;
 
 @Slf4j
 @Service
@@ -69,8 +70,8 @@ public class AiVerificationService {
         }
 
         aiResultRepository.findBySubmissionId(submissionId).ifPresent(existing -> {
-            throw new IllegalStateException(
-                    "AI verification already exists for submission " + submissionId);
+            throw BusinessException.conflict("AI_VERIFICATION_ALREADY_EXISTS",
+                    "이미 AI 인증이 완료된 제출입니다.");
         });
 
         validateImage(image);

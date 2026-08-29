@@ -35,10 +35,12 @@ public class ChallengeController {
 
     @GetMapping
     public ApiResponse<Page<ChallengeResponse>> search(
+            @AuthenticationPrincipal Long userId,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String keyword,
             Pageable pageable) {
-        return ApiResponse.success(challengeService.searchPublicChallenges(category, keyword, pageable));
+        return ApiResponse.success(
+                challengeService.searchPublicChallenges(userId, category, keyword, pageable));
     }
 
     @GetMapping("/invite/{code}")

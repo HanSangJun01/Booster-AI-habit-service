@@ -172,7 +172,15 @@ Phase 2 협의(8/8)로 결정된 항목은 §8에 반영됐다. 아래는 명시
 ## 8. 백엔드 통합 지점
 
 백엔드는 `AiVerificationClient`(위치: `com.booster.challengecheckin.service`)에서 이 서비스를 호출한다.
-백엔드 신설 엔드포인트: `POST /api/verification-submissions/{submissionId}/ai-verification`
+
+> **[2026-08-27 갱신] 호출자가 둘로 늘었다.** 이 문서를 쓸 당시(08-08)에는 팀 챌린지만 AI를 썼지만,
+> V16에서 **개인 습관(A축)에도 AI 인증이 추가**됐다. `AiVerificationClient` 를 그대로 재사용하므로
+> **ai-service 쪽 계약·구현 변경은 없다.** 자세한 흐름은 §8.6.
+
+| 호출 경로 | 백엔드 엔드포인트 |
+|---|---|
+| 팀 챌린지 (B축) | `POST /api/verification-submissions/{submissionId}/ai-verification` |
+| **개인 습관 (A축)** | `POST /api/personal/check-in/{checkInId}/ai-verification` |
 
 ### 8.1 verification_type별 흐름
 
@@ -234,6 +242,46 @@ Response 201:
 | 4xx (계약 오류) | 500 Internal Server Error — 클라이언트에는 서버 버그로 노출 (배포 전 잡혀야 함) |
 
 이미지 검증 실패(400/413/415)는 백엔드 `AiVerificationService`가 자체적으로 즉시 반환한다 — ai-service까지 도달하지 않는다.
+
+### 8.6 개인 습관(A축) 통합 — V16 신규
+
+**ai-service 입장에서는 팀 챌린지와 완전히 동일한 호출이다.** `POST /verify` 에 `category` + `image`
+를 보내고 판정을 받는다. 다른 건 백엔드 쪽 저장 구조뿐이다.
+
+```
+팀   challenge_check_ins → verification_submissions(N) → ai_verification_results → decisions
+개인 personal_check_ins  → personal_ai_verifications(1)
+```
+
+개인 트랙은 `UNIQUE(user_id, check_in_date)` 로 하루 1건이라 재시도 이력을 남길 자리가 없어,
+제출 테이블 없이 체크인에 판정을 1:1로 붙였다.
+
+| | 팀 (B축) | 개인 (A축) |
+|---|---|---|
+| 인증 방식 저장 | `challenges.verification_type` | `personal_locations.verification_type` (**기본 `GPS`**) |
+| 사진 업로드 입력 | 체크인 응답의 `submissionId` | 체크인 응답의 `checkInId` |
+| AI 거절 시 | `FAILED` 레코드로 남음 | **체크인 레코드를 삭제** — 그날 재시도를 열어주기 위해 |
+
+**호출량 영향**: 개인 트랙의 인증 방식 기본값이 `GPS` 라 **AI는 사용자가 직접 바꿔야 쓰는 옵트인**이다.
+따라서 당장 호출이 급증하지는 않는다. 다만 **호출 경로가 하나 더 생겼으므로**, 사용자가 개인 습관에서
+AI를 택하기 시작하면 Anthropic 비용·레이트리밋이 먼저 걸리는 지점이 된다. 모니터링 대상.
+
+### 8.7 ⚠️ category 검증이 어디에도 없다 (미해결)
+
+§2에서 카테고리를 `EXERCISE`/`STUDY` 로 확정했지만, **그 값을 강제하는 코드가 백엔드에 없다.**
+컨트롤러가 `@RequestParam String category` 로 받아 검증 없이 그대로 전달한다.
+
+- `challenges.category` 는 `VARCHAR(50)` 자유 문자열이라 `"독서"`·`"기상"` 같은 값이 저장된다
+- **앱은 현재 한글 4종(`운동`·`공부`·`독서`·`기상`)을 그대로 보낸다** → ai-service 가 422 →
+  §8.4 규칙에 따라 **500**으로 나간다
+- 개인 트랙에는 카테고리를 저장하는 컬럼조차 없어 클라이언트가 매번 지정한다
+
+§8.4에 적어둔 *"(배포 전 잡혀야 함)"* 이 아직 안 잡힌 상태다.
+
+**팀 결정 (2026-08-27)**: 카테고리는 **`EXERCISE`/`STUDY` 2개를 유지**하고 늘리지 않는다.
+`독서` 는 `STUDY` 로 매핑한다(§2 프롬프트에 활자책 독서가 통과 기준으로 이미 있다).
+`기상` 은 AI 인증 대상에서 제외한다. **앱이 영문 값으로 변환해 보내는 것**으로 막는다.
+근본 해결(생성 단계 검증)은 후속 과제.
 
 ### 8.5 verification_type 매트릭스 (백엔드 흐름 요약)
 

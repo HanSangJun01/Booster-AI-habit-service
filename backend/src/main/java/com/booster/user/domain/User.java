@@ -15,6 +15,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 /**
@@ -53,6 +54,18 @@ public class User {
     @Column(name = "is_active", nullable = false)
     private boolean active;
 
+    /** 무료 구제권. 매월 1일 1개로 재설정되며 안 쓰면 사라진다(이월 없음). */
+    @Column(name = "free_recovery_tickets", nullable = false)
+    private int freeRecoveryTickets;
+
+    /** 코인으로 구매한 구제권. 지불한 것이므로 소멸하지 않는다. */
+    @Column(name = "paid_recovery_tickets", nullable = false)
+    private int paidRecoveryTickets;
+
+    /** 무료 구제권을 마지막으로 지급한 달(해당 월 1일). 월 1회 지급의 멱등 키. */
+    @Column(name = "tickets_granted_month")
+    private LocalDate ticketsGrantedMonth;
+
     @CreationTimestamp
     @Column(name = "joined_at", nullable = false, updatable = false)
     private OffsetDateTime joinedAt;
@@ -69,6 +82,8 @@ public class User {
                 .coinBalance(0L)
                 .totalAttendance(0)
                 .active(true)
+                .freeRecoveryTickets(1)   // 가입 시 무료 구제권 1개
+                .paidRecoveryTickets(0)
                 .build();
     }
 
@@ -79,6 +94,53 @@ public class User {
 
     public void increaseAttendance() {
         this.totalAttendance += 1;
+    }
+
+    /** 보유 구제권 합계(무료 + 구매). */
+    public int getRecoveryTickets() {
+        return this.freeRecoveryTickets + this.paidRecoveryTickets;
+    }
+
+    /**
+     * 무료 구제권 월 1회 지급. 같은 달에 이미 지급했으면 아무것도 하지 않는다(멱등).
+     *
+     * <p>무료분만 1개로 재설정한다 — 안 쓴 무료 구제권은 이월되지 않는다. 반면 <b>코인으로 산
+     * 구제권은 건드리지 않는다.</b> 지불한 대가가 달이 바뀌었다는 이유로 사라지면 안 되기 때문이다.
+     *
+     * @param monthStart 대상 월의 1일
+     * @return 실제로 지급했으면 true
+     */
+    public boolean grantMonthlyRecoveryTicket(LocalDate monthStart) {
+        if (monthStart.equals(this.ticketsGrantedMonth)) {
+            return false;
+        }
+        this.freeRecoveryTickets = 1;
+        this.ticketsGrantedMonth = monthStart;
+        return true;
+    }
+
+    /** 구제권 구매분 추가(구매 한도 없음). */
+    public void addPaidRecoveryTickets(int count) {
+        this.paidRecoveryTickets += count;
+    }
+
+    /**
+     * 구제권 1개 소모. 주간 채점에서 미달일 때 자동 호출된다.
+     *
+     * <p>무료분을 먼저 쓴다 — 무료분은 월말에 어차피 사라지므로 그게 사용자에게 유리하다.
+     *
+     * @return 소모했으면 true, 보유량이 0이면 false
+     */
+    public boolean consumeRecoveryTicket() {
+        if (this.freeRecoveryTickets > 0) {
+            this.freeRecoveryTickets -= 1;
+            return true;
+        }
+        if (this.paidRecoveryTickets > 0) {
+            this.paidRecoveryTickets -= 1;
+            return true;
+        }
+        return false;
     }
 
     public void changeNickname(String nickname) {

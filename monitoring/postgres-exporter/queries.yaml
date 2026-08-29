@@ -1,0 +1,117 @@
+# [버그 관측] postgres_exporter 커스텀 쿼리
+#
+# 목적: probe-user-journey.sh 가 찾은 결함들을 "고치지 않고" 계속 지켜보기 위한 지표.
+#       전부 DB 를 읽기만 하므로 애플리케이션 코드는 한 줄도 건드리지 않는다.
+#
+# 왜 앱 메트릭이 아니라 DB 인가:
+#   기존 actuator 지표(http_server_requests, hikaricp, jvm)는 "요청이 얼마나 빨랐나"만 안다.
+#   이번 결함들은 전부 '남은 데이터의 상태'다 — 반경이 얼마나 큰가, 벌칙이 몇 번 적용됐나.
+#   HTTP 계층에서는 보이지 않으므로 데이터를 직접 센다.
+#
+# 주의: scrape 마다 아래 쿼리가 전부 실행된다. 부하테스트 중에는 scrape_interval 을 늘릴 것.
+
+# ── ① 반경 상한 부재 (GPS 인증 무력화) ──────────────────────────────
+# radius_meters 에 상한이 없어 2,000만 m 등록이 통과한다. 서울에 등록하고 시드니에서 인증됨.
+# 정상 사용은 수십~수백 m 다. 1km 를 넘는 값은 사실상 전부 의심 대상.
+booster_gps_radius:
+  query: |
+    SELECT
+      (SELECT count(*) FROM personal_locations WHERE radius_meters > 1000)::float        AS personal_over_1km,
+      (SELECT count(*) FROM personal_locations WHERE radius_meters > 100000)::float      AS personal_over_100km,
+      (SELECT coalesce(max(radius_meters), 0) FROM personal_locations)::float            AS personal_max_meters,
+      (SELECT count(*) FROM challenge_participants WHERE gps_radius_meters > 1000)::float   AS team_over_1km,
+      (SELECT count(*) FROM challenge_participants WHERE gps_radius_meters > 100000)::float AS team_over_100km,
+      (SELECT coalesce(max(gps_radius_meters), 0) FROM challenge_participants)::float       AS team_max_meters
+  master: true
+  metrics:
+    - personal_over_1km:   { usage: "GAUGE", description: "개인 인증 위치 중 반경 1km 초과" }
+    - personal_over_100km: { usage: "GAUGE", description: "개인 인증 위치 중 반경 100km 초과 (명백한 우회)" }
+    - personal_max_meters: { usage: "GAUGE", description: "개인 인증 위치 최대 반경(m)" }
+    - team_over_1km:       { usage: "GAUGE", description: "팀 참가자 중 반경 1km 초과" }
+    - team_over_100km:     { usage: "GAUGE", description: "팀 참가자 중 반경 100km 초과 (예치금 걸린 우회)" }
+    - team_max_meters:     { usage: "GAUGE", description: "팀 참가자 최대 반경(m)" }
+
+# ── ③④ 구제 만료 이중 처벌 ────────────────────────────────────────
+# ★ 이 대시보드의 핵심 지표.
+# expireOverdueRescues 에는 DB 방어가 없고 WeeklyGoalScheduler 에 @SchedulerLock 이 없다.
+# 인스턴스가 2대 이상이면 같은 사용자에게 같은 날 벌칙이 2번 이상 적용된다.
+#
+#   duplicate_penalty_users > 0   → 이중 처벌이 실제로 발생함 (즉시 조사)
+#   penalties > failed_evaluations → 마찬가지. FAILED 1건당 벌칙은 정확히 1건이어야 한다.
+booster_weekly_penalty:
+  query: |
+    SELECT
+      (SELECT count(*) FROM (
+         SELECT user_id, date_trunc('day', created_at) AS d
+         FROM coin_transactions WHERE type = 'WEEKLY_MISS_PENALTY'
+         GROUP BY 1, 2 HAVING count(*) > 1) x)::float                                      AS duplicate_penalty_users,
+      (SELECT count(*) FROM coin_transactions WHERE type = 'WEEKLY_MISS_PENALTY')::float   AS penalty_total,
+      (SELECT count(*) FROM weekly_evaluations WHERE result = 'FAILED')::float             AS failed_evaluations,
+      (SELECT coalesce(-sum(amount), 0) FROM coin_transactions
+        WHERE type = 'WEEKLY_MISS_PENALTY')::float                                         AS penalty_coins_total
+  master: true
+  metrics:
+    - duplicate_penalty_users: { usage: "GAUGE", description: "같은 날 WEEKLY_MISS_PENALTY 를 2회 이상 맞은 사용자 수 (0이 아니면 이중 처벌 발생)" }
+    - penalty_total:           { usage: "GAUGE", description: "누적 미달 벌칙 건수" }
+    - failed_evaluations:      { usage: "GAUGE", description: "FAILED 로 확정된 주간 채점 건수 (벌칙 건수와 같아야 정상)" }
+    - penalty_coins_total:     { usage: "GAUGE", description: "벌칙으로 차감된 코인 총액" }
+
+# ── 구제 유예 파이프라인 ──────────────────────────────────────────
+# overdue_not_expired 가 오래 0 보다 크면 만료 스케줄러(매일 00:10)가 안 돌거나 실패 중이다.
+booster_rescue:
+  query: |
+    SELECT
+      (SELECT count(*) FROM weekly_evaluations WHERE result = 'PENDING_RESCUE')::float AS pending,
+      (SELECT count(*) FROM weekly_evaluations
+        WHERE result = 'PENDING_RESCUE' AND rescue_deadline < now())::float            AS overdue_not_expired,
+      (SELECT count(*) FROM weekly_evaluations WHERE result = 'RESCUED')::float        AS rescued,
+      (SELECT count(*) FROM weekly_evaluations WHERE result = 'ACHIEVED')::float       AS achieved
+  master: true
+  metrics:
+    - pending:             { usage: "GAUGE", description: "구제 대기 중인 주" }
+    - overdue_not_expired: { usage: "GAUGE", description: "기한이 지났는데 아직 확정 안 된 건 (만료 스케줄러 미동작 신호)" }
+    - rescued:             { usage: "GAUGE", description: "구제로 살아난 주" }
+    - achieved:            { usage: "GAUGE", description: "목표 달성한 주" }
+
+# ── 돈·레코드 정합성 ──────────────────────────────────────────────
+# 전부 상시 0 이어야 한다. 하나라도 올라가면 회귀다.
+booster_integrity:
+  query: |
+    SELECT
+      (SELECT count(*) FROM users u
+         LEFT JOIN (SELECT user_id, sum(amount) s FROM coin_transactions GROUP BY 1) t ON t.user_id = u.id
+        WHERE u.coin_balance <> coalesce(t.s, 0))::float                                AS coin_mismatch_users,
+      (SELECT count(*) FROM users WHERE coin_balance < 0)::float                        AS negative_balance_users,
+      (SELECT count(*) FROM (SELECT user_id, week_start FROM weekly_evaluations
+         GROUP BY 1, 2 HAVING count(*) > 1) x)::float                                   AS duplicate_evaluations,
+      (SELECT count(*) FROM (SELECT user_id, check_in_date FROM personal_check_ins
+         GROUP BY 1, 2 HAVING count(*) > 1) x)::float                                   AS duplicate_checkins,
+      (SELECT count(*) FROM personal_check_ins
+        WHERE status = 'PENDING' AND check_in_date < current_date)::float                AS stale_pending_checkins,
+      (SELECT count(*) FROM personal_ai_verifications a
+         LEFT JOIN personal_check_ins c ON c.id = a.personal_check_in_id
+        WHERE c.id IS NULL)::float                                                      AS orphan_ai_verifications
+  master: true
+  metrics:
+    - coin_mismatch_users:    { usage: "GAUGE", description: "잔액 ≠ 거래내역 합 인 사용자 (코인 증발/증식)" }
+    - negative_balance_users: { usage: "GAUGE", description: "잔액이 음수인 사용자" }
+    - duplicate_evaluations:  { usage: "GAUGE", description: "한 주가 두 번 채점된 건" }
+    - duplicate_checkins:     { usage: "GAUGE", description: "하루에 두 번 기록된 개인 인증" }
+    - stale_pending_checkins: { usage: "GAUGE", description: "사진을 끝내 안 올려 남은 과거 PENDING (정리 주체 없음)" }
+    - orphan_ai_verifications: { usage: "GAUGE", description: "체크인이 사라진 AI 판정 레코드" }
+
+# ── ④ 분산락 현황 ────────────────────────────────────────────────
+# ShedLock 을 실제로 쓰는 스케줄러만 이 테이블에 행을 남긴다.
+# 정산 2종(markEndedChallenges / retryFailedSettlements)만 나오고 주간 목표 3종
+# (evaluateLastWeek / expireOverdueRescues / runMonthly)은 안 나오는 것이 곧 ④ 의 증거다.
+booster_shedlock:
+  query: |
+    SELECT name,
+           extract(epoch FROM (lock_until - locked_at))::float AS held_seconds,
+           extract(epoch FROM (now() - locked_at))::float      AS age_seconds
+    FROM shedlock
+  master: true
+  metrics:
+    - name:         { usage: "LABEL",  description: "스케줄러 락 이름" }
+    - held_seconds: { usage: "GAUGE",  description: "락 보유 구간 길이(초)" }
+    - age_seconds:  { usage: "GAUGE",  description: "마지막 획득 이후 경과(초)" }

@@ -58,8 +58,9 @@ class PersonalCheckInServiceTest {
         assertThat(resp.coinBalance()).isEqualTo(500L); // 가입 보너스만
     }
 
+    /** 마일스톤 보상은 7번째 인증하는 그 순간 지급된다(주간 채점을 기다리지 않는다). */
     @Test
-    void sevenDayStreak_grantsRewardCoins() {
+    void sevenCheckIns_grantMilestoneRewardImmediately() {
         Long userId = newUserWithLocation();
         LocalDate start = LocalDate.of(2035, 3, 5);
 
@@ -70,8 +71,27 @@ class PersonalCheckInServiceTest {
         }
 
         assertThat(resp.currentStreak()).isEqualTo(7);
-        assertThat(resp.rewardGranted()).isTrue();
-        assertThat(resp.coinBalance()).isEqualTo(600L); // 500 + 100
+        assertThat(resp.rewardGranted()).as("7회 도달 즉시 보상").isTrue();
+        assertThat(resp.coinBalance()).as("가입 500 + 마일스톤 100").isEqualTo(600L);
+    }
+
+    /**
+     * [주간 목표 모델] 날짜 갭이 있어도 스트릭은 끊기지 않는다.
+     * 주 3회 목표라면 월·수·금 사이의 빈 날은 정상이기 때문이다.
+     * (과거 B1 수정이 강제하던 "갭 = 리셋"은 폐기됐고, 리셋은 주간 채점만 수행한다.)
+     */
+    @Test
+    void gapDay_doesNotBreakStreak() {
+        Long userId = newUserWithLocation();
+        LocalDate d = LocalDate.of(2035, 3, 2);
+
+        clock.setDate(d);
+        assertThat(personalCheckInService.checkIn(userId, 37.0, 127.0).currentStreak()).isEqualTo(1);
+
+        clock.setDate(d.plusDays(2)); // 하루 건너뜀
+        assertThat(personalCheckInService.checkIn(userId, 37.0, 127.0).currentStreak())
+                .as("갭이 있어도 누적된다 — 주간 목표 달성 여부는 주간 채점이 판정한다")
+                .isEqualTo(2);
     }
 
     @Test

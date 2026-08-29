@@ -18,6 +18,24 @@ services:
       # 리눅스 환경에서도 host.docker.internal 이 호스트를 가리키도록 (Docker Desktop은 기본 지원)
       - "host.docker.internal:host-gateway"
 
+  # [버그 관측] DB 상태를 지표로 노출한다. 애플리케이션은 건드리지 않는다.
+  # 이번 결함들(반경 상한 부재 / 구제 만료 이중 처벌 / 정합성)은 HTTP 계층에 흔적이 없고
+  # '남은 데이터'로만 드러나므로, actuator 대신 DB 를 직접 센다.
+  # 쿼리 정의: monitoring/postgres-exporter/queries.yaml
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: booster-a-pg-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      # booster-db 는 별도 compose(docker-compose.yml)에서 5432 를 publish 한다 → 호스트 경유.
+      DATA_SOURCE_NAME: "postgresql://booster:booster@host.docker.internal:5432/booster?sslmode=disable"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/pg_exporter/queries.yaml"
+    volumes:
+      - ./monitoring/postgres-exporter/queries.yaml:/etc/pg_exporter/queries.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   grafana:
     image: grafana/grafana:latest
     container_name: booster-a-grafana

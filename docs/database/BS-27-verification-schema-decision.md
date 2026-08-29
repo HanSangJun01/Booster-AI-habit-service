@@ -112,5 +112,52 @@ Booster의 인증/체크인 관련 데이터 구조가 문서마다 서로 다�
 
 ## 8. 후속 확인 필요 사항
 
-- `/api/check-ins/{checkInId}/verification-submissions` 엔드포인트의 소유 축(A-axis vs B-axis) 및 호출 흐름(PersonalCheckIn vs ChallengeCheckIn)은 백엔드 계획서와 함께 별도 확정이 필요하다(`docs/backend/bs-19-b-axis-backend-plan.md`, `docs/backend/a-axis-backend-plan.md` 참조).
+- `/api/check-ins/{checkInId}/verification-submissions` 엔드포인트의 소유 축(A-axis vs B-axis) 및 호출 흐름(PersonalCheckIn vs ChallengeCheckIn)은 백엔드 계획서와 함께 별도 확정이 필요하다(`docs/backend/bs-19-b-axis-backend-plan.md`, `docs/backend/plan-axis-a-backend.md` 참조).
 - `gps_verification_results`의 좌표 정밀도/보관·마스킹 정책은 미정(bs-22 Open Question 12.3 참조).
+
+---
+
+## 9. 후속 결정 (2026-08-27) — §8 미확정 항목 해소
+
+§8에서 "별도 확정이 필요하다"고 미뤄둔 **인증 제출 엔드포인트의 소유 축**이 확정됐다.
+§1~§7의 분리형 스키마 결정은 그대로 유효하고, 아래는 그 결정을 개인 트랙까지 확장한 것이다.
+
+### 9.1 결정 — 축마다 다른 구조를 쓴다
+
+`/api/check-ins/{checkInId}/verification-submissions` 라는 **축 공용 엔드포인트는 만들지 않았다.**
+두 축의 제약이 달라 같은 구조를 쓸 이유가 없었다.
+
+```
+팀   challenge_check_ins → verification_submissions(N) → gps/ai_results → decisions
+개인 personal_check_ins  → personal_ai_verifications(1)
+```
+
+| | 팀 (B축) | 개인 (A축) |
+|---|---|---|
+| 하루 인증 수 | 제한 없음 (재시도 이력 필요) | `UNIQUE(user_id, check_in_date)` 로 **1건** |
+| 제출 테이블 | `verification_submissions` | **없음** — 체크인에 판정을 1:1로 붙임 |
+| 사진 업로드 | `POST /api/verification-submissions/{submissionId}/ai-verification` | `POST /api/personal/check-in/{checkInId}/ai-verification` |
+| 마이그레이션 | V3 · V12 · V13 | **V16** |
+
+**근거**: 개인 트랙은 하루 1건이 유니크해 재시도 이력을 남길 자리가 없다. 팀 구조를 복제하면
+행이 항상 1개인 제출 테이블을 하나 더 경유하게 되고, 조회마다 조인이 늘 뿐 얻는 게 없다.
+
+### 9.2 AI 인증은 Phase 2가 아니다
+
+§6에서 "MVP 구현 보류, Phase 2 확장"으로 둔 AI 인증은 **양쪽 축 모두 구현됐다**
+(팀 V12, 개인 V16). `ai_verification_results` 는 실제로 쓰인다.
+
+지원 방식은 `GPS` / `AI` / `GPS_PHOTO_AI` 3종이며, `PHOTO` · `GPS_PHOTO` 는 DB enum에는
+있으나 **생성 단계에서 400으로 거절**한다 — 체크인이 처리하지 못해 좀비 챌린지가 되기 때문이다.
+
+### 9.3 조회 API는 삭제했다
+
+§4에서 정의한 `GET /api/check-ins/{checkInId}/verification-submissions`(인증 제출/결과 조회)는
+**구현하지 않고 스펙에서 삭제**했다. GPS 실패를 400 응답 본문으로 사유와 거리까지 즉시 주도록
+바꾸면서(A·B축 공통) 실패 사유를 나중에 조회할 이유가 없어졌다.
+
+### 9.4 남은 미확정
+
+- `gps_verification_results` 좌표 정밀도/보관·마스킹 정책 — **여전히 미정** (§8에서 이어짐)
+
+**현재 기준선**: `docs/erd/MVP_ERD.md` §3 · `docs/api/MVP_API_SPEC.md` §11

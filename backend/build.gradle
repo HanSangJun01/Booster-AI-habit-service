@@ -83,4 +83,17 @@ tasks.named('test') {
 	// "Could not find a valid Docker environment" 로 실패한다. docker-java 가 읽는 'api.version'
 	// 시스템 프로퍼티로 호환 버전(1.44, 엔진 min 1.40 이상)을 고정해 해결한다. (test JVM 한정 — 프로덕션 무관)
 	systemProperty 'api.version', '1.44'
+
+	// [환경 우회] Windows 시스템 PATH 에 따옴표가 박힌 항목(예: "C:\Program Files\Java\jdk-21"\bin)이
+	// 있으면 Testcontainers 가 docker-machine 실행 파일을 찾으려 PATH 를 훑다가
+	// InvalidPathException 으로 죽는다(CommandLine.executableExists). 손상된 항목은 Machine 레벨이라
+	// 관리자 권한 없이 고칠 수 없으므로, 테스트 JVM 에 넘기는 PATH 에서만 걸러낸다.
+	// PATH 가 정상인 머신에서는 아무 영향이 없다.
+	def sanitizedPath = System.getenv('PATH')
+			?.split(File.pathSeparator)
+			?.findAll { !it.contains('"') }
+			?.join(File.pathSeparator)
+	if (sanitizedPath) {
+		environment 'PATH', sanitizedPath
+	}
 }
