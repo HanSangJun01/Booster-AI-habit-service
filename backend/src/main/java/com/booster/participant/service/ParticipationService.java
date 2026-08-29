@@ -15,6 +15,8 @@ import com.booster.shared.common.UnauthorizedException;
 import com.booster.shared.contract.CoinService;
 import com.booster.shared.contract.CoinTransactionReason;
 import com.booster.team.service.TeamFormationService;
+import com.booster.user.domain.User;
+import com.booster.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import com.booster.shared.common.BusinessException;
 
 @Slf4j
@@ -34,6 +38,7 @@ public class ParticipationService {
     private final ChallengeParticipantRepository participantRepository;
     private final CoinService coinService;
     private final TeamFormationService teamFormationService;
+    private final UserRepository userRepository;
 
     @Transactional
     public ParticipantResponse requestParticipation(Long userId, Long challengeId, ParticipationRequest request) {
@@ -116,7 +121,26 @@ public class ParticipationService {
                 ? participantRepository.findByChallengeIdOrderByIdAsc(challengeId)
                 : participantRepository.findByChallengeIdAndStatus(challengeId, status);
 
-        return participants.stream().map(ParticipantResponse::from).toList();
+        // 방장이 승인 화면에서 신청자를 알아보려면 닉네임이 필요하다. 참가자마다
+        // 조회하면 N+1이 되므로 userId를 모아 한 번에 읽는다.
+        Map<Long, String> nicknames = loadNicknames(participants);
+
+        return participants.stream()
+                .map(p -> ParticipantResponse.from(p, nicknames.get(p.getUserId())))
+                .toList();
+    }
+
+    /** 참가자들의 userId → 닉네임. 탈퇴 등으로 사라진 사용자는 키가 없어 null이 된다. */
+    private Map<Long, String> loadNicknames(List<ChallengeParticipant> participants) {
+        List<Long> userIds = participants.stream()
+                .map(ChallengeParticipant::getUserId)
+                .distinct()
+                .toList();
+        if (userIds.isEmpty()) {
+            return Map.of();
+        }
+        return userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, User::getNickname));
     }
 
     /**
@@ -185,7 +209,11 @@ public class ParticipationService {
         log.info("Participant approved: participantId={}, challengeId={}, approvedBy={}", participantId, challengeId, leaderId);
         teamFormationService.formTeamsIfReady(challengeId);
 
-        return ParticipantResponse.from(participant);
+        // 승인 응답도 방장이 받는다. 목록과 같은 모양이 되도록 닉네임을 채운다.
+        String nickname = userRepository.findById(participant.getUserId())
+                .map(User::getNickname)
+                .orElse(null);
+        return ParticipantResponse.from(participant, nickname);
     }
 
     @Transactional
