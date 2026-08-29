@@ -4,6 +4,7 @@ import '../../services/auth_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
 import '../main_scaffold.dart';
+import 'login_screen.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -47,6 +48,20 @@ class _SignupScreenState extends State<SignupScreen> {
         MaterialPageRoute(builder: (_) => const MainScaffold()),
         (route) => false,
       );
+    } on SignupAutoLoginException catch (e) {
+      // 계정은 이미 만들어졌다. 이 화면에 남겨두면 사용자는 다시 가입을
+      // 시도하고 이메일 중복만 보게 된다. 로그인 화면으로 돌려보내면서
+      // 가입한 이메일을 넘겨 채워준다.
+      if (!mounted) return;
+      final nav = Navigator.of(context);
+      // 보통은 로그인 화면 위에 올라와 있어서 pop이면 충분하다. 아닌 경로로
+      // 열렸더라도 사용자가 빈 화면에 갇히지 않게 로그인 화면을 세운다.
+      if (nav.canPop()) {
+        nav.pop(e.email);
+      } else {
+        nav.pushReplacement(MaterialPageRoute(
+            builder: (_) => LoginScreen(signedUpEmail: e.email)));
+      }
     } on ApiException catch (e) {
       // 서버 검증 메시지(비밀번호 길이, 이메일 형식, 중복 등)를 그대로 보여준다.
       setState(() => _errorText = e.message);
@@ -75,9 +90,16 @@ class _SignupScreenState extends State<SignupScreen> {
                       BoosterTextField(
                         controller: _nicknameCtrl,
                         label: '닉네임',
-                        hint: '닉네임을 입력하세요',
-                        validator: (v) =>
-                            (v == null || v.trim().isEmpty) ? '닉네임을 입력하세요' : null,
+                        hint: '30자 이내로 입력하세요',
+                        // 비밀번호와 마찬가지로 서버 제약(1~30자)을 미리 맞춘다.
+                        // 여기서 안 막으면 31자가 그대로 나가서 400으로 튕기고,
+                        // 어느 칸이 문제인지 알려주지 못한다.
+                        validator: (v) {
+                          final value = v?.trim() ?? '';
+                          if (value.isEmpty) return '닉네임을 입력하세요';
+                          if (value.length > 30) return '닉네임은 30자를 넘을 수 없어요';
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
                       BoosterTextField(

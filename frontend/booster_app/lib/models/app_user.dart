@@ -58,22 +58,32 @@ class AuthResult {
 
 /// 백엔드 `SignupResponse` (POST /api/auth/signup).
 ///
-/// 로그인 응답과 달리 accessToken이 없다 — 가입 직후 로그인을 한 번 더
-/// 호출해야 인증이 필요한 요청을 보낼 수 있다.
+/// accessToken을 함께 준다 — 가입 직후 로그인을 다시 부를 필요가 없다.
+/// 서버가 그렇게 만든 이유가 있다: 로그인을 한 번 더 부르면 BCrypt 해싱이
+/// 가입·로그인 두 번 돌아 체감 지연이 두 배가 된다(`SignupResponse` javadoc).
 class SignupResult {
   final int userId;
   final String email;
   final String nickname;
 
+  /// 가입과 동시에 발급된 토큰. 옛 계약(토큰 없음)을 쓰는 서버를 만나면 null이고,
+  /// 그때만 `AuthService`가 로그인을 이어서 호출한다.
+  final String? accessToken;
+
   /// 가입 보너스(`SIGNUP_BONUS` +500)가 반영된 초기 잔액.
-  final int coinBalance;
+  ///
+  /// 서버가 안 주면 null이다. 0으로 메우면 안 된다 — 가입 직후 세션 잔액이
+  /// 0으로 덮여서 보너스 500이 화면에서 사라진다(`MVP_API_SPEC` §4.1은 이
+  /// 필드가 없는 엔벨로프 형태로 적혀 있어 실제로 어긋날 수 있다).
+  final int? coinBalance;
   final DateTime? joinedAt;
 
   SignupResult({
     required this.userId,
     required this.email,
     required this.nickname,
-    required this.coinBalance,
+    this.accessToken,
+    this.coinBalance,
     this.joinedAt,
   });
 
@@ -82,8 +92,9 @@ class SignupResult {
       userId: asInt(json['userId']),
       email: asString(json['email']),
       nickname: asString(json['nickname']),
-      coinBalance: asInt(json['coinBalance']),
-      joinedAt: asDateTime(json['joinedAt']),
+      accessToken: json['accessToken'] is String ? json['accessToken'] as String : null,
+      coinBalance: asIntOrNull(json['coinBalance']),
+      joinedAt: asDateTime(json['joinedAt'] ?? json['createdAt']),
     );
   }
 }

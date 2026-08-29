@@ -237,9 +237,28 @@ class ApiClient {
     if (success) return decoded;
 
     _fail(
-      ApiException(_messageFor(res.statusCode), statusCode: res.statusCode),
+      ApiException(_koreanMessage(decoded) ?? _messageFor(res.statusCode),
+          statusCode: res.statusCode),
       path,
     );
+  }
+
+  /// 엔벨로프가 아닌 에러 본문에서 사용자에게 보여줄 만한 문구를 꺼낸다.
+  ///
+  /// 백엔드 `GlobalExceptionHandler`를 타면 항상 `success` 키가 붙지만, 그걸
+  /// 거치지 않는 응답(스프링 기본 검증 오류 등)은 `message`만 들고 온다. 그걸
+  /// 버리면 "요청 처리 중 오류가 발생했습니다"만 남아서 사용자가 어느 칸을
+  /// 고쳐야 하는지 알 수 없다.
+  ///
+  /// 한글이 들어 있을 때만 쓴다 — 스프링 기본 문구(`No message available`,
+  /// `Validation failed for object...`)를 그대로 띄우면 안내가 아니라 잡음이다.
+  static String? _koreanMessage(dynamic decoded) {
+    if (decoded is! Map) return null;
+    final message = decoded['message'];
+    if (message is! String) return null;
+    final trimmed = message.trim();
+    if (trimmed.isEmpty || !RegExp(r'[가-힣]').hasMatch(trimmed)) return null;
+    return trimmed;
   }
 
   /// 예외를 던지기 전에 전역 처리가 필요한지 판단한다.

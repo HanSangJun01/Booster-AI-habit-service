@@ -12,7 +12,11 @@ class LoginScreen extends StatefulWidget {
   /// 모르기 때문에, 그냥 빈 화면을 보여주면 앱이 튕긴 것처럼 느낀다.
   final bool sessionExpired;
 
-  const LoginScreen({super.key, this.sessionExpired = false});
+  /// 가입은 됐는데 자동 로그인이 실패해 돌아온 경우의 이메일
+  /// (`SignupAutoLoginException`). 채워 넣고 안내를 띄운다.
+  final String? signedUpEmail;
+
+  const LoginScreen({super.key, this.sessionExpired = false, this.signedUpEmail});
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -31,6 +35,15 @@ class _LoginScreenState extends State<LoginScreen> {
     if (widget.sessionExpired) {
       _errorText = '로그인이 만료됐어요. 다시 로그인해주세요';
     }
+    final signedUp = widget.signedUpEmail;
+    if (signedUp != null) _applySignedUp(signedUp);
+  }
+
+  /// 가입까지는 끝났으니 "가입 실패"로 안내하면 안 된다. 이메일을 채워두고
+  /// 비밀번호만 다시 넣게 한다.
+  void _applySignedUp(String email) {
+    _emailCtrl.text = email;
+    _errorText = '가입은 완료됐어요. 비밀번호를 입력해 로그인해주세요';
   }
 
   @override
@@ -63,6 +76,17 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// 회원가입 화면으로 간다.
+  ///
+  /// 가입은 됐는데 자동 로그인이 실패하면 가입 화면이 이메일을 담아 돌아온다
+  /// (`SignupScreen`). 그때는 안내와 함께 그 이메일을 채워준다.
+  Future<void> _openSignup() async {
+    final email = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const SignupScreen()));
+    if (!mounted || email == null) return;
+    setState(() => _applySignedUp(email));
   }
 
   @override
@@ -137,10 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 18),
                 Center(
                   child: GestureDetector(
-                    onTap: _loading
-                        ? null
-                        : () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => const SignupScreen())),
+                    onTap: _loading ? null : _openSignup,
                     child: RichText(
                       text: const TextSpan(
                         style: TextStyle(fontSize: 13.5, color: BC.ink2),
