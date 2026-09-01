@@ -30,6 +30,19 @@ public class DashboardService {
 
     @Transactional(readOnly = true)
     public DashboardResponse getHome(Long userId) {
+        return getHome(userId, null);
+    }
+
+    /**
+     * 홈 대시보드.
+     *
+     * @param month 캘린더로 볼 달의 아무 날짜나(보통 1일). null 이면 이번 달.
+     *              달력을 넘겨 보려면 필요하다 — 예전엔 이번 달만 줘서 앱이 지난 달
+     *              기록을 볼 방법이 없었다. 오늘 상태·주간 성공수는 달과 무관하게
+     *              항상 "지금" 기준이다.
+     */
+    @Transactional(readOnly = true)
+    public DashboardResponse getHome(Long userId, LocalDate month) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
 
@@ -38,8 +51,9 @@ public class DashboardService {
 
         LocalDate weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         LocalDate weekEnd = weekStart.plusDays(6);
-        LocalDate monthStart = today.withDayOfMonth(1);
-        LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
+        LocalDate calendarAnchor = month == null ? today : month;
+        LocalDate monthStart = calendarAnchor.withDayOfMonth(1);
+        LocalDate monthEnd = calendarAnchor.withDayOfMonth(calendarAnchor.lengthOfMonth());
 
         // [BS-30 최적화 ③] 오늘 상태 / 주간 성공수 / 월 캘린더를 3개 쿼리로 나눠 치던 것을,
         // 주·월을 아우르는 합집합 범위 [min(monthStart,weekStart), max(monthEnd,weekEnd)] 1회 조회 후
@@ -73,6 +87,7 @@ public class DashboardService {
                 new DashboardResponse.StreakInfo(streak.getCurrentStreak(), streak.getMaxStreak()),
                 weeklySuccessCount,
                 todayStatus,
-                new DashboardResponse.CalendarInfo(today.getYear(), today.getMonthValue(), days));
+                new DashboardResponse.CalendarInfo(
+                        calendarAnchor.getYear(), calendarAnchor.getMonthValue(), days));
     }
 }

@@ -70,56 +70,38 @@ void main() {
     test('요청 기본값도 10이다', () {
       final json = CreateChallengeRequest(
         category: ChallengeCategory.exercise.value,
-        title: '아침 러닝',
         durationDays: 14,
       ).toJson();
 
       expect(json['maxParticipants'], 10);
-      // PHOTO·GPS_PHOTO는 체크인이 처리하지 못해 생성 시점에 서버가 거절한다.
-      expect(json['verificationType'], 'GPS');
+      // 인증 방식은 "위치 + 사진" 하나로 고정이다. 그 외는 서버가 400으로 거절한다.
+      expect(json['verificationType'], 'GPS_PHOTO_AI');
+      // 예치금 하한도 서버가 검증한다(100 미만은 400).
+      expect(json['depositCoins'], 100);
+    });
+
+    test('이름을 안 주면 아예 안 보낸다', () {
+      // 서버가 카테고리+방장 닉네임으로 만들어 준다. 빈 문자열을 보내면
+      // 검증은 통과하지만 목록에 이름 없는 방으로 남는다.
+      final json = CreateChallengeRequest(
+        category: ChallengeCategory.exercise.value,
+        durationDays: 14,
+      ).toJson();
+
+      expect(json.containsKey('title'), isFalse);
     });
   });
 
   group('인증 방식', () {
-    // 서버는 GPS / AI / GPS_PHOTO_AI 3종만 받는다. PHOTO·GPS_PHOTO를 보내면
-    // 400인데, 그대로 두면 아무도 인증 못 하는 좀비 챌린지가 되기 때문이다.
-    testWidgets('3종을 고를 수 있다', (tester) async {
+    // 위치만·사진만은 각각 우회가 쉬워(남의 자리에서 체크인 / 예전 사진 재사용)
+    // "위치 + 사진" 하나로 고정됐다. 서버도 GPS_PHOTO_AI 만 받는다.
+    testWidgets('고를 수 없고 위치+사진으로 고정돼 있다', (tester) async {
       await _pumpCreate(tester);
-      await _scrollTo(tester, find.text('6. 인증 방법'));
+      await _scrollTo(tester, find.text('5. 인증 방법'));
 
-      expect(find.text('위치'), findsOneWidget);
-      expect(find.text('사진'), findsOneWidget);
       expect(find.text('위치 + 사진'), findsOneWidget);
-    });
-
-    testWidgets('기상에는 사진 인증을 붙일 수 없다', (tester) async {
-      // 기상은 ai-service에 대응하는 어휘가 없다. 사진 인증을 붙이면 만들 수는
-      // 있어도 업로드가 500으로 터져서 아무도 인증을 끝낼 수 없다.
-      await _pumpCreate(tester);
-      await tester.tap(find.text('기상'));
-      await tester.pumpAndSettle();
-      await _scrollTo(tester, find.text('6. 인증 방법'));
-
-      expect(find.text('위치'), findsOneWidget);
+      // 예전 선택지가 남아 있으면 서버가 받지 않는 값을 고를 수 있게 된다.
       expect(find.text('사진'), findsNothing);
-      expect(find.text('위치 + 사진'), findsNothing);
-    });
-
-    testWidgets('사진을 고른 뒤 기상으로 바꾸면 위치로 되돌린다', (tester) async {
-      // 고른 값이 남아 있으면 선택지에 없는 값이 그대로 서버로 나간다.
-      await _pumpCreate(tester);
-      await _scrollTo(tester, find.text('6. 인증 방법'));
-      await tester.tap(find.text('사진'));
-      await tester.pumpAndSettle();
-
-      // 카테고리 카드는 위쪽이라 거슬러 올라가야 한다 — delta가 음수다.
-      await _scrollTo(tester, find.text('기상'), delta: -150);
-      await tester.tap(find.text('기상'));
-      await tester.pumpAndSettle();
-
-      await _scrollTo(tester, find.text('6. 인증 방법'));
-      expect(find.text('사진'), findsNothing);
-      expect(find.text('위치'), findsOneWidget);
     });
   });
 
@@ -169,9 +151,12 @@ void main() {
       }
     });
 
-    test('화면에 보이는 이름은 한글 그대로다', () {
-      expect(ChallengeCategory.choices.map((c) => c.label).toList(),
-          ['운동', '공부', '독서', '기상']);
+    test('고를 수 있는 건 운동·공부 둘뿐이다', () {
+      // 서버가 category를 EXERCISE/STUDY로 검증한다. 독서는 공부와 전송값이
+      // 같아 합쳤고, 기상은 사진 판정 기준이 없어 400으로 거절된다.
+      expect(ChallengeCategory.choices.map((c) => c.label).toList(), ['운동', '공부']);
+      expect(ChallengeCategory.choices.map((c) => c.value).toList(),
+          ['EXERCISE', 'STUDY']);
     });
 
     test('독서는 STUDY로 보낸다', () {
@@ -180,10 +165,11 @@ void main() {
       expect(ChallengeCategory.study.value, 'STUDY');
     });
 
-    test('기상만 AI 어휘가 아니다', () {
-      // 기상 인증 사진은 운동도 공부도 아니라 대응 값이 없다. AI 계열 인증을
-      // 붙이면 안 되는 유일한 카테고리다.
-      expect(ChallengeCategory.wakeUp.value, isNot(anyOf('EXERCISE', 'STUDY')));
+    test('기상은 더 이상 고를 수 없다', () {
+      // 사진 판정 기준이 없어 서버가 400으로 거절한다. enum 값 자체는 남겨 둔다 —
+      // 이 변경 전에 만들어진 챌린지가 그 값을 들고 있어 목록에서 이름을 되비춰야 한다.
+      expect(ChallengeCategory.choices, isNot(contains(ChallengeCategory.wakeUp)));
+      expect(ChallengeCategory.labelOf('WAKE_UP'), '기상');
     });
 
     test('저장된 값을 이름으로 되돌린다', () {

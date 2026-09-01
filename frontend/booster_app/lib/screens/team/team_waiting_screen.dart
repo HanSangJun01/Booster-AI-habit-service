@@ -93,6 +93,44 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
     }
   }
 
+  /// 방장이 자기 방을 없앤다 — 참가자 전원에게 예치금이 돌아가고 방이 닫힌다.
+  ///
+  /// 방장이 그냥 빠지면 시작시킬 사람이 없는 방에 남의 예치금만 묶인다. 그래서
+  /// 방장에게는 "참가 취소" 대신 이 동작을 준다. 모집 중일 때만 가능하다.
+  Future<void> _disband() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('챌린지 없애기'),
+        content: const Text(
+            '참가자 모두에게 예치금이 돌아가고 방이 사라져요. 되돌릴 수 없어요.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('닫기', style: TextStyle(color: BC.ink2)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('없애기', style: TextStyle(color: Color(0xFFE5484D))),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _leaving = true);
+    try {
+      await ChallengeService.cancel(_challenge.id);
+      if (!mounted) return;
+      showBoosterToast(context, '챌린지를 없앴어요. 예치금은 모두 환불했어요.');
+      Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+      setState(() => _leaving = false);
+    }
+  }
+
   /// 승인 화면으로. 방장이 아니면 이 자리가 아예 안 그려진다.
   ///
   /// 승인 없이는 정원이 안 차고, 정원이 안 차면 서버가 팀을 편성하지 않아
@@ -192,21 +230,23 @@ class _TeamWaitingScreenState extends State<TeamWaitingScreen> {
                     onTap: _refresh,
                   ),
                   const SizedBox(height: 8),
-                  // 방장은 자기 챌린지의 참가를 취소할 수 없다(서버가 막지는
-                  // 않지만 방을 비우는 동작이라 UI에서 노출하지 않는다).
-                  if (!_isOwner)
-                    GestureDetector(
-                      onTap: _leaving ? null : _leave,
-                      child: Container(
-                        height: 48,
-                        alignment: Alignment.center,
-                        child: Text(_leaving ? '취소하는 중...' : '참가 취소하기',
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFFE5484D))),
-                      ),
+                  // 방장에게는 "참가 취소"가 아니라 "방 없애기"를 준다. 자기만
+                  // 빠지면 방장 없는 방이 남으므로, 전원 환불 후 방을 닫는다.
+                  GestureDetector(
+                    onTap: _leaving ? null : (_isOwner ? _disband : _leave),
+                    child: Container(
+                      height: 48,
+                      alignment: Alignment.center,
+                      child: Text(
+                          _leaving
+                              ? '처리하는 중...'
+                              : (_isOwner ? '챌린지 없애기' : '참가 취소하기'),
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFE5484D))),
                     ),
+                  ),
                 ],
               ),
             ),

@@ -19,12 +19,14 @@
 /// [labelOf]가 '공부·독서'로 묶어 보여준다 — 독서 챌린지를 '공부'라고 단정하지
 /// 않기 위해서다.
 ///
-/// ## ⚠️ 기상에는 AI를 붙이면 안 된다
-/// [wakeUp]만 대응하는 AI 값이 없다 — 기상 인증 사진은 운동도 공부도 아니다.
-/// 그래서 `WAKE_UP`은 `ai-service`가 모르는 값이고, 서버가 카테고리를 검증하지
-/// 않으니 저장 자체는 통과한다. **AI 계열 인증(`AI`/`GPS_PHOTO_AI`) 선택지를
-/// 만들 때 이 카테고리에서는 빼야 한다.** 지금은 생성 화면이 GPS만 지원해서
-/// 문제가 드러나지 않을 뿐이다.
+/// ## [2026-09] 고를 수 있는 건 운동·공부 둘뿐이다
+/// 서버가 `category`를 `EXERCISE`/`STUDY` 로 검증하기 시작했다. 그래서
+/// [reading]과 [wakeUp]은 **선택지에서 뺐다**:
+///   · 독서는 [study]와 전송값이 같아 따로 둘 이유가 없다(공부로 합쳤다)
+///   · 기상은 사진 판정 기준이 없어(`WAKE_UP`) 이제 400 으로 거절된다
+///
+/// enum 값 자체는 남겨 둔다 — 이 변경 전에 만들어진 챌린지가 그 값을 들고 있어서
+/// 목록·상세를 그릴 때 [labelOf]가 읽어야 한다.
 enum ChallengeCategory {
   exercise(label: '운동', value: 'EXERCISE', aiValue: 'EXERCISE'),
   study(label: '공부', value: 'STUDY', aiValue: 'STUDY'),
@@ -49,14 +51,14 @@ enum ChallengeCategory {
     required this.aiValue,
   });
 
-  /// 생성 화면의 선택지. 넷 다 고를 수 있다.
-  static const choices = values;
-
-  /// 탐색 필터의 선택지.
+  /// 생성 화면의 선택지. 서버가 받는 두 값뿐이다.
   ///
-  /// [reading]을 뺀 건 취향이 아니라 [study]와 전송값이 같아서다 — 둘을 따로
-  /// 두면 같은 결과를 주는 버튼이 두 개가 된다.
-  static const filters = [exercise, study, wakeUp];
+  /// 독서는 [study]와 전송값이 같아 합쳤고, 기상은 사진 판정 기준이 없어 서버가
+  /// 400 으로 거절한다.
+  static const choices = [exercise, study];
+
+  /// 탐색 필터의 선택지. 만들 수 있는 것과 같은 두 종류다.
+  static const filters = [exercise, study];
 
   /// 서버에 저장된 값을 화면에 쓸 이름으로 바꾼다.
   ///

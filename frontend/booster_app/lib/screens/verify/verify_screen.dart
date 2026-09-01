@@ -6,6 +6,7 @@ import '../../models/challenge.dart';
 import '../../models/challenge_category.dart';
 import '../../models/check_in.dart';
 import '../../models/personal_location.dart';
+import '../../models/weekly_goal.dart';
 import '../../services/challenge_service.dart';
 import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
@@ -32,6 +33,9 @@ class VerifyScreen extends StatefulWidget {
 class _VerifyScreenState extends State<VerifyScreen> {
   bool _loading = true;
   TodayStatus? _today;
+
+  /// 개인 목표. 사진 인증에 실어 보낼 카테고리를 여기서 가져온다.
+  WeeklyGoal? _goal;
   PersonalLocation? _location;
 
   /// 지금 인증할 팀 챌린지. 팀 탭이 `GET /api/users/me/challenges`로 목록을
@@ -104,6 +108,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
       final results = await Future.wait([
         PersonalService.fetchToday(),
         PersonalService.fetchLocation(),
+        // 목표에 카테고리가 저장돼 있다. 사진 인증 때 사용자에게 매번 묻지 않기 위해 읽는다.
+        PersonalService.fetchWeeklyGoal(),
       ]);
       Challenge? challenge;
       var challengeCheckIns = <CheckIn>[];
@@ -116,6 +122,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       setState(() {
         _today = results[0] as TodayStatus;
         _location = results[1] as PersonalLocation?;
+        _goal = results[2] as WeeklyGoal?;
         _challenge = challenge;
         _challengeCheckIns = challengeCheckIns;
       });
@@ -160,12 +167,11 @@ class _VerifyScreenState extends State<VerifyScreen> {
     });
     if (passed == null || !mounted) return;
 
+    // GPS 통과 직후 사진 시트를 바로 열지 않는다. 위치 인증과 사진 인증은
+    // 각각 따로 누르는 두 단계다 — 이어서 올릴 사람은 아래 "사진 인증" 배너로
+    // 들어오고, 나중에 올릴 사람은 그대로 나갈 수 있어야 한다.
     final checkInId = pendingCheckInId;
-    if (checkInId != null) {
-      _personalCheckInId = checkInId;
-      await _uploadPersonalPhoto(checkInId);
-      if (!mounted) return;
-    }
+    if (checkInId != null) _personalCheckInId = checkInId;
     await _load();
   }
 
@@ -175,9 +181,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
       context,
       request: PhotoVerifyRequest(
         subtitle: '오늘의 습관을 찍어서 올려주세요.',
-        // 개인 트랙에는 카테고리를 저장하는 컬럼이 아예 없다. 그래서 서버에서
-        // 가져올 수가 없고 사용자가 매번 고른다.
-        fixedAiCategory: null,
+        // 목표에 카테고리가 저장돼 있으면 그대로 쓴다. 매번 무엇을 인증하는지
+        // 다시 묻지 않기 위해서다(없으면 시트가 고르게 한다).
+        fixedAiCategory: _goal?.category,
         upload: (path, bytes, aiCategory) => PersonalService.verifyPhoto(
           checkInId: checkInId,
           filePath: path,
@@ -483,7 +489,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
                       done
                           ? _doneButton()
                           : PrimaryButton(
-                              label: '인증하기',
+                              label: '위치 인증하기',
                               leadingIcon: Icons.location_on_rounded,
                               onTap: _startPersonalVerify,
                             ),

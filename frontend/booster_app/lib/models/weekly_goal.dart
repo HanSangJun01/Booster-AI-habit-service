@@ -43,6 +43,9 @@ class WeeklyGoal {
   /// `GPS` / `AI` / `GPS_PHOTO_AI`. 목표와 달리 즉시 반영된다.
   final String verificationType;
 
+  /// 목표 카테고리(`EXERCISE`/`STUDY`). AI 사진 인증에 이 값을 그대로 보낸다.
+  final String category;
+
   /// 지난주 채점 결과(`ACHIEVED` / `FAILED` / `RESCUED` 등). 아직 없으면 null.
   final String? lastWeekResult;
 
@@ -67,6 +70,7 @@ class WeeklyGoal {
     required this.ticketPrice,
     required this.coinBalance,
     required this.verificationType,
+    this.category = 'EXERCISE',
     required this.lastWeekResult,
     required this.pendingRescueWeek,
     required this.rescueDeadline,
@@ -99,7 +103,8 @@ class WeeklyGoal {
       paidTickets: paid,
       ticketPrice: asInt(json['ticketPrice']),
       coinBalance: asInt(json['coinBalance']),
-      verificationType: asString(json['verificationType'], fallback: 'GPS'),
+      verificationType: asString(json['verificationType'], fallback: 'GPS_PHOTO_AI'),
+      category: asString(json['category'], fallback: 'EXERCISE'),
       lastWeekResult: json['lastWeekResult'] as String?,
       pendingRescueWeek: asDateOnly(json['pendingRescueWeek']),
       rescueDeadline: asDateTime(json['rescueDeadline']),

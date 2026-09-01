@@ -22,6 +22,12 @@ class Participant {
   final DateTime? joinedAt;
   final DateTime? approvedAt;
 
+  /// 참가 직후의 코인 잔액. **참가 신청 응답에만** 담기고 목록·승인에서는 null이다.
+  ///
+  /// 참가하면 예치금이 빠지는데 이 값이 없던 시절엔 앱이 화면의 코인을 갱신할 수
+  /// 없어서, 참가해도 코인이 그대로 보이다가 재로그인해야 줄어드는 것처럼 보였다.
+  final int? coinBalance;
+
   Participant({
     required this.id,
     required this.challengeId,
@@ -32,6 +38,7 @@ class Participant {
     required this.status,
     this.joinedAt,
     this.approvedAt,
+    this.coinBalance,
   });
 
   factory Participant.fromJson(Map<String, dynamic> json) {
@@ -45,6 +52,7 @@ class Participant {
       status: asString(json['status'], fallback: 'PENDING'),
       joinedAt: asDateTime(json['joinedAt']),
       approvedAt: asDateTime(json['approvedAt']),
+      coinBalance: asIntOrNull(json['coinBalance']),
     );
   }
 

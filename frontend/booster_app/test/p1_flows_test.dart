@@ -324,12 +324,24 @@ void main() {
       expect(find.textContaining('다음 달 1일부터 주 5회'), findsWidgets);
     });
 
-    test('인증 방식은 서버가 받는 3종만 보낸다', () async {
+    test('인증 방식은 위치+사진 하나만 보낸다', () async {
+      // 위치만·사진만은 각각 우회가 쉬워 GPS_PHOTO_AI 하나로 고정됐다.
+      // 그 밖의 값은 서버가 400 UNSUPPORTED_VERIFICATION_TYPE 으로 거절한다.
       _serveWith((req, path) => _sendJson(req, 200, _weeklyGoal()));
 
-      await PersonalService.updateWeeklyGoal(targetDays: 3, verificationType: 'AI');
+      await PersonalService.updateWeeklyGoal(
+          targetDays: 3, verificationType: 'GPS_PHOTO_AI');
 
-      expect(jsonDecode(_received.single.body)['verificationType'], 'AI');
+      expect(jsonDecode(_received.single.body)['verificationType'], 'GPS_PHOTO_AI');
+    });
+
+    test('카테고리를 주면 함께 보낸다', () async {
+      // 개인 목표에도 카테고리가 생겼다. 사진 인증 판정 기준이 된다.
+      _serveWith((req, path) => _sendJson(req, 200, _weeklyGoal()));
+
+      await PersonalService.updateWeeklyGoal(targetDays: 3, category: 'STUDY');
+
+      expect(jsonDecode(_received.single.body)['category'], 'STUDY');
     });
   });
 

@@ -131,6 +131,16 @@ class ChallengeService {
     return result;
   }
 
+  /// DELETE /api/challenges/{challengeId}. 방장이 자기 방을 없앤다.
+  ///
+  /// 참가자 전원에게 예치금이 돌아가고 방이 닫힌다. 모집 중일 때만 된다 —
+  /// 시작된 뒤에는 팀이 짜이고 체크인이 쌓여서 409 `CHALLENGE_ALREADY_STARTED`다.
+  /// 방장이 아니면 403.
+  static Future<void> cancel(int challengeId) async {
+    await ApiClient.delete('/challenges/$challengeId');
+    if (Session.currentChallengeId == challengeId) Session.currentChallengeId = null;
+  }
+
   /// GET /api/challenges/{challengeId}/team-detail.
   /// 내 팀 vs 상대 팀 오늘 현황. 팀 배틀 화면이 필요한 수치를 한 번에 준다.
   static Future<TeamDetail> fetchTeamDetail(int challengeId) async {

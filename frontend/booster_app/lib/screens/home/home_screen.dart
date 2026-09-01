@@ -33,6 +33,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loading = true;
   Dashboard? _dashboard;
+
+  /// 달력이 보고 있는 달. null이면 이번 달(서버 기본값).
+  DateTime? _calendarMonth;
+  bool _calendarLoading = false;
   PersonalLocation? _location;
   int _totalAttendance = 0;
   bool _didInitialLoad = false;
@@ -113,6 +117,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_syncRescueNotice());
   }
 
+  /// 달력만 다른 달로 바꿔 다시 읽는다.
+  ///
+  /// 코인·스트릭·오늘 상태는 어느 달을 보든 "지금" 기준이라 서버가 그대로 준다.
+  /// 실패하면 보고 있던 달을 유지한다 — 화면이 엉뚱한 달로 튀지 않게.
+  Future<void> _loadMonth(DateTime month) async {
+    if (_calendarLoading) return;
+    setState(() => _calendarLoading = true);
+    try {
+      final dashboard = await PersonalService.fetchDashboard(month: month);
+      if (!mounted) return;
+      setState(() {
+        _dashboard = dashboard;
+        _calendarMonth = month;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showBoosterToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _calendarLoading = false);
+    }
+  }
+
   /// 지난주 목표를 못 채워 구제 대기 중이면 안내 팝업을 띄운다.
   ///
   /// 기한이 지나면 서버가 스트릭 0 + 코인 −500으로 확정해버린다. 앱이 알리지
@@ -191,6 +217,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             year: dashboard.calendarYear,
             month: dashboard.calendarMonth,
             days: dashboard.calendarDays,
+            onMonthChange: _loadMonth,
+            loading: _calendarLoading,
           ),
           const SizedBox(height: 14),
           _locationCard(),
@@ -373,43 +401,83 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// 채점당한다.
   Widget _weeklyGoalCard() {
     final goal = _goal;
+    final target = goal?.targetDays ?? 0;
+    final done = goal?.successCount ?? 0;
+    // 목표를 넘겨 채운 주도 있으니 1.0에서 자른다.
+    final ratio = target == 0 ? 0.0 : (done / target).clamp(0.0, 1.0);
+    final left = target - done;
+
     return GestureDetector(
       onTap: _openWeeklyGoal,
       behavior: HitTestBehavior.opaque,
-      child: AppCard(
-        child: Row(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+        decoration: BoxDecoration(
+          // 주변 카드가 전부 흰 바탕이라, 이 카드만 강조색을 깔아 먼저 눈에 들어오게 한다.
+          color: BC.oSoft,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: BC.oSoft2, width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: const BoxDecoration(color: BC.oSoft, shape: BoxShape.circle),
-              child: const Icon(Icons.flag_rounded, size: 21, color: BC.oMain),
+            Row(
+              children: [
+                const Icon(Icons.flag_rounded, size: 20, color: BC.oMain),
+                const SizedBox(width: 8),
+                const Text('이번 주 목표',
+                    style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
+                const Spacer(),
+                if (goal != null)
+                  Text('${goal.remainingDays}일 남음',
+                      style: const TextStyle(
+                          fontSize: 12.5, fontWeight: FontWeight.w700, color: BC.ink2)),
+                const Icon(Icons.chevron_right_rounded, color: BC.ink3),
+              ],
             ),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 12),
+            if (goal == null)
+              const Text('목표를 정하면 여기에 나와요',
+                  style: TextStyle(fontSize: 13, color: BC.ink3))
+            else ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
                 children: [
-                  const Text('주간 목표',
-                      style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 2),
+                  Text('$done',
+                      style: const TextStyle(
+                          fontSize: 30, fontWeight: FontWeight.w900, color: BC.oMain)),
+                  Text(' / $target회',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700, color: BC.ink2)),
+                  const Spacer(),
                   Text(
-                    goal == null
-                        ? '목표를 정하면 여기에 나와요'
-                        : '주 ${goal.targetDays}회 중 ${goal.successCount}회 · ${goal.remainingDays}일 남음',
-                    style: const TextStyle(fontSize: 12.5, color: BC.ink3),
+                    left <= 0 ? '목표 달성!' : '$left회 남았어요',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: left <= 0 ? BC.green : BC.ink2),
                   ),
-                  if (goal?.pendingTargetDays != null) ...[
-                    const SizedBox(height: 4),
-                    // 목표 변경은 예약제라 이번 달엔 안 바뀐다. 말해주지 않으면
-                    // 사용자는 저장이 안 먹은 줄 안다.
-                    MiniTag('다음 달부터 주 ${goal!.pendingTargetDays}회',
-                        bg: BC.blueSoft, fg: BC.blue),
-                  ],
                 ],
               ),
-            ),
-            const Icon(Icons.chevron_right_rounded, color: BC.ink3),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: ratio,
+                  minHeight: 8,
+                  backgroundColor: Colors.white,
+                  valueColor: AlwaysStoppedAnimation(left <= 0 ? BC.green : BC.oMain),
+                ),
+              ),
+              if (goal.pendingTargetDays != null) ...[
+                const SizedBox(height: 10),
+                // 목표 변경은 예약제라 이번 달엔 안 바뀐다. 말해주지 않으면
+                // 사용자는 저장이 안 먹은 줄 안다.
+                MiniTag('다음 달부터 주 ${goal.pendingTargetDays}회',
+                    bg: BC.blueSoft, fg: BC.blue),
+              ],
+            ],
           ],
         ),
       ),
@@ -792,18 +860,29 @@ class _DashedBorderPainter extends CustomPainter {
 
 // ───────────────────────── 캘린더 카드 ─────────────────────────
 /// 서버가 `GET /api/dashboard/home`으로 한 달치 상태를 통째로 준다
-/// (`calendar.year/month/days`). 앱이 체크인 목록을 받아 직접 집계하던 예전
-/// 방식과 달리, 여기서는 받은 값을 그리기만 한다 — 그래서 월 이동도 없다.
+/// (`calendar.year/month/days`). 앱은 받은 값을 그리기만 한다.
+///
+/// 월 이동은 좌우로 밀거나 화살표를 눌러서 한다 — [onMonthChange]가 그 달을
+/// 서버에 다시 물어본다(`?month=yyyyMM`). 앞으로는 이번 달까지만 갈 수 있다:
+/// 오지 않은 달의 기록은 존재하지 않는다.
 class CalendarCard extends StatelessWidget {
   final int year;
   final int month;
   final List<CalendarDay> days;
+
+  /// 다른 달을 보고 싶을 때 호출된다. null이면 월 이동을 그리지 않는다.
+  final ValueChanged<DateTime>? onMonthChange;
+
+  /// 다른 달을 읽는 중. 이동 버튼을 잠가 연타를 막는다.
+  final bool loading;
 
   const CalendarCard({
     super.key,
     required this.year,
     required this.month,
     required this.days,
+    this.onMonthChange,
+    this.loading = false,
   });
 
   @override
@@ -854,11 +933,55 @@ class CalendarCard extends StatelessWidget {
       ));
     }
 
+    final shown = DateTime(year, month);
+    final thisMonth = DateTime(DateTime.now().year, DateTime.now().month);
+    // 오지 않은 달에는 기록이 없다. 갈 수 있는 것처럼 보이면 빈 달만 보게 된다.
+    final canGoNext = shown.isBefore(thisMonth);
+
+    void go(int delta) {
+      if (loading) return;
+      if (delta > 0 && !canGoNext) return;
+      onMonthChange?.call(DateTime(year, month + delta));
+    }
+
     return AppCard(
-      child: Column(
+      child: GestureDetector(
+        // 좌우로 밀어서도 넘긴다. 왼쪽으로 밀면 다음 달(손가락이 가는 방향과
+        // 달력이 넘어가는 방향을 맞춘다).
+        onHorizontalDragEnd: onMonthChange == null
+            ? null
+            : (d) {
+                final v = d.primaryVelocity ?? 0;
+                if (v < -200) go(1);
+                if (v > 200) go(-1);
+              },
+        behavior: HitTestBehavior.opaque,
+        child: Column(
         children: [
-          Text('$month월 기록',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          if (onMonthChange == null)
+            Text('$month월 기록',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))
+          else
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _MonthArrow(
+                    icon: Icons.chevron_left_rounded,
+                    enabled: !loading,
+                    onTap: () => go(-1)),
+                Expanded(
+                  child: Text(
+                    year == thisMonth.year ? '$month월 기록' : '$year년 $month월 기록',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                _MonthArrow(
+                    icon: Icons.chevron_right_rounded,
+                    enabled: !loading && canGoNext,
+                    onTap: () => go(1)),
+              ],
+            ),
           const SizedBox(height: 12),
           Row(
             children: const [
@@ -889,6 +1012,28 @@ class CalendarCard extends StatelessWidget {
             ],
           ),
         ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 달력 월 이동 화살표. 갈 수 없는 방향은 흐리게 두고 눌리지 않게 한다.
+class _MonthArrow extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _MonthArrow({required this.icon, required this.enabled, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Icon(icon, size: 24, color: enabled ? BC.ink2 : BC.line),
       ),
     );
   }

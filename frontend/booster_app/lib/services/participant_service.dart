@@ -23,7 +23,12 @@ class ParticipantService {
       body: request.toJson(),
     ));
     Session.currentChallengeId = challengeId;
-    return Participant.fromJson(data);
+    final participant = Participant.fromJson(data);
+    // 예치금이 방금 빠졌다. 서버가 준 잔액을 그대로 반영하지 않으면 화면의 코인이
+    // 그대로 남아, 재로그인해야 차감된 것처럼 보인다.
+    final balance = participant.coinBalance;
+    if (balance != null) Session.coinBalance = balance;
+    return participant;
   }
 
   /// DELETE /api/challenges/{challengeId}/participants/{userId}. 참가 취소.

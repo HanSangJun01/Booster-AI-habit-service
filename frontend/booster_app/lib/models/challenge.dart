@@ -110,19 +110,38 @@ class Challenge {
 
 /// 챌린지 생성 요청 (`CreateChallengeRequest`, POST /api/challenges).
 ///
-/// 서버 검증: durationDays >= 1, depositCoins >= 0, **maxParticipants = 10
-/// 고정**, title 200자 이내.
+/// 서버가 받는 값이 좁다. 벗어나면 전부 400이다:
+///
+/// | 필드 | 허용 |
+/// |---|---|
+/// | `category` | `EXERCISE` / `STUDY` |
+/// | `verificationType` | `GPS_PHOTO_AI` 하나 |
+/// | `depositCoins` | [minDepositCoins] 이상 |
+/// | `gpsRadiusMeters` | [minRadiusMeters] ~ [maxRadiusMeters] |
+/// | `maxParticipants` | 10 고정 |
 ///
 /// 정원은 고를 수 있는 값이 아니다 — 팀 편성이 "10명이 차면 5:5"라서 서버가
-/// `@Min(10) @Max(10)`으로 막는다. [verificationType]은 `GPS`/`AI`/
-/// `GPS_PHOTO_AI` 3종만 받는다 — `PHOTO`·`GPS_PHOTO`는 체크인이 처리하지 못해
-/// 그대로 두면 아무도 인증 못 하는 좀비 챌린지가 되므로 생성 시점에 거절된다.
+/// `@Min(10) @Max(10)`으로 막는다.
 ///
-/// [category]는 자유 문자열이라 서버가 통과시키지만, 값이 `ai-service`의 어휘가
-/// 아니면 사진 업로드에서 500이 난다. 보낼 값은 [ChallengeCategory]가 정한다.
+/// [title]은 더 이상 입력받지 않는다. 비워 보내면 서버가 `"운동 · 김부스터"`처럼
+/// 카테고리와 방장 닉네임으로 만들어 준다.
 class CreateChallengeRequest {
+  /// 팀 챌린지 최소 예치금. 걸 게 없으면 져도 잃을 게 없어 판이 성립하지 않는다.
+  static const int minDepositCoins = 100;
+
+  /// 인증 반경 하한. 휴대폰 GPS 오차(10~50m)보다 좁으면 제자리에서도 인증이 실패한다.
+  static const int minRadiusMeters = 10;
+
+  /// 인증 반경 상한. 예전엔 상한이 없어 서울에 등록하고 시드니에서 인증할 수 있었다.
+  static const int maxRadiusMeters = 1000;
+
+  /// 지원하는 인증 방식. 위치만·사진만은 각각 우회가 쉬워 하나로 고정됐다.
+  static const String fixedVerificationType = 'GPS_PHOTO_AI';
+
   final String category;
-  final String title;
+
+  /// 생략하면 서버가 카테고리+방장 닉네임으로 만든다.
+  final String? title;
   final String? description;
   final String verificationType;
   final int durationDays;
@@ -143,11 +162,11 @@ class CreateChallengeRequest {
 
   CreateChallengeRequest({
     required this.category,
-    required this.title,
+    this.title,
     this.description,
-    this.verificationType = 'GPS',
+    this.verificationType = fixedVerificationType,
     required this.durationDays,
-    this.depositCoins = 0,
+    this.depositCoins = minDepositCoins,
     this.visibility = 'PUBLIC',
     this.approvalType = 'AUTO',
     this.maxParticipants = 10,
@@ -158,7 +177,9 @@ class CreateChallengeRequest {
 
   Map<String, dynamic> toJson() => {
         'category': category,
-        'title': title,
+        // 이름은 서버가 만든다. 빈 문자열을 보내면 @Size 는 통과하지만 목록에
+        // 이름 없는 방으로 남으므로, 값이 있을 때만 싣는다.
+        if (title != null && title!.isNotEmpty) 'title': title,
         if (description != null && description!.isNotEmpty) 'description': description,
         'verificationType': verificationType,
         'durationDays': durationDays,

@@ -13,12 +13,21 @@ import '../models/weekly_goal.dart';
 /// 등록해두면([registerLocation]), 이후 그 반경 안에서 체크인하는 방식이다.
 class PersonalService {
   /// GET /api/dashboard/home. 홈 화면 한 번에 채우기(코인/스트릭/주간/달력).
-  static Future<Dashboard> fetchDashboard() async {
-    final data = ApiClient.asObject(await ApiClient.get('/dashboard/home'));
+  ///
+  /// [month]를 주면 그 달의 달력을 받는다(달력 넘기기용). 코인·스트릭·오늘 상태는
+  /// 어느 달을 보든 항상 "지금" 기준이다.
+  static Future<Dashboard> fetchDashboard({DateTime? month}) async {
+    final data = ApiClient.asObject(await ApiClient.get('/dashboard/home', query: {
+      if (month != null) 'month': _yyyymm(month),
+    }));
     final dashboard = Dashboard.fromJson(data);
     Session.coinBalance = dashboard.coinBalance;
     return dashboard;
   }
+
+  /// 서버 쿼리 파라미터 형식(yyyyMM).
+  static String _yyyymm(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}${d.month.toString().padLeft(2, '0')}';
 
   /// GET /api/personal/check-in/today. 오늘 인증했는지.
   static Future<TodayStatus> fetchToday() async {
@@ -70,15 +79,19 @@ class PersonalService {
   /// 화면이 이걸 안내하지 않으면 사용자는 목표를 바꿔놓고 이번 주에 안 바뀌었다고
   /// 여긴다.
   ///
-  /// [verificationType]은 `GPS` / `AI` / `GPS_PHOTO_AI`만 받는다. 그 외는 400
+  /// [verificationType]은 `GPS_PHOTO_AI` 하나만 받는다. 그 외는 400
   /// `UNSUPPORTED_VERIFICATION_TYPE`.
+  ///
+  /// [category]는 `EXERCISE` / `STUDY`. 생략하면 서버가 기존 값을 유지한다.
   static Future<WeeklyGoal> updateWeeklyGoal({
     required int targetDays,
     String? verificationType,
+    String? category,
   }) async {
     final data = ApiClient.asObject(await ApiClient.put('/personal/weekly-goal', body: {
       'targetDays': targetDays,
       if (verificationType != null) 'verificationType': verificationType,
+      if (category != null) 'category': category,
     }));
     final goal = WeeklyGoal.fromJson(data);
     Session.coinBalance = goal.coinBalance;

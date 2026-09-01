@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../../core/api_client.dart';
 import '../../core/location.dart';
+import '../../models/challenge_category.dart';
 import '../../models/personal_location.dart';
 import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
@@ -41,6 +42,10 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
 
   /// 기본값은 가장 넉넉한 50m. 처음 쓰는 사람이 오차로 실패하는 것보다 낫다.
   int _radiusIndex = 2;
+
+  /// 최초 등록에서 고른 습관 카테고리. 변경 모드에서는 쓰지 않는다
+  /// (카테고리는 "내 습관 설정" 화면에서 바꾼다).
+  String _category = ChallengeCategory.exercise.value;
 
   double? _latitude;
   double? _longitude;
@@ -136,7 +141,26 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
         radiusMeters: _radiusOptions[_radiusIndex],
         placeName: _placeCtrl.text.trim(),
       );
+      // 화면에서는 카테고리를 먼저 물었지만 호출 순서는 반대다 — 서버가 위치
+      // 없이는 주간 목표를 받지 않는다(400 LOCATION_NOT_REGISTERED).
+      if (!_isEdit) {
+        try {
+          final goal = await PersonalService.fetchWeeklyGoal();
+          await PersonalService.updateWeeklyGoal(
+            targetDays: goal?.targetDays ?? 3,
+            category: _category,
+          );
+        } on ApiException {
+          // 카테고리는 나중에 "내 습관 설정"에서 바꿀 수 있다. 여기서 실패했다고
+          // 방금 등록한 위치까지 되돌리면 사용자가 처음부터 다시 해야 한다.
+        }
+      }
       if (!mounted) return;
+      // 변경(PUT)은 즉시 반영되지 않는다. 말해주지 않으면 사용자가 바꿔놓고
+      // 안 바뀌었다고 여겨 계속 다시 누른다.
+      if (_isEdit) {
+        showBoosterToast(context, '바꾼 장소는 다음 달 1일부터 적용돼요');
+      }
       Navigator.of(context).pop(saved);
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -160,13 +184,43 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
                 children: [
+                  if (_isEdit) ...[
+                    const NoteBox(
+                      icon: Icons.schedule_rounded,
+                      child: Text(
+                        '바꾼 장소는 다음 달 1일부터 적용돼요. 그때까지는 지금 장소로 인증해요.',
+                        style: TextStyle(fontSize: 13, height: 1.45, color: BC.ink2),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  // 최초 등록에서는 "무슨 습관인지"를 먼저 정한다. 장소부터 물으면
+                  // 사용자는 자기가 뭘 시작하는지도 모른 채 좌표를 잡게 된다.
+                  if (!_isEdit)
+                    _card(
+                      '1. 무슨 습관인가요',
+                      sub: '사진 인증을 이 기준으로 판정해요. 나중에 바꿀 수 있어요.',
+                      child: Row(children: [
+                        for (final c in ChallengeCategory.choices) ...[
+                          if (c != ChallengeCategory.choices.first)
+                            const SizedBox(width: 7),
+                          Expanded(
+                            child: SelectChip(
+                              label: c.label,
+                              selected: _category == c.value,
+                              onTap: () => setState(() => _category = c.value),
+                            ),
+                          ),
+                        ],
+                      ]),
+                    ),
                   _card(
-                    '1. 현재 위치',
+                    _isEdit ? '1. 현재 위치' : '2. 현재 위치',
                     sub: '지금 있는 곳을 인증 기준으로 잡아요. 지도를 눌러 조정할 수 있어요.',
                     child: _locationBox(),
                   ),
                   _card(
-                    '2. 인증 반경',
+                    _isEdit ? '2. 인증 반경' : '3. 인증 반경',
                     sub: '이 반경 안에 있어야 인증이 성공해요.',
                     child: _chipRow(
                       [for (final r in _radiusOptions) '${r}m'],
@@ -175,7 +229,7 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
                     ),
                   ),
                   _card(
-                    '3. 장소 이름',
+                    _isEdit ? '3. 장소 이름' : '4. 장소 이름',
                     sub: '선택 사항이에요. 안 적으면 좌표로 표시돼요.',
                     child: TextField(
                       controller: _placeCtrl,

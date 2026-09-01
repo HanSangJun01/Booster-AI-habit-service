@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../models/challenge_category.dart';
+import '../../models/personal_location.dart';
 import '../../models/weekly_goal.dart';
 import '../../services/personal_service.dart';
 import '../../theme/booster_theme.dart';
 import '../../widgets/common.dart';
+import 'personal_create_screen.dart';
 
-/// 주간 목표 — A축의 핵심인데 볼 방법이 없던 화면.
+/// 내 습관 설정 — 목표 횟수·카테고리·인증 장소를 한 자리에서 다룬다.
+///
+/// 예전엔 "주간 목표"였고 장소는 다른 화면에 있었다. 목표와 장소는 같은 주기로
+/// 바뀌는 한 세트라(둘 다 다음 달 1일 반영) 따로 두면 사용자가 규칙을 알 수 없다.
 ///
 /// 서버는 "주 N회"를 기준으로 채점하고, 못 채우면 구제권을 소모하거나 스트릭 0 +
 /// 코인 −500으로 확정한다. 그런데 앱에 이 목표를 보여주는 자리가 없어서
@@ -16,7 +22,10 @@ import '../../widgets/common.dart';
 /// - **목표 횟수**는 예약제다. 바꿔도 이번 주가 아니라 **다음 달 1일**부터
 ///   적용되고, 그 사실은 응답의 `pendingTargetDays`로만 확인된다. 안내하지
 ///   않으면 사용자는 바꿔놓고 안 바뀌었다고 여겨 계속 다시 누른다.
-/// - **인증 방식**은 즉시 반영된다.
+/// - **인증 장소**도 예약제다. 목표 횟수와 한 세트로 다음 달 1일에 함께 바뀐다 —
+///   아무 때나 옮길 수 있으면 인증 직전에 지금 자리로 바꿔 어디서든 통과할 수 있다.
+/// - **카테고리**(운동/공부)는 즉시 반영된다. 바꿔도 이번 주 채점 기준이 흔들리지 않는다.
+/// - **인증 방식**은 "위치 + 사진" 하나로 고정이라 고를 수 없다.
 ///
 /// 같은 화면에서 저장하는 두 값의 반영 시점이 다르다는 걸 화면이 말해줘야 한다.
 class WeeklyGoalScreen extends StatefulWidget {
@@ -27,12 +36,9 @@ class WeeklyGoalScreen extends StatefulWidget {
 }
 
 class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
-  /// 서버가 받는 값. 그 외는 400 `UNSUPPORTED_VERIFICATION_TYPE`.
-  static const _verificationTypes = <(String, String, String)>[
-    ('GPS', '위치', '등록한 장소 반경 안에서 인증해요'),
-    ('AI', '사진', 'GPS를 안 봐요. 사진으로만 판정해요'),
-    ('GPS_PHOTO_AI', '위치 + 사진', 'GPS를 통과한 뒤 사진으로 확정해요'),
-  ];
+  /// 인증 방식은 고를 수 없다 — 위치만·사진만은 각각 우회가 쉬워 "위치 + 사진"
+  /// 하나로 정해졌고, 서버도 그 값만 받는다.
+  static const _fixedVerificationType = 'GPS_PHOTO_AI';
 
   bool _loading = true;
   bool _saving = false;
@@ -44,7 +50,11 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
 
   /// 사용자가 고른 값. 저장 전까지는 서버 값과 다를 수 있다.
   int? _targetDays;
-  String? _verificationType;
+  String? _category;
+
+  /// 인증 장소. 목표와 한 세트로 이 화면에서 함께 다룬다 —
+  /// 장소를 아무 때나 바꿀 수 있으면 인증 직전에 지금 자리로 옮겨 통과할 수 있다.
+  PersonalLocation? _location;
 
   @override
   void initState() {
@@ -55,14 +65,17 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
+      // 목표와 장소를 한 화면에서 다루므로 둘을 같이 읽는다.
       final goal = await PersonalService.fetchWeeklyGoal();
+      final location = await PersonalService.fetchLocation();
       if (!mounted) return;
       setState(() {
         _goal = goal;
+        _location = location;
         _error = null;
         // 예약이 걸려 있으면 그 값을 보여준다 — 사용자가 마지막으로 고른 값이다.
         _targetDays = goal?.pendingTargetDays ?? goal?.targetDays;
-        _verificationType = goal?.verificationType;
+        _category = goal?.category;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -76,7 +89,7 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
     final goal = _goal;
     if (goal == null) return false;
     final savedTarget = goal.pendingTargetDays ?? goal.targetDays;
-    return _targetDays != savedTarget || _verificationType != goal.verificationType;
+    return _targetDays != savedTarget || _category != goal.category;
   }
 
   Future<void> _save() async {
@@ -87,15 +100,16 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
     try {
       final updated = await PersonalService.updateWeeklyGoal(
         targetDays: targetDays,
-        verificationType: _verificationType,
+        verificationType: _fixedVerificationType,
+        category: _category,
       );
       if (!mounted) return;
       setState(() {
         _goal = updated;
         _targetDays = updated.pendingTargetDays ?? updated.targetDays;
-        _verificationType = updated.verificationType;
+        _category = updated.category;
       });
-      // 목표는 예약, 인증 방식은 즉시다. 무엇이 언제 반영됐는지 다르게 말한다.
+      // 목표는 예약, 카테고리는 즉시다. 무엇이 언제 반영됐는지 다르게 말한다.
       showBoosterToast(
         context,
         updated.pendingTargetDays != null
@@ -118,7 +132,7 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            const BackAppBar(title: '주간 목표'),
+            const BackAppBar(title: '내 습관 설정'),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator(color: BC.oMain))
@@ -134,7 +148,9 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
                               const SizedBox(height: 16),
                               _targetCard(goal),
                               const SizedBox(height: 16),
-                              _verificationCard(),
+                              _categoryCard(),
+                              const SizedBox(height: 16),
+                              _locationCard(),
                               const SizedBox(height: 16),
                               _ticketCard(goal),
                             ],
@@ -265,61 +281,126 @@ class _WeeklyGoalScreenState extends State<WeeklyGoalScreen> {
     );
   }
 
-  Widget _verificationCard() {
+  /// 목표 카테고리. 무엇을 습관으로 삼는지 — AI 사진 판정의 기준이 된다.
+  Widget _categoryCard() {
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('인증 방식',
+          const Text('무슨 습관인가요',
               style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
-          const Text('저장하면 바로 반영돼요.',
+          const Text('사진 인증을 이 기준으로 판정해요. 저장하면 바로 반영돼요.',
               style: TextStyle(fontSize: 13, color: BC.ink2)),
           const SizedBox(height: 14),
-          for (final (value, label, description) in _verificationTypes) ...[
-            if (value != _verificationTypes.first.$1) const SizedBox(height: 10),
-            _verificationOption(value, label, description),
+          Row(children: [
+            for (final c in ChallengeCategory.choices) ...[
+              if (c != ChallengeCategory.choices.first) const SizedBox(width: 7),
+              Expanded(
+                child: SelectChip(
+                  label: c.label,
+                  selected: _category == c.value,
+                  onTap: () => setState(() => _category = c.value),
+                ),
+              ),
+            ],
+          ]),
+        ],
+      ),
+    );
+  }
+
+  /// 인증 장소.
+  ///
+  /// 목표 횟수와 한 세트다 — 아무 때나 바꿀 수 있으면 인증 직전에 지금 있는 자리로
+  /// 옮겨 어디서든 통과할 수 있다. 그래서 변경은 다음 달 1일부터 반영된다.
+  Widget _locationCard() {
+    final location = _location;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('인증 장소',
+              style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text('여기 반경 안에서 사진을 올려야 인증돼요.',
+              style: TextStyle(fontSize: 13, color: BC.ink2)),
+          const SizedBox(height: 14),
+          if (location == null)
+            const Text('아직 등록하지 않았어요.',
+                style: TextStyle(fontSize: 14, color: BC.ink3))
+          else ...[
+            Row(children: [
+              const Icon(Icons.place_rounded, color: BC.oMain, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(location.displayName,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+              Text('반경 ${location.radiusMeters}m',
+                  style: const TextStyle(fontSize: 13, color: BC.ink3)),
+            ]),
+            // 예약이 걸려 있으면 지금 값과 함께 보여준다. 안 그러면 사용자가
+            // "바꿨는데 왜 그대로지?" 하고 계속 다시 누른다.
+            if (location.hasPendingChange) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                    color: BC.oSoft, borderRadius: BorderRadius.circular(12)),
+                child: Row(children: [
+                  const Icon(Icons.schedule_rounded, color: BC.oMain, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '다음 달 1일부터 · ${location.pendingDisplayName}'
+                      ' (반경 ${location.pendingRadiusMeters}m)',
+                      style: const TextStyle(
+                          fontSize: 12.5, color: BC.oMain, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ],
+          const SizedBox(height: 12),
+          _secondaryButton(
+              location == null ? '장소 등록하기' : '장소 바꾸기', _openLocationEditor),
+          if (location != null) ...[
+            const SizedBox(height: 8),
+            const Text('바꾼 장소는 다음 달 1일부터 적용돼요.',
+                style: TextStyle(fontSize: 12, color: BC.ink3)),
           ],
         ],
       ),
     );
   }
 
-  Widget _verificationOption(String value, String label, String description) {
-    final on = _verificationType == value;
+  /// 카드 안에서 쓰는 보조 버튼. 주 동작(저장)과 구분되도록 테두리만 둔다.
+  Widget _secondaryButton(String label, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () => setState(() => _verificationType = value),
+      onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 13),
         decoration: BoxDecoration(
-          color: on ? BC.oSoft : Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: on ? BC.oMain : BC.line, width: 1.5),
+          border: Border.all(color: BC.oMain, width: 1.4),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: on ? BC.oMain : BC.ink)),
-                  const SizedBox(height: 2),
-                  Text(description,
-                      style: const TextStyle(fontSize: 12, color: BC.ink3, height: 1.4)),
-                ],
-              ),
-            ),
-            Icon(on ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
-                color: on ? BC.oMain : BC.ink3, size: 22),
-          ],
+        child: Center(
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 14.5, fontWeight: FontWeight.w800, color: BC.oMain)),
         ),
       ),
     );
+  }
+
+  Future<void> _openLocationEditor() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PersonalCreateScreen(current: _location)));
+    if (mounted) _load();
   }
 
   /// 구제권 현황. 무료분과 구매분은 소멸 규칙이 달라서 나눠 보여준다.
