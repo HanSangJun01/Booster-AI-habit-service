@@ -50,7 +50,12 @@ public class ParticipationService {
             throw BusinessException.conflict("CHALLENGE_NOT_READY", "모집이 끝난 챌린지입니다.");
         }
 
-        if (participantRepository.findByChallengeIdAndUserId(challengeId, userId).isPresent()) {
+        // 취소했던 사람은 다시 신청할 수 있어야 한다. (challenge_id, user_id) 유니크 제약 때문에
+        // 취소 행이 그대로 남는데, 예전엔 그 존재만 보고 막아서 한 번 취소하면 영영 재참여가
+        // 불가능했다. 지금 살아 있는 참가(PENDING/CONFIRMED)일 때만 중복으로 본다.
+        ChallengeParticipant existing = participantRepository
+                .findByChallengeIdAndUserId(challengeId, userId).orElse(null);
+        if (existing != null && isLiveParticipation(existing.getStatus())) {
             throw BusinessException.conflict("ALREADY_APPLIED", "이미 참가 신청한 챌린지입니다.");
         }
 
@@ -68,17 +73,25 @@ public class ParticipationService {
                 ? ParticipantStatus.CONFIRMED
                 : ParticipantStatus.PENDING;
 
-        ChallengeParticipant participant = ChallengeParticipant.builder()
-                .challenge(challenge)
-                .userId(userId)
-                .personalStatement(request.getPersonalStatement())
-                .gpsLat(request.getGpsLat())
-                .gpsLng(request.getGpsLng())
-                .gpsRadiusMeters(request.getGpsRadiusMeters())
-                .gpsPlaceName(request.getGpsPlaceName())
-                .gpsLocked(false)
-                .status(initialStatus)
-                .build();
+        ChallengeParticipant participant;
+        if (existing != null) {
+            existing.rejoin(request.getPersonalStatement(), request.getGpsLat(), request.getGpsLng(),
+                    request.getGpsRadiusMeters(), request.getGpsPlaceName(), initialStatus);
+            participant = existing;
+            log.info("Participation re-applied: userId={}, challengeId={}", userId, challengeId);
+        } else {
+            participant = ChallengeParticipant.builder()
+                    .challenge(challenge)
+                    .userId(userId)
+                    .personalStatement(request.getPersonalStatement())
+                    .gpsLat(request.getGpsLat())
+                    .gpsLng(request.getGpsLng())
+                    .gpsRadiusMeters(request.getGpsRadiusMeters())
+                    .gpsPlaceName(request.getGpsPlaceName())
+                    .gpsLocked(false)
+                    .status(initialStatus)
+                    .build();
+        }
 
         if (initialStatus == ParticipantStatus.CONFIRMED) {
             participant.confirm(LocalDateTime.now());
@@ -91,7 +104,46 @@ public class ParticipationService {
             teamFormationService.formTeamsIfReady(challengeId);
         }
 
-        return ParticipantResponse.from(participant);
+        // 예치금이 방금 빠졌으니 잔액을 함께 돌려준다. 없으면 앱이 화면의 코인을 갱신할 방법이
+        // 없어서, 참가 직후엔 그대로 보이다가 재로그인해야 줄어드는 것처럼 보였다.
+        return ParticipantResponse.from(participant, null, coinService.getBalance(userId));
+    }
+
+    /** 지금 살아 있는 참가인가. CANCELLED/REJECTED/LEFT 는 재신청을 막지 않는다. */
+    private boolean isLiveParticipation(ParticipantStatus status) {
+        return status == ParticipantStatus.PENDING || status == ParticipantStatus.CONFIRMED;
+    }
+
+    /**
+     * 모집 중인 챌린지를 해산한다 — 참가자 전원에게 예치금을 돌려주고 방을 CANCELLED 로 닫는다.
+     *
+     * <p>방장이 방을 없애거나 탈퇴할 때 쓴다. 예전에는 방장이 탈퇴해도 방이 그대로 남아,
+     * 방장 없는 방에 사람들 예치금만 묶여 있었다.
+     *
+     * <p>모집 중(READY)일 때만 해산한다. 이미 시작된 챌린지는 팀이 짜이고 며칠치 체크인이
+     * 쌓여 있어서, 방장 한 명 때문에 전부 무효로 만들면 나머지 참가자가 손해를 본다.
+     *
+     * @return 해산했으면 true, 모집 중이 아니어서 건드리지 않았으면 false
+     */
+    @Transactional
+    public boolean disbandReadyChallenge(Long challengeId) {
+        Challenge challenge = challengeRepository.findByIdWithLock(challengeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Challenge", challengeId));
+        if (challenge.getStatus() != ChallengeStatus.READY) {
+            return false;
+        }
+
+        for (ChallengeParticipant p : participantRepository.findByChallengeIdOrderByIdAsc(challengeId)) {
+            if (!isLiveParticipation(p.getStatus())) {
+                continue; // 이미 취소돼 환불받은 참가는 두 번 돌려주지 않는다
+            }
+            coinService.credit(p.getUserId(), challenge.getDepositCoins(),
+                    CoinTransactionReason.DEPOSIT_CANCEL_REFUND, challengeId);
+            p.cancel();
+        }
+        challenge.markCancelled();
+        log.info("Challenge disbanded: challengeId={}", challengeId);
+        return true;
     }
 
     /**
@@ -255,6 +307,13 @@ public class ParticipationService {
      */
     @Transactional
     public void cancelActiveParticipationsForWithdrawal(Long userId) {
+        // 내가 방장인 모집 중 방부터 해산한다. 예전엔 방장이 탈퇴해도 방이 그대로 남아,
+        // 아무도 시작시킬 수 없는 방에 참가자들 예치금만 묶여 있었다.
+        // (해산이 방장 자신의 참가도 취소·환불하므로 아래 루프는 그 방을 건너뛴다)
+        for (Challenge created : challengeRepository.findByCreatedByAndStatus(userId, ChallengeStatus.READY)) {
+            disbandReadyChallenge(created.getId());
+        }
+
         for (ChallengeParticipant p : participantRepository.findByUserId(userId)) {
             if (p.getStatus() != ParticipantStatus.PENDING && p.getStatus() != ParticipantStatus.CONFIRMED) {
                 continue; // 이미 취소/종료·환불된 참여는 건너뜀

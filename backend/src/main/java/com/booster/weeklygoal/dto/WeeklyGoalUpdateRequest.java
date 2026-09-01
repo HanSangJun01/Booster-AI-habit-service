@@ -4,6 +4,7 @@ import com.booster.challenge.domain.VerificationType;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 
 /**
  * 주간 목표 · 인증 방식 변경 요청.
@@ -20,6 +21,15 @@ public record WeeklyGoalUpdateRequest(
         @Max(value = 7, message = "주간 목표는 7회 이하여야 합니다.")
         Integer targetDays,
 
-        VerificationType verificationType
+        VerificationType verificationType,
+
+        /**
+         * 목표 카테고리(EXERCISE/STUDY). 생략하면 기존 값을 유지한다.
+         *
+         * <p>온보딩에서 "운동 / 공부" 를 먼저 고르고 그 다음 인증 장소를 정한다. 이 값이
+         * AI 사진 판정의 기준이 된다.
+         */
+        @Pattern(regexp = "EXERCISE|STUDY", message = "카테고리는 EXERCISE 또는 STUDY 만 가능합니다.")
+        String category
 ) {
 }

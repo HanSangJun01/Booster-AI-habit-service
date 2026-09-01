@@ -147,7 +147,18 @@ public class User {
         this.nickname = nickname;
     }
 
+    /**
+     * 탈퇴 처리.
+     *
+     * <p>레코드는 남긴다 — 코인 내역·체크인·정산이 이 id 를 참조하고 있어서 지우면 기록이 깨진다.
+     *
+     * <p>대신 이메일을 비워 준다. users.email 에 유니크 제약이 걸려 있어, 탈퇴한 계정이 예전
+     * 이메일을 쥐고 있으면 <b>같은 이메일로 다시 가입할 수 없었다</b>("이미 사용 중인 이메일"). 탈퇴한
+     * 사람이 자기 이메일을 되찾지 못하는 건 명백한 버그라, 탈퇴 시점에 이메일을 놓아준다.
+     * 원래 주소는 남기지 않는다(탈퇴자 개인정보를 계속 들고 있을 이유가 없다).
+     */
     public void deactivate() {
         this.active = false;
+        this.email = "withdrawn+" + this.id + "@booster.invalid";
     }
 }

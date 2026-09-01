@@ -41,6 +41,10 @@ public record WeeklyGoalResponse(
         long ticketPrice,
         long coinBalance,
         String verificationType,
+
+        /** 목표 카테고리(EXERCISE/STUDY). AI 사진 인증에 이 값을 그대로 보내면 된다. */
+        String category,
+
         String lastWeekResult,
         LocalDate pendingRescueWeek,
         OffsetDateTime rescueDeadline,

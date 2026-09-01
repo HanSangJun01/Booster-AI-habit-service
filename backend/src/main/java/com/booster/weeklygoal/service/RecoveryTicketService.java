@@ -89,9 +89,10 @@ public class RecoveryTicketService {
         }
         boolean granted = user.grantMonthlyRecoveryTicket(monthStart);
         if (granted) {
-            // 무료 구제권을 새로 준 달에만 목표 예약을 승격한다(같은 멱등 키를 공유).
+            // 무료 구제권을 새로 준 달에만 예약을 승격한다(같은 멱등 키를 공유).
+            // 목표 횟수와 인증 장소가 한 세트로 같이 넘어간다.
             locationRepository.findById(userId)
-                    .ifPresent(PersonalLocation::applyPendingTargetIfAny);
+                    .ifPresent(PersonalLocation::applyPendingChangesIfAny);
         }
         return granted;
     }

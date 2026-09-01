@@ -33,6 +33,19 @@ public class ChallengeController {
         return ApiResponse.success(challengeService.getChallengeDetail(challengeId));
     }
 
+    /**
+     * 방장이 자기 챌린지를 취소한다(참가자 전원 예치금 환불 + 방 닫기).
+     *
+     * <p>모집 중일 때만 가능하다. 시작된 챌린지는 409 로 거절한다.
+     */
+    @DeleteMapping("/{challengeId}")
+    public ApiResponse<Void> cancel(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long challengeId) {
+        challengeService.cancelChallenge(userId, challengeId);
+        return ApiResponse.success(null);
+    }
+
     @GetMapping
     public ApiResponse<Page<ChallengeResponse>> search(
             @AuthenticationPrincipal Long userId,

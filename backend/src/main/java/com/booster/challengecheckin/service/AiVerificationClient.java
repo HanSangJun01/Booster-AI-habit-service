@@ -19,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -40,7 +41,20 @@ public class AiVerificationClient {
                 .build();
     }
 
+    /**
+     * ai-service 가 판정할 수 있는 카테고리.
+     *
+     * <p>여기서 걸러내지 않으면 잘못된 값이 그대로 넘어가 ai-service 가 422 를 주고, 이 클라이언트는
+     * upstream 4xx 를 "계약 오류"로 보아 <b>500</b> 으로 올린다. 사용자 입력 때문에 서버 오류가
+     * 나는 셈이라, 경계에서 400 으로 돌려준다. 개인·팀 두 인증 경로가 모두 이 메서드를 지난다.
+     */
+    private static final Set<String> SUPPORTED_CATEGORIES = Set.of("EXERCISE", "STUDY");
+
     public AiServiceVerdict verify(String category, byte[] imageBytes, String filename, MediaType mediaType) {
+        if (category == null || !SUPPORTED_CATEGORIES.contains(category)) {
+            throw new AiVerificationException(HttpStatus.BAD_REQUEST,
+                    "AI 인증은 EXERCISE 또는 STUDY 만 판정할 수 있습니다: " + category);
+        }
         String boundary = "----BoosterBoundary" + UUID.randomUUID();
         byte[] body = buildMultipartBody(boundary, category, imageBytes, filename, mediaType.toString());
 

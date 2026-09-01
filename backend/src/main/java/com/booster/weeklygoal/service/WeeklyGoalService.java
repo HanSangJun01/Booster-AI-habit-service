@@ -80,6 +80,7 @@ public class WeeklyGoalService {
                 ticketPrice,
                 user.getCoinBalance(),
                 location.getVerificationType().name(),
+                location.getCategory(),
                 lastWeekResult,
                 pendingRescue != null ? pendingRescue.getWeekStart() : null,
                 pendingRescue != null ? pendingRescue.getRescueDeadline() : null,
@@ -95,7 +96,8 @@ public class WeeklyGoalService {
      * @return 예약 반영 후의 현황
      */
     @Transactional
-    public WeeklyGoalResponse reserveTarget(Long userId, int targetDays, VerificationType verificationType) {
+    public WeeklyGoalResponse reserveTarget(Long userId, int targetDays,
+                                            VerificationType verificationType, String category) {
         PersonalLocation location = locationRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.badRequest(
                         "LOCATION_NOT_REGISTERED", "개인 GPS 위치를 먼저 등록하세요."));
@@ -103,15 +105,23 @@ public class WeeklyGoalService {
         if (verificationType != null) {
             if (!SUPPORTED_VERIFICATION_TYPES.contains(verificationType)) {
                 throw BusinessException.badRequest("UNSUPPORTED_VERIFICATION_TYPE",
-                        "지원하지 않는 인증 방식입니다: " + verificationType + " (지원: GPS, AI, GPS_PHOTO_AI)");
+                        "인증 방식은 위치+사진(GPS_PHOTO_AI)만 지원합니다: " + verificationType);
             }
             location.changeVerificationType(verificationType);
+        }
+        if (category != null) {
+            location.changeCategory(category);
         }
         locationRepository.flush();
         return getStatus(userId);
     }
 
-    /** 개인 트랙이 지원하는 인증 방식. 팀 챌린지와 동일한 3종. */
+    /**
+     * 개인 트랙이 지원하는 인증 방식. 팀 챌린지와 동일하게 "위치+사진" 하나로 고정한다.
+     *
+     * <p>[2026-09 확정] 위치만·사진만은 우회가 쉬워 인증으로서 신뢰가 낮았다. 이미 GPS 나 AI 로
+     * 저장돼 있는 사용자의 값은 건드리지 않고, 새로 바꾸는 것만 막는다.
+     */
     private static final Set<VerificationType> SUPPORTED_VERIFICATION_TYPES =
-            EnumSet.of(VerificationType.GPS, VerificationType.AI, VerificationType.GPS_PHOTO_AI);
+            EnumSet.of(VerificationType.GPS_PHOTO_AI);
 }

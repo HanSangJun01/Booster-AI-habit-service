@@ -87,6 +87,11 @@ public class Challenge {
         this.status = ChallengeStatus.ENDED;
     }
 
+    /** 모집 중 해산. 방장이 방을 없애거나 탈퇴했을 때만 쓴다(참가자 예치금은 호출부가 환불한다). */
+    public void markCancelled() {
+        this.status = ChallengeStatus.CANCELLED;
+    }
+
     public void setInviteCode(String inviteCode) {
         this.inviteCode = inviteCode;
     }

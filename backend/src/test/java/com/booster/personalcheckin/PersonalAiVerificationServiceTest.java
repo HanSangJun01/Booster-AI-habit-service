@@ -12,6 +12,7 @@ import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalAiVerificationService;
 import com.booster.personalcheckin.service.PersonalCheckInService;
 import com.booster.personallocation.dto.LocationRequest;
+import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
 import com.booster.shared.common.BusinessException;
 import com.booster.streak.repository.StreakRepository;
@@ -61,6 +62,7 @@ class PersonalAiVerificationServiceTest {
     @Autowired PersonalCheckInRepository checkInRepository;
     @Autowired StreakRepository streakRepository;
     @Autowired UserRepository userRepository;
+    @Autowired PersonalLocationRepository personalLocationRepository;
     @Autowired MutableClock clock;
 
     @MockBean AiVerificationClient aiVerificationClient;
@@ -74,12 +76,20 @@ class PersonalAiVerificationServiceTest {
         clock.setDate(LocalDate.of(2035, 6, 4));
     }
 
-    /** AI 인증 방식으로 설정된 사용자. */
+    /**
+     * AI 인증 방식으로 설정된 사용자.
+     *
+     * <p>인증 방식은 엔티티에 직접 넣는다. 사용자가 <b>고를 수 있는</b> 값은 GPS_PHOTO_AI 하나로
+     * 좁혔지만(WeeklyGoalService), 이미 GPS·AI 로 저장돼 있는 사용자의 체크인은 계속 판정해야
+     * 하므로 그 경로도 테스트로 지킨다. API 를 거치면 선택 제한에 걸려 이 경로를 덮을 수 없다.
+     */
     private Long newAiUser(VerificationType type) {
-        String email = "pai-" + SEQ.incrementAndGet() + "@test.com";
-        Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
+        int seq = SEQ.incrementAndGet();
+        String email = "pai-" + seq + "@test.com";
+        Long userId = authService.signup(
+                new SignupRequest(email, "password1234", "pai" + seq + System.nanoTime())).userId();
         personalLocationService.register(userId, new LocationRequest(LAT, LNG, 100, "home"));
-        weeklyGoalService.reserveTarget(userId, 3, type);
+        personalLocationRepository.findById(userId).orElseThrow().changeVerificationType(type);
         return userId;
     }
 

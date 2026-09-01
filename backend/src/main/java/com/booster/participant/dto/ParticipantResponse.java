@@ -31,11 +31,24 @@ public class ParticipantResponse {
     private LocalDateTime joinedAt;
     private LocalDateTime approvedAt;
 
+    /**
+     * 참가 직후의 코인 잔액.
+     *
+     * <p>참가하면 예치금이 빠지는데 응답에 잔액이 없어서, 앱이 화면의 코인을 갱신하지 못했다.
+     * 그래서 참가해도 코인이 그대로 보이다가 <b>재로그인해야 줄어드는 것처럼</b> 보였다.
+     * 참가 신청 응답에서만 채워지고, 목록·승인 응답에서는 null 이다.
+     */
+    private Long coinBalance;
+
     public static ParticipantResponse from(ChallengeParticipant p) {
-        return from(p, null);
+        return from(p, null, null);
     }
 
     public static ParticipantResponse from(ChallengeParticipant p, String nickname) {
+        return from(p, nickname, null);
+    }
+
+    public static ParticipantResponse from(ChallengeParticipant p, String nickname, Long coinBalance) {
         return ParticipantResponse.builder()
                 .id(p.getId())
                 .challengeId(p.getChallenge().getId())
@@ -46,6 +59,7 @@ public class ParticipantResponse {
                 .status(p.getStatus())
                 .joinedAt(p.getJoinedAt())
                 .approvedAt(p.getApprovedAt())
+                .coinBalance(coinBalance)
                 .build();
     }
 }

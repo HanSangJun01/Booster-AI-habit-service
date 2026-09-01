@@ -94,7 +94,9 @@ public abstract class ConcurrencyTestBase {
     /** 가입(보너스 +500) + 개인 위치 등록까지 마친 신규 유저 id 반환. */
     protected Long newUserWithLocation(String prefix) {
         String email = prefix + SEQ.incrementAndGet() + "-" + System.nanoTime() + "@ct.test";
-        Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
+        // 닉네임도 유일해야 한다 — 가입이 활성 계정 기준 닉네임 중복을 막는다.
+        String nickname = "u" + System.nanoTime();
+        Long userId = authService.signup(new SignupRequest(email, "password1234", nickname)).userId();
         personalLocationService.register(userId, new LocationRequest(LAT, LNG, 100, "home"));
         return userId;
     }

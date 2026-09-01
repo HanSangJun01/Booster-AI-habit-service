@@ -326,7 +326,7 @@ class WeeklyEvaluationServiceTest {
         checkInOnDay(userId, 2);
         checkInOnDay(userId, 4);        // 3/3 달성
 
-        weeklyGoalService.reserveTarget(userId, 5, null);
+        weeklyGoalService.reserveTarget(userId, 5, null, null);
 
         assertThat(weeklyGoalService.getStatus(userId).targetDays())
                 .as("진행 중인 주의 기준은 그대로 3이어야 한다(주 중간 하향으로 통과하는 회피 차단)")

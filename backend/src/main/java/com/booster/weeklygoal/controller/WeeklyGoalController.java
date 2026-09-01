@@ -45,7 +45,8 @@ public class WeeklyGoalController {
     public ResponseEntity<WeeklyGoalResponse> updateWeeklyGoal(
             @AuthenticationPrincipal Long userId,
             @Valid @RequestBody WeeklyGoalUpdateRequest request) {
-        return ResponseEntity.ok(weeklyGoalService.reserveTarget(userId, request.targetDays(), request.verificationType()));
+        return ResponseEntity.ok(weeklyGoalService.reserveTarget(
+                userId, request.targetDays(), request.verificationType(), request.category()));
     }
 
     /**
