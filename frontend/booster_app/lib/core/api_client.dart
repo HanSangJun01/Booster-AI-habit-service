@@ -40,10 +40,28 @@ class ApiException implements Exception {
 /// 그래서 성공 판정을 `success == true`로만 하면 A축 엔드포인트(로그인 포함)가
 /// 전부 실패한다. 아래 [_unwrap]이 두 형태를 모두 받아낸다.
 class ApiClient {
-  /// `--dart-define=API_BASE_URL=...`로 덮어쓸 수 있다. 기본값은 안드로이드
-  /// 에뮬레이터에서 호스트 PC의 localhost:8080을 가리킨다.
-  static const String _defaultBaseUrl =
-      String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.0.2.2:8080/api');
+  /// `--dart-define=API_BASE_URL=...`로 덮어쓸 수 있다. 빈 문자열이면
+  /// 안 넘긴 것으로 보고 [_platformDefaultBaseUrl]로 내려간다.
+  static const String _envBaseUrl = String.fromEnvironment('API_BASE_URL');
+
+  /// 개발 중 붙을 호스트 주소는 플랫폼마다 다르다.
+  ///
+  /// 안드로이드 에뮬레이터는 자기 자신을 localhost로 가지기 때문에
+  /// 호스트 PC를 가리키려면 10.0.2.2를 써야 한다. 반면 iOS 시뮬레이터는
+  /// 맥과 네트워크를 그대로 공유해서 localhost가 곧바로 호스트다 — 거기서
+  /// 10.0.2.2를 부르면 아무데도 닿지 않는다.
+  ///
+  /// 실기기는 어느 쪽도 아니다. 홈 PC의 LAN IP를
+  /// `--dart-define=API_BASE_URL=http://192.168.x.x:8080/api`로 넣어줘야 한다.
+  static String get _platformDefaultBaseUrl {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8080/api';
+    }
+    return 'http://localhost:8080/api';
+  }
+
+  static String get _defaultBaseUrl =>
+      _envBaseUrl.isNotEmpty ? _envBaseUrl : _platformDefaultBaseUrl;
 
   static String? _baseUrlOverride;
 

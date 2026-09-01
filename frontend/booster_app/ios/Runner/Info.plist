@@ -26,6 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 개발 중에는 로컬 백엔드에 평문 http로 붙는다. iOS는 ATS 때문에
+	     http를 기본 차단하는데, 차단될 때 에러가 아니라 그냥 연결 실패로
+	     보여서 원인을 찾기 어렵다. NSAllowsLocalNetworking은 localhost와
+	     같은 네트워크의 사설 IP(실기기 → 맥의 LAN IP)만 열어주고, 바깥
+	     도메인에는 https 요구를 그대로 유지한다. 운영 서버는 https라
+	     이 예외를 지워도 동작해야 한다. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>챌린지 사진 인증을 위해 카메라로 사진을 촬영합니다.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
