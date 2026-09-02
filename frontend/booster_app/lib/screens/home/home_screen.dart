@@ -93,7 +93,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       // 서로 의존하지 않는 조회라 한꺼번에 보낸다.
       final results = await Future.wait([
-        PersonalService.fetchDashboard(),
+        // 달력을 다른 달로 넘겨둔 채 새로고침하거나 홈 탭에 다시 들어오면
+        // 이번 달로 튀지 않게, 보던 달을 그대로 다시 읽는다. null이면 이번 달.
+        PersonalService.fetchDashboard(month: _calendarMonth),
         PersonalService.fetchLocation(),
         UserService.fetchMe(),
       ]);

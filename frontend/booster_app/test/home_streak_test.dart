@@ -27,17 +27,27 @@ late HttpServer _server;
 /// 구제 대기 중인지. 테스트마다 바꿔 끼운다.
 late bool _pendingRescue;
 
+/// 대시보드 조회가 실어 보낸 `month` 쿼리. 안 실었으면 null이 들어간다.
+late List<String?> _monthQueries;
+
 /// 서버는 setUp에서 띄운다 — `testWidgets` 본문은 FakeAsync 안이라 거기서
 /// [HttpServer.bind]를 부르면 서버의 idle 타이머가 가짜 시계에 잡혀 "타이머가
 /// 남아 있다"로 실패한다.
 void _handle(HttpRequest req, String path) {
   if (path.endsWith('/dashboard/home')) {
+    // 서버는 month 를 주면 그 달의 달력을, 안 주면 이번 달을 준다.
+    final month = req.uri.queryParameters['month'];
+    _monthQueries.add(month);
     _sendJson(req, 200, {
       'coinBalance': 1500,
       'streak': {'current': 9, 'max': 21},
       'weeklySuccessCount': 2,
       'todayStatus': 'NOT_CHECKED',
-      'calendar': {'year': 2026, 'month': 8, 'days': []},
+      'calendar': {
+        'year': month == null ? 2026 : int.parse(month.substring(0, 4)),
+        'month': month == null ? 8 : int.parse(month.substring(4)),
+        'days': <dynamic>[],
+      },
     });
   } else if (path.endsWith('/users/me/location')) {
     _sendJson(req, 200, {
@@ -82,17 +92,49 @@ void _sendJson(HttpRequest req, int status, Map<String, dynamic> body) {
   req.response.close();
 }
 
+/// 홈을 탭 안에 넣어 띄운다. 탭을 바꿨다 돌아오는 것까지 재현하려면
+/// [MainNavScope.current]가 실제로 바뀌어야 해서 상태를 들고 있는 껍데기가 필요하다.
+class _TabHost extends StatefulWidget {
+  const _TabHost();
+
+  @override
+  State<_TabHost> createState() => _TabHostState();
+}
+
+class _TabHostState extends State<_TabHost> {
+  int _current = 0;
+
+  void switchTo(int index) => setState(() => _current = index);
+
+  @override
+  Widget build(BuildContext context) => MainNavScope(
+        current: _current,
+        select: switchTo,
+        child: const HomeScreen(),
+      );
+}
+
 /// 실제 통신을 일으키는 동작을 FakeAsync 밖에서 돌린다.
 Future<void> _pumpHome(WidgetTester tester) async {
   await tester.runAsync(() async {
     await tester.pumpWidget(MaterialApp(
       theme: BoosterTheme.light(),
-      home: MainNavScope(
-        current: 0,
-        select: (_) {},
-        child: const HomeScreen(),
-      ),
+      home: const _TabHost(),
     ));
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await tester.pump();
+  });
+  await tester.pumpAndSettle();
+}
+
+/// 다른 탭에 갔다가 홈으로 돌아온다. 홈은 그때마다 다시 읽는다.
+Future<void> _reenterHomeTab(WidgetTester tester) async {
+  final host = tester.state<_TabHostState>(find.byType(_TabHost));
+  await tester.runAsync(() async {
+    host.switchTo(1);
+    await tester.pump();
+    host.switchTo(0);
+    await tester.pump();
     await Future<void>.delayed(const Duration(milliseconds: 400));
     await tester.pump();
   });
@@ -106,6 +148,7 @@ void main() {
 
   setUp(() async {
     _pendingRescue = false;
+    _monthQueries = [];
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server.listen((req) async {
       await utf8.decoder.bind(req).join();
@@ -126,6 +169,9 @@ void main() {
   group('스트릭 표기', () {
     testWidgets('연속 일수가 아니라 누적 횟수로 센다', (tester) async {
       await _pumpHome(tester);
+      // 스트릭 카드는 히어로·주간목표 아래라 기본 테스트 화면(600px)에 안 들어온다.
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
 
       expect(find.text('누적 인증'), findsOneWidget);
       expect(find.text('9'), findsWidgets);
@@ -148,6 +194,31 @@ void main() {
 
       expect(find.text('7일 연속 인증'), findsNothing);
       expect(find.text('5일 남음'), findsNothing);
+    });
+  });
+
+  group('달력 월 이동', () {
+    testWidgets('보던 달은 다시 읽어도 이번 달로 튀지 않는다', (tester) async {
+      await _pumpHome(tester);
+      // 첫 조회는 이번 달이라 month를 싣지 않는다.
+      expect(_monthQueries, [null]);
+
+      // 달력은 목록 한참 아래라 기본 테스트 화면(600px) 밖이다.
+      await tester.drag(find.byType(ListView), const Offset(0, -900));
+      await tester.pumpAndSettle();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.chevron_left_rounded));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await tester.pump();
+      });
+      await tester.pumpAndSettle();
+      expect(_monthQueries, [null, '202607']);
+
+      // 여기서 month를 빼고 다시 물으면 서버가 이번 달을 주고, 사용자가
+      // 넘겨둔 달이 소리 없이 되감긴다.
+      await _reenterHomeTab(tester);
+      expect(_monthQueries, [null, '202607', '202607']);
     });
   });
 
