@@ -46,10 +46,14 @@ public class PersonalLocation {
      *   GPS          위치만 — 체크인 즉시 확정
      *   AI           사진만 — 체크인은 PENDING, 사진 업로드로 확정
      *   GPS_PHOTO_AI 위치 통과 후 사진까지 — GPS 실패는 400 즉시 거절
+     *
+     * <p>[2026-09 확정] 새로 만드는 값은 GPS_PHOTO_AI 하나다. 기본값이 GPS 이던 시절엔
+     * 인증 장소만 등록하고 주간 목표를 건드리지 않은 사람이 사진을 한 번도 요구받지 않아,
+     * "위치+사진 고정" 결정이 실제로는 적용되지 않았다(V19 에서 기존 행도 옮겼다).
      */
     @Enumerated(EnumType.STRING)
     @Column(name = "verification_type", nullable = false, length = 20)
-    private VerificationType verificationType = VerificationType.GPS;
+    private VerificationType verificationType = VerificationType.GPS_PHOTO_AI;
 
     /**
      * 개인 목표 카테고리(EXERCISE/STUDY). AI 사진 판정의 기준이 된다.

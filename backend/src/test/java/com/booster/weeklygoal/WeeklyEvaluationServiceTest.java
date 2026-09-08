@@ -5,7 +5,9 @@ import com.booster.auth.service.AuthService;
 import com.booster.coin.domain.CoinTransactionReason;
 import com.booster.coin.service.CoinService;
 import com.booster.personalcheckin.service.PersonalCheckInService;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.personallocation.dto.LocationRequest;
+import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
 import com.booster.shared.common.BusinessException;
 import com.booster.streak.repository.StreakRepository;
@@ -57,6 +59,7 @@ class WeeklyEvaluationServiceTest {
     @Autowired CoinService coinService;
     @Autowired UserRepository userRepository;
     @Autowired StreakRepository streakRepository;
+    @Autowired PersonalLocationRepository personalLocationRepository;
     @Autowired MutableClock clock;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
@@ -66,6 +69,11 @@ class WeeklyEvaluationServiceTest {
         String email = "wk-" + SEQ.incrementAndGet() + "@test.com";
         Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
         personalLocationService.register(userId, new LocationRequest(37.0, 127.0, 100, "home"));
+        // 주간 채점은 SUCCESS 인 날을 센다. 기본값(GPS_PHOTO_AI)이면 체크인이 PENDING 으로
+        // 남아 사진을 기다리므로 성공 일수가 0이 된다. 여기서 보는 건 사진 판정이 아니라
+        // 채점·구제권 규칙이라 GPS 단독으로 둔다.
+        personalLocationRepository.findById(userId).orElseThrow()
+                .changeVerificationType(VerificationType.GPS);
         return userId;
     }
 

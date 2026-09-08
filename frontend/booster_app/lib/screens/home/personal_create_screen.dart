@@ -149,6 +149,9 @@ class _PersonalCreateScreenState extends State<PersonalCreateScreen> {
           await PersonalService.updateWeeklyGoal(
             targetDays: goal?.targetDays ?? 3,
             category: _category,
+            // 서버 기본값이 GPS 이던 시절의 행이 남아 있을 수 있어 명시한다.
+            // 안 보내면 사진을 한 번도 요구하지 않는 계정이 생긴다.
+            verificationType: 'GPS_PHOTO_AI',
           );
         } on ApiException {
           // 카테고리는 나중에 "내 습관 설정"에서 바꿀 수 있다. 여기서 실패했다고

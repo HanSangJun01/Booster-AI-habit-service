@@ -6,7 +6,9 @@ import com.booster.personalcheckin.domain.PersonalCheckInStatus;
 import com.booster.personalcheckin.dto.CheckInResponse;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalCheckInService;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.personallocation.dto.LocationRequest;
+import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
 import com.booster.shared.common.BusinessException;
 import com.booster.support.MutableClock;
@@ -34,14 +36,25 @@ class PersonalCheckInServiceTest {
     @Autowired PersonalLocationService personalLocationService;
     @Autowired PersonalCheckInService personalCheckInService;
     @Autowired PersonalCheckInRepository personalCheckInRepository;
+    @Autowired PersonalLocationRepository personalLocationRepository;
     @Autowired MutableClock clock;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 
+    /**
+     * 위치 인증만으로 체크인이 확정되는 사용자.
+     *
+     * <p>기본 인증 방식은 GPS_PHOTO_AI 라 체크인이 PENDING 으로 남고 사진을 기다린다.
+     * 이 클래스가 보는 건 사진 판정이 아니라 <b>스트릭·코인·중복 방지 같은 체크인 자체의
+     * 규칙</b>이므로, GPS 단독으로 두어 체크인이 그 자리에서 SUCCESS 가 되게 한다.
+     * 사진 경로는 {@code PersonalAiVerificationServiceTest} 가 따로 본다.
+     */
     private Long newUserWithLocation() {
         String email = "p" + SEQ.incrementAndGet() + "@test.com";
         Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
         personalLocationService.register(userId, new LocationRequest(37.0, 127.0, 100, "home"));
+        personalLocationRepository.findById(userId).orElseThrow()
+                .changeVerificationType(VerificationType.GPS);
         return userId;
     }
 

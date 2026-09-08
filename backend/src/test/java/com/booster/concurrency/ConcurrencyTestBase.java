@@ -8,6 +8,7 @@ import com.booster.coin.repository.CoinTransactionRepository;
 import com.booster.coin.service.CoinService;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalCheckInService;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.personallocation.dto.LocationRequest;
 import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
@@ -98,6 +99,15 @@ public abstract class ConcurrencyTestBase {
         String nickname = "u" + System.nanoTime();
         Long userId = authService.signup(new SignupRequest(email, "password1234", nickname)).userId();
         personalLocationService.register(userId, new LocationRequest(LAT, LNG, 100, "home"));
+        // 인증 방식을 GPS 단독으로 둔다. 기본값(GPS_PHOTO_AI)이면 체크인이 PENDING 으로 남아
+        // 사진을 기다리는데, 이 패키지가 보는 건 사진 판정이 아니라 동시 요청의 레이스
+        // (중복 체크인·코인 이중 차감·참여율 Lost Update)다. 체크인이 그 자리에서 확정돼야
+        // 그 레이스를 그대로 재현할 수 있다.
+        //
+        // 이 클래스는 일부러 비트랜잭셔널이라(위 주석 참조) 더티체킹이 돌지 않는다.
+        // inTransaction 으로 감싸야 변경이 실제로 커밋된다.
+        inTransaction(() -> personalLocationRepository.findById(userId).orElseThrow()
+                .changeVerificationType(VerificationType.GPS));
         return userId;
     }
 

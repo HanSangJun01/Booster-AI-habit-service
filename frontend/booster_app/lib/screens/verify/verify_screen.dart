@@ -44,12 +44,11 @@ class _VerifyScreenState extends State<VerifyScreen> {
   Challenge? _challenge;
   List<CheckIn> _challengeCheckIns = [];
 
-  /// 사진이 남은 개인 체크인의 id.
+  /// 이번 세션에서 체크인한 개인 체크인의 id.
   ///
-  /// ⚠️ `GET /api/personal/check-in/today`는 `checkInId`를 주지 않는다(계약상
-  /// date·status·verifiedAt뿐). 그래서 이 값은 **이번 세션에서 체크인한 경우에만**
-  /// 알 수 있고, 앱을 껐다 켜면 PENDING인 걸 알면서도 이어서 올릴 수 없다.
-  /// 서버가 today 응답에 id를 실어주면 [TodayStatus.checkInId]로 자동으로 메워진다.
+  /// 서버가 `GET /api/personal/check-in/today`에 `checkInId`를 실어주므로 앱을 껐다
+  /// 켜도 이어서 올릴 수 있다. 이 필드는 그 응답을 다시 읽기 전(체크인 직후)의 짧은
+  /// 구간을 메우는 용도다.
   int? _personalCheckInId;
 
   /// 사진이 남은 개인 체크인 id. 서버가 주면 그 값을, 아니면 이번 세션 값을 쓴다.
@@ -320,11 +319,7 @@ class _VerifyScreenState extends State<VerifyScreen> {
       final checkInId = _pendingPhotoCheckInId;
       banners.add(_photoBanner(
         title: '개인 습관 · 사진 인증이 남았어요',
-        // id를 모르면 이어서 올릴 수가 없다. 누를 수 없는 버튼을 두느니
-        // 무엇이 막혀 있는지 말해준다.
-        description: checkInId == null
-            ? 'GPS는 통과했어요. 앱을 다시 켜서 이어 올리는 건 아직 안 돼요 — 오늘 안에 다시 인증해주세요.'
-            : 'GPS는 통과했어요. 사진을 올리면 인증이 확정돼요.',
+        description: 'GPS는 통과했어요. 사진을 올리면 인증이 확정돼요.',
         onTap: checkInId == null ? null : () => _uploadAndReload(checkInId),
       ));
     }

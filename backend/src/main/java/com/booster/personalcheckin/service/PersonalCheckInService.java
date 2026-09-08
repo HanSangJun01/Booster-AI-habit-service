@@ -155,7 +155,9 @@ public class PersonalCheckInService {
     public TodayStatusResponse getToday(Long userId) {
         LocalDate today = LocalDate.now(clock);
         return personalCheckInRepository.findByUserIdAndDate(userId, today)
-                .map(c -> new TodayStatusResponse(today, c.getStatus().name(), c.getVerifiedAt()))
-                .orElseGet(() -> new TodayStatusResponse(today, "NOT_CHECKED", null));
+                // checkInId 를 함께 준다 — 사진 인증이 이 id 를 요구하는데, 없으면 앱이 체크인
+                // 직후 메모리에 들고 있던 값으로만 올릴 수 있어 재시작하면 PENDING 에 갇힌다.
+                .map(c -> new TodayStatusResponse(today, c.getStatus().name(), c.getVerifiedAt(), c.getId()))
+                .orElseGet(() -> new TodayStatusResponse(today, "NOT_CHECKED", null, null));
     }
 }
