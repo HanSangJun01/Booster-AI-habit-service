@@ -14,6 +14,7 @@ import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
 import com.booster.shared.common.BusinessException;
 import com.booster.shared.common.ResourceNotFoundException;
+import com.booster.shared.common.Sha256;
 import com.booster.shared.common.UnauthorizedException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,9 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import com.booster.shared.common.BusinessException;
 
@@ -92,7 +90,7 @@ public class AiVerificationService {
         // ("헬스장 사진 한 장으로 30일")과 팀원 간 돌려쓰기를 함께 잡는다.
         // 스코프를 챌린지로 좁힌 이유: 전역 차단이면 무관한 챌린지의 우연한 동일
         // 이미지(기본 배경 등)까지 막아 오탐이 된다.
-        String imageSha256 = sha256Hex(bytes);
+        String imageSha256 = Sha256.hex(bytes);
         rejectIfImageReusedInChallenge(imageSha256, checkIn.getChallengeId());
 
         MediaType mediaType = MediaType.parseMediaType(image.getContentType());
@@ -137,16 +135,6 @@ public class AiVerificationService {
                 throw BusinessException.conflict("DUPLICATE_IMAGE",
                         "이미 이 챌린지에서 사용된 사진입니다. 새로 촬영한 사진으로 인증해 주세요.");
             }
-        }
-    }
-
-    private static String sha256Hex(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(
-                    MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256은 모든 JVM 필수 알고리즘 — 여기 오면 런타임이 망가진 것.
-            throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
 

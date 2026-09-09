@@ -34,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -224,5 +225,98 @@ class PersonalAiVerificationServiceTest {
 
         assertThat(resp.status()).isEqualTo(PersonalCheckInStatus.SUCCESS);
         assertThat(streakOf(userId)).isEqualTo(1);
+    }
+    // ────────────────── (BS-41) 시도 상한·쿨다운·사진 재사용 차단 ──────────────────
+    // 개인 트랙은 거절 시 체크인을 지워 재시도를 열어주므로, personal_ai_attempts
+    // 대장이 없으면 무한 뽑기·사진 돌려쓰기가 가능하다. 그 대장이 실제로 막는지 본다.
+    // 기본값: 하루 3회, 쿨다운 60초 (booster.verification.*, 팀 트랙과 같은 키).
+
+    private static final LocalDate DAY = LocalDate.of(2035, 6, 4);
+
+    private MockMultipartFile photoOf(int seed) {
+        return new MockMultipartFile("image", "p" + seed + ".jpg", "image/jpeg",
+                new byte[]{(byte) seed, 2, 3});
+    }
+
+    /** 거절 판정 한 번 — 체크인 생성 → 거절 → (체크인은 삭제됨). 시각은 호출 전에 맞춰둔다. */
+    private void rejectedAttempt(Long userId, int photoSeed) {
+        Long checkInId = personalCheckInService.checkIn(userId, LAT, LNG).checkInId();
+        stubVerdict(false, "reject");
+        aiVerificationService.verifyAndSave(userId, checkInId, "EXERCISE", photoOf(photoSeed));
+    }
+
+    @Test
+    @DisplayName("쿨다운 안의 재시도는 429 — 스크립트 연사를 막는다")
+    void retryWithinCooldown_isRejected429() {
+        Long userId = newAiUser(VerificationType.AI);
+        clock.setDateTime(DAY, LocalTime.NOON);
+        rejectedAttempt(userId, 1);
+
+        // 쿨다운(60초) 안에서 곧바로 새 사진으로 재시도
+        Long checkInId = personalCheckInService.checkIn(userId, LAT, LNG).checkInId();
+        assertThatThrownBy(() ->
+                aiVerificationService.verifyAndSave(userId, checkInId, "EXERCISE", photoOf(2)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code", "VERIFICATION_COOLDOWN");
+
+        // 과금되는 AI 호출은 첫 시도 한 번뿐이어야 한다
+        Mockito.verify(aiVerificationClient, Mockito.times(1))
+                .verify(anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("하루 시도 상한(3회) 초과는 429 — 거절로 체크인이 지워져도 시도는 남는다")
+    void dailyAttemptCap_survivesCheckInDeletion() {
+        Long userId = newAiUser(VerificationType.AI);
+        for (int i = 0; i < 3; i++) {
+            // 쿨다운(60초)을 넘기며 서로 다른 사진으로 3회 거절당한다
+            clock.setDateTime(DAY, LocalTime.NOON.plusMinutes(i * 2));
+            rejectedAttempt(userId, i + 1);
+        }
+
+        clock.setDateTime(DAY, LocalTime.NOON.plusMinutes(10));
+        Long checkInId = personalCheckInService.checkIn(userId, LAT, LNG).checkInId();
+        assertThatThrownBy(() ->
+                aiVerificationService.verifyAndSave(userId, checkInId, "EXERCISE", photoOf(9)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code", "VERIFICATION_ATTEMPTS_EXCEEDED");
+
+        Mockito.verify(aiVerificationClient, Mockito.times(3))
+                .verify(anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("같은 사진을 다시 내면 409 DUPLICATE_IMAGE — 거절된 사진 재탕 차단")
+    void sameImageResubmission_isRejected409() {
+        Long userId = newAiUser(VerificationType.AI);
+        clock.setDateTime(DAY, LocalTime.NOON);
+        rejectedAttempt(userId, 7);
+
+        clock.setDateTime(DAY, LocalTime.NOON.plusMinutes(2)); // 쿨다운은 지났다
+        Long checkInId = personalCheckInService.checkIn(userId, LAT, LNG).checkInId();
+        assertThatThrownBy(() ->
+                aiVerificationService.verifyAndSave(userId, checkInId, "EXERCISE", photoOf(7)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code", "DUPLICATE_IMAGE");
+    }
+
+    @Test
+    @DisplayName("상한은 하루 단위로 리셋 — 다음날 새 사진 인증은 정상 진행된다")
+    void attemptCap_resetsNextDay() {
+        Long userId = newAiUser(VerificationType.AI);
+        for (int i = 0; i < 3; i++) {
+            clock.setDateTime(DAY, LocalTime.NOON.plusMinutes(i * 2));
+            rejectedAttempt(userId, i + 1);
+        }
+
+        clock.setDate(DAY.plusDays(1)); // 다음날 정오
+        Long checkInId = personalCheckInService.checkIn(userId, LAT, LNG).checkInId();
+        stubVerdict(true, "ok");
+
+        PersonalAiVerificationResponse resp =
+                aiVerificationService.verifyAndSave(userId, checkInId, "EXERCISE", photoOf(9));
+
+        assertThat(resp.passed()).isTrue();
+        assertThat(checkInRepository.findById(checkInId).orElseThrow().isSuccess()).isTrue();
     }
 }

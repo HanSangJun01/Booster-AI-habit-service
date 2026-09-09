@@ -3,18 +3,22 @@ package com.booster.personalcheckin.service;
 import com.booster.challengecheckin.dto.AiServiceVerdict;
 import com.booster.challengecheckin.service.AiVerificationClient;
 import com.booster.challengecheckin.service.AiVerificationException;
+import com.booster.personalcheckin.domain.PersonalAiAttempt;
 import com.booster.personalcheckin.domain.PersonalAiVerification;
 import com.booster.personalcheckin.domain.PersonalCheckIn;
 import com.booster.personalcheckin.dto.PersonalAiVerificationResponse;
+import com.booster.personalcheckin.repository.PersonalAiAttemptRepository;
 import com.booster.personalcheckin.repository.PersonalAiVerificationRepository;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.shared.common.BusinessException;
+import com.booster.shared.common.Sha256;
 import com.booster.user.domain.User;
 import com.booster.user.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -23,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -46,11 +51,21 @@ public class PersonalAiVerificationService {
 
     private final PersonalCheckInRepository checkInRepository;
     private final PersonalAiVerificationRepository aiRepository;
+    private final PersonalAiAttemptRepository attemptRepository;
     private final UserRepository userRepository;
     private final AiVerificationClient aiVerificationClient;
     private final PersonalCheckInService personalCheckInService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+
+    // (BS-41 악용 방어) 팀 트랙 ChallengeCheckInService 와 같은 설정 키를 쓴다 — 두 경로의
+    // 상한이 다르면 느슨한 쪽이 우회로가 된다. 개인 트랙은 거절 시 체크인을 삭제해
+    // 재시도를 열어주는 설계라, 상한 없이는 통과할 때까지 무한 뽑기가 그대로 된다.
+    @Value("${booster.verification.max-attempts-per-day:3}")
+    int maxVerificationAttemptsPerDay = 3;
+
+    @Value("${booster.verification.attempt-cooldown-seconds:60}")
+    int attemptCooldownSeconds = 60;
 
     @Transactional
     public PersonalAiVerificationResponse verifyAndSave(Long userId, Long checkInId,
@@ -86,12 +101,22 @@ public class PersonalAiVerificationService {
         }
         String filename = image.getOriginalFilename() != null ? image.getOriginalFilename() : "upload";
 
+        // (BS-41) 과금되는 AI 호출 전에 코드로 끊을 수 있는 악용을 먼저 끊는다.
+        String imageSha256 = Sha256.hex(bytes);
+        enforceAttemptPolicy(userId, checkIn.getDate(), imageSha256);
+
         AiServiceVerdict verdict = aiVerificationClient.verify(
                 category, bytes, filename, MediaType.parseMediaType(image.getContentType()));
 
         aiRepository.save(PersonalAiVerification.of(
                 checkIn.getId(), verdict.modelName(), verdict.passed(), verdict.confidenceScore(),
                 writeJson(verdict.detectedLabels()), verdict.reason(), verdict.storageKey()));
+
+        // 시도 대장 기록 — 거절 시 체크인(과 판정 행)이 지워져도 이 행은 남아
+        // 다음 시도의 상한·쿨다운·재사용 검사의 근거가 된다. AI 호출이 실패(502)하면
+        // 여기 도달하지 않아 시도 횟수를 소모하지 않는다.
+        attemptRepository.save(PersonalAiAttempt.of(
+                userId, checkIn.getDate(), imageSha256, verdict.passed(), OffsetDateTime.now(clock)));
 
         int streak;
         boolean rewardGranted = false;
@@ -115,6 +140,34 @@ public class PersonalAiVerificationService {
                 checkIn.getDate(), verdict.passed(), verdict.confidenceScore(),
                 verdict.detectedLabels(), verdict.reason(), verdict.modelName(),
                 verdict.passed() ? streak : null, user.getCoinBalance(), rewardGranted);
+    }
+
+    /**
+     * 시도 상한·쿨다운·사진 재사용 검사. 순서는 사용자에게 정확한 사유를 주는 쪽으로:
+     * 같은 사진을 또 내면 몇 번째 시도든 항상 409 DUPLICATE_IMAGE(새 사진을 찍으라는
+     * 신호)가 먼저고, 그다음이 429 상한/쿨다운이다.
+     */
+    private void enforceAttemptPolicy(Long userId, LocalDate date, String imageSha256) {
+        if (attemptRepository.existsByUserIdAndImageSha256(userId, imageSha256)) {
+            throw BusinessException.conflict("DUPLICATE_IMAGE",
+                    "이미 인증에 사용한 사진입니다. 새로 촬영한 사진으로 인증해 주세요.");
+        }
+        if (attemptRepository.countByUserIdAndAttemptDate(userId, date) >= maxVerificationAttemptsPerDay) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "VERIFICATION_ATTEMPTS_EXCEEDED",
+                    "오늘 인증 시도 횟수(" + maxVerificationAttemptsPerDay + "회)를 모두 사용했습니다.");
+        }
+        if (attemptCooldownSeconds > 0) {
+            attemptRepository.findTopByUserIdOrderByIdDesc(userId)
+                    .map(PersonalAiAttempt::getCreatedAt)
+                    .filter(last -> last.isAfter(
+                            OffsetDateTime.now(clock).minusSeconds(attemptCooldownSeconds)))
+                    .ifPresent(last -> {
+                        throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                                "VERIFICATION_COOLDOWN",
+                                "인증 재시도는 " + attemptCooldownSeconds + "초 후에 가능합니다.");
+                    });
+        }
     }
 
     private void validateImage(MultipartFile image) {

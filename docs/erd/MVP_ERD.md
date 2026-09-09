@@ -25,6 +25,7 @@
 | `personal_locations` | V7 (V14·V16 확장) | 인증 기준 좌표·반경 + 주간 목표 + 인증 방식 |
 | `personal_check_ins` | V7 | 개인 인증 기록 |
 | `personal_ai_verifications` | V16 | 개인 AI 판정 결과 |
+| `personal_ai_attempts` | V21 | 개인 AI 판정 시도 대장 — 거절 시 체크인이 삭제돼도 남아 하루 상한·쿨다운·`image_sha256` 재사용 차단의 근거가 된다 (BS-41) |
 | `weekly_evaluations` | V14 (V15 확장) | 주간 목표 채점 결과 |
 
 ### B축 — 팀 챌린지
