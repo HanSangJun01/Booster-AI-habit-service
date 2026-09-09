@@ -33,6 +33,10 @@ services:
       JWT_SECRET: booster-local-dev-secret-key-please-change-in-production-0123456789
       # AI 인증 서비스 URL. compose 네트워크에서는 서비스명으로 접근.
       AI_SERVICE_URL: http://ai-service:8000
+      # ai-service 공유 시크릿. ai-service/.env 의 AI_SERVICE_API_KEY 와 같은 값을
+      # 호스트 환경변수로 넣어라 (docker compose 실행 셸에서 export). 비우면
+      # 헤더를 안 보낸다 — ai-service 쪽도 비워야 통신이 된다(로컬 개발 전용).
+      AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY:-}
     ports:
       - "8080:8080"
 
@@ -47,10 +51,19 @@ services:
     env_file:
       - ai-service/.env
     ports:
-      - "8000:8000"
+      # 로컬호스트에만 바인딩한다 — 0.0.0.0 노출이면 누구나 이 서비스로
+      # ANTHROPIC_API_KEY 과금을 일으킬 수 있다(무인증 프록시화). backend 는
+      # compose 내부 네트워크(http://ai-service:8000)로 접근하므로 이 바인딩은
+      # 호스트에서의 batch_test.sh 용이다.
+      - "127.0.0.1:8000:8000"
     volumes:
-      # 판정된 이미지를 호스트에서도 확인할 수 있게 마운트 (개발 편의)
+      # 판정된 이미지를 호스트에서도 확인할 수 있게 마운트 (개발 편의).
+      # 인증 사진은 개인정보다 — STORAGE_RETENTION_DAYS(기본 30일)가 지나면
+      # ai-service 가 자동 삭제한다.
       - ./ai-service/storage:/app/storage
+      # 운영에서 판정 정책만 갈아끼울 때는 :ro 로 마운트해라 — 컨테이너가
+      # 뚫려도 판정 기준(프롬프트)을 조작하지 못하게 하는 최소 방어다.
+      # - /path/to/policies:/app/policies:ro
 
 volumes:
   booster-db-data:

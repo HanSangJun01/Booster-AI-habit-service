@@ -1541,6 +1541,9 @@ Authorization: Bearer {accessToken}
 | `DATA_CONFLICT` | 409 | DB 제약 위반 (검증 누락 경로) |
 | `AI_VERIFICATION_502` | 502 | AI 서비스 통신 실패·타임아웃·upstream 5xx |
 | `AI_VERIFICATION_500` | 500 | AI 판정 **계약 오류** (upstream 4xx). 대부분 `category` 가 `EXERCISE`/`STUDY` 가 아닐 때 |
+| `VERIFICATION_ATTEMPTS_EXCEEDED` | 429 | 하루(체크인 1건) 인증 시도 상한 초과 — 기본 3회, `VERIFICATION_MAX_ATTEMPTS_PER_DAY` (BS-41) |
+| `VERIFICATION_COOLDOWN` | 429 | 직전 인증 시도 후 쿨다운 미경과 — 기본 60초, `VERIFICATION_ATTEMPT_COOLDOWN_SECONDS` (BS-41) |
+| `DUPLICATE_IMAGE` | 409 | AI 인증에서 같은 챌린지에 이미 제출된 동일 이미지(SHA-256) 재사용 (BS-41) |
 
 ---
 

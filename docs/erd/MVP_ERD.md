@@ -37,7 +37,7 @@
 | `challenge_check_ins` | V3 | 팀 챌린지 인증 기록 |
 | `verification_submissions` | V3 | 인증 제출 단위 |
 | `gps_verification_results` | V3 | 제출별 GPS 판정 |
-| `ai_verification_results` | V12 | 제출별 AI 판정 |
+| `ai_verification_results` | V12 (V20 확장) | 제출별 AI 판정 · `image_sha256` 는 같은 챌린지 내 동일 이미지 재사용을 409로 차단하는 지문 (BS-41) |
 | `verification_decisions` | V3 (V13 확장) | 제출별 최종 판정 |
 | `settlements` | V4 | 정산 결과 |
 | `chat_messages` | V5 | 팀 채팅 |

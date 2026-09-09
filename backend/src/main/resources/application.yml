@@ -55,6 +55,11 @@ jwt:
   access-token-expiration-ms: ${JWT_ACCESS_EXPIRATION_MS:86400000}
 
 booster:
+  # (악용 방어) 챌린지 인증 판정 시도 제한. LLM 판정은 확률적이라 무제한 재시도는
+  # '뽑기'가 된다 — 하루(체크인 1건)당 시도 상한과 시도 간 쿨다운.
+  verification:
+    max-attempts-per-day: ${VERIFICATION_MAX_ATTEMPTS_PER_DAY:3}
+    attempt-cooldown-seconds: ${VERIFICATION_ATTEMPT_COOLDOWN_SECONDS:60}
   # 스트릭 보상: 7일마다 반복 지급(true) / 최초 7일 1회만(false). bs-25 확정: 반복.
   streak:
     reward-repeat: ${STREAK_REWARD_REPEAT:true}

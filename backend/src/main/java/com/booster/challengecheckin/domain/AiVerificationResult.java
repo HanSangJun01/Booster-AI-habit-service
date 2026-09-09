@@ -42,6 +42,10 @@ public class AiVerificationResult {
     @Column(name = "raw_response", columnDefinition = "TEXT")
     private String rawResponse;
 
+    /** 원본 이미지의 SHA-256(hex). 같은 챌린지 내 사진 재사용 차단용 지문. 과거 행은 null. */
+    @Column(name = "image_sha256", length = 64)
+    private String imageSha256;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
