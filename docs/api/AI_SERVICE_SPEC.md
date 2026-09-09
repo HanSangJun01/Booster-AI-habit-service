@@ -1,7 +1,10 @@
 # AI Verification Service API Spec
 
-> 대상: `ai-service/` (FastAPI). 백엔드가 `AiVerificationClient`로 호출한다.
+> 대상: `ai-service/` (FastAPI).
 > 상태: 확정 (Phase 2). 8/9 통합 대비 협의 회신 반영 완료. 남은 확장은 §7 (Phase 3+).
+>
+> **§1~§8은 백엔드 경유 경로다** — 백엔드가 `AiVerificationClient`로 `POST /verify`를 호출한다.
+> **§9는 Spring을 거치지 않는 단독 경로**(GPS·사진·통합 판정), **§10은 LangChain 오케스트레이션**이다.
 > 관련 문서: `docs/erd/MVP_ERD.md`, `docs/api/MVP_API_SPEC.md`, `docs/database/BS-27-verification-schema-decision.md`
 
 ---
@@ -52,7 +55,7 @@ MVP 지원 카테고리:
 | `EXERCISE` | 운동 인증 |
 | `STUDY` | 공부 인증 |
 
-카테고리 확장은 팀 협의 후 `ai-service/schemas.py::Category`와 `prompts.py::_CATEGORY_CRITERIA`에 동시 추가.
+카테고리 확장은 팀 협의 후 `ai-service/schemas.py::Category`와 `ai-service/policies/verification.yaml::categories`에 동시 추가 (한쪽만 고치면 `policy.py`가 기동을 막는다).
 
 ---
 
@@ -134,14 +137,20 @@ MVP 지원 카테고리:
 
 ## 5. 판정 프롬프트 원칙
 
-`ai-service/prompts.py`에 정의. 요약:
+문구 원본은 `ai-service/policies/verification.yaml`에 있다 (`ai-service/policy.py`가 기동 시
+1회 읽어 `ai-service/prompts.py`가 카테고리별 모델 메시지로 조립 — §10 참조). 요약:
 
 - 카테고리별 명시적 통과/실패 기준 제시
 - 화면 캡처·재촬영·명백한 도용은 실패로 판정
 - 애매하거나 증거가 약하면 `confidence_score`를 낮게, 기본 실패로 판정
-- 응답은 반드시 지정된 JSON 형식으로만 반환
 
-프롬프트 튜닝은 실 샘플 이미지 확보 후 반복 진행. 튜닝 로그는 `docs/ai/prompt-tuning.md`(예정)에 기록.
+**"응답은 반드시 지정된 JSON 형식으로만 반환"은 더 이상 사실이 아니다.** LangChain
+structured output 전환(§10) 이후 `PhotoVerdict` 스키마가 도구(tool) 정의로 모델에
+강제되므로, 프롬프트에 출력 형식 지시를 넣을 필요 자체가 없어졌다.
+
+프롬프트 튜닝은 실 샘플 이미지 확보 후 `ai-service/batch_test.sh` + `ai-service/samples/`로
+반복 진행 (`ai-service/README.md` 참조). 별도 튜닝 로그 문서는 두지 않는다 — 정책
+자체가 `policies/verification.yaml`이라는 단일 소스로 버전 관리된다.
 
 ---
 
@@ -161,7 +170,7 @@ Phase 2 협의(8/8)로 결정된 항목은 §8에 반영됐다. 아래는 명시
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | 백엔드 ↔ ai-service 인증 (API Key 등) | Phase 3 | MVP는 내부망 전제. 운영 이관 시 헤더 방식 도입 |
-| 카테고리 확장 (수면, 식사, 명상 등) | Phase 3 | `schemas.py::Category`와 `prompts.py::_CATEGORY_CRITERIA`에 동시 추가 |
+| 카테고리 확장 (수면, 식사, 명상 등) | Phase 3 | `schemas.py::Category`와 `policies/verification.yaml::categories`에 동시 추가 |
 | 재판정 (`storage_key`로 재호출) | Phase 3 | 오판 케이스 재검토 목적 |
 | 비동기 큐 (요청 폭주 대비) | Phase 3 | 현재 동기 호출 + 30s timeout으로 충분 |
 | S3 저장소 스왑 | Phase 3 | `storage.py::Storage` 인터페이스로 준비됨 |
@@ -172,7 +181,15 @@ Phase 2 협의(8/8)로 결정된 항목은 §8에 반영됐다. 아래는 명시
 ## 8. 백엔드 통합 지점
 
 백엔드는 `AiVerificationClient`(위치: `com.booster.challengecheckin.service`)에서 이 서비스를 호출한다.
-백엔드 신설 엔드포인트: `POST /api/verification-submissions/{submissionId}/ai-verification`
+
+> **[2026-08-27 갱신] 호출자가 둘로 늘었다.** 이 문서를 쓸 당시(08-08)에는 팀 챌린지만 AI를 썼지만,
+> V16에서 **개인 습관(A축)에도 AI 인증이 추가**됐다. `AiVerificationClient` 를 그대로 재사용하므로
+> **ai-service 쪽 계약·구현 변경은 없다.** 자세한 흐름은 §8.6.
+
+| 호출 경로 | 백엔드 엔드포인트 |
+|---|---|
+| 팀 챌린지 (B축) | `POST /api/verification-submissions/{submissionId}/ai-verification` |
+| **개인 습관 (A축)** | `POST /api/personal/check-in/{checkInId}/ai-verification` |
 
 ### 8.1 verification_type별 흐름
 
@@ -235,6 +252,46 @@ Response 201:
 
 이미지 검증 실패(400/413/415)는 백엔드 `AiVerificationService`가 자체적으로 즉시 반환한다 — ai-service까지 도달하지 않는다.
 
+### 8.6 개인 습관(A축) 통합 — V16 신규
+
+**ai-service 입장에서는 팀 챌린지와 완전히 동일한 호출이다.** `POST /verify` 에 `category` + `image`
+를 보내고 판정을 받는다. 다른 건 백엔드 쪽 저장 구조뿐이다.
+
+```
+팀   challenge_check_ins → verification_submissions(N) → ai_verification_results → decisions
+개인 personal_check_ins  → personal_ai_verifications(1)
+```
+
+개인 트랙은 `UNIQUE(user_id, check_in_date)` 로 하루 1건이라 재시도 이력을 남길 자리가 없어,
+제출 테이블 없이 체크인에 판정을 1:1로 붙였다.
+
+| | 팀 (B축) | 개인 (A축) |
+|---|---|---|
+| 인증 방식 저장 | `challenges.verification_type` | `personal_locations.verification_type` (**기본 `GPS`**) |
+| 사진 업로드 입력 | 체크인 응답의 `submissionId` | 체크인 응답의 `checkInId` |
+| AI 거절 시 | `FAILED` 레코드로 남음 | **체크인 레코드를 삭제** — 그날 재시도를 열어주기 위해 |
+
+**호출량 영향**: 개인 트랙의 인증 방식 기본값이 `GPS` 라 **AI는 사용자가 직접 바꿔야 쓰는 옵트인**이다.
+따라서 당장 호출이 급증하지는 않는다. 다만 **호출 경로가 하나 더 생겼으므로**, 사용자가 개인 습관에서
+AI를 택하기 시작하면 Anthropic 비용·레이트리밋이 먼저 걸리는 지점이 된다. 모니터링 대상.
+
+### 8.7 ⚠️ category 검증이 어디에도 없다 (미해결)
+
+§2에서 카테고리를 `EXERCISE`/`STUDY` 로 확정했지만, **그 값을 강제하는 코드가 백엔드에 없다.**
+컨트롤러가 `@RequestParam String category` 로 받아 검증 없이 그대로 전달한다.
+
+- `challenges.category` 는 `VARCHAR(50)` 자유 문자열이라 `"독서"`·`"기상"` 같은 값이 저장된다
+- **앱은 현재 한글 4종(`운동`·`공부`·`독서`·`기상`)을 그대로 보낸다** → ai-service 가 422 →
+  §8.4 규칙에 따라 **500**으로 나간다
+- 개인 트랙에는 카테고리를 저장하는 컬럼조차 없어 클라이언트가 매번 지정한다
+
+§8.4에 적어둔 *"(배포 전 잡혀야 함)"* 이 아직 안 잡힌 상태다.
+
+**팀 결정 (2026-08-27)**: 카테고리는 **`EXERCISE`/`STUDY` 2개를 유지**하고 늘리지 않는다.
+`독서` 는 `STUDY` 로 매핑한다(§2 프롬프트에 활자책 독서가 통과 기준으로 이미 있다).
+`기상` 은 AI 인증 대상에서 제외한다. **앱이 영문 값으로 변환해 보내는 것**으로 막는다.
+근본 해결(생성 단계 검증)은 후속 과제.
+
 ### 8.5 verification_type 매트릭스 (백엔드 흐름 요약)
 
 | verification_type | recordCheckIn 결과 | /ai-verification 호출 필요? | 최종 판정 규칙 |
@@ -244,3 +301,151 @@ Response 201:
 | `GPS_PHOTO_AI` | PENDING, gps 결과는 저장 후 대기 | 필요 | gps_passed AND ai_passed |
 | `PHOTO`, `GPS_PHOTO` | **체크인 시점에 400 (ILLEGAL_STATE)** | — | MVP 미지원 |
 
+
+---
+
+## 9. 단독 인증 엔드포인트 (Spring 미경유)
+
+§4까지가 **백엔드 경유** 경로다. 아래는 Spring을 거치지 않고 ai-service만으로 판정을 받는 경로다.
+GPS 판정 로직을 백엔드 `GpsVerificationEvaluator`에서 ai-service로 옮겼기 때문에(`ai-service/gps.py`)
+판정에 DB가 필요 없다. **백엔드 코드는 이 작업에서 변경하지 않았다.**
+
+### 9.1 무엇을 하지 않는가
+
+**판정만 한다.** 아래는 전부 백엔드의 몫이고 ai-service엔 저장소가 없다.
+
+- 인증(JWT)·소유권 검증 — 지금은 무인증이다 (§1.2와 같은 내부망 전제)
+- 중복 인증 차단, 체크인 레코드 생성·갱신
+- 스트릭·코인·참여율 갱신
+- `verification_decisions` 등 판정 이력 저장
+
+앱이 이 경로만으로 인증을 "완료"할 수는 없다. 기록이 필요한 흐름은 여전히 백엔드를 거쳐야 한다.
+
+### 9.2 `POST /verify/gps`
+
+`application/json`. 모델을 호출하지 않는다.
+
+| 필드 | 타입 | 제약 |
+|---|---|---|
+| `target_lat` / `target_lng` | number | -90~90 / -180~180 (백엔드 `LocationRequest`와 동일) |
+| `radius_meters` | int | > 0 (백엔드 `@Positive`, DB `CHECK`와 동일) |
+| `submitted_lat` / `submitted_lng` | number | 동일 |
+
+**Response 200**
+
+```json
+{
+  "passed": false,
+  "distance_meters": 111.19,
+  "radius_meters": 50,
+  "target_lat": 37.5665, "target_lng": 126.9780,
+  "submitted_lat": 37.5675, "submitted_lng": 126.9780,
+  "failure_reason": "GPS_OUT_OF_RADIUS"
+}
+```
+
+**반경 밖은 200 + `passed=false`다.** 백엔드 A축은 같은 상황을 400 `GPS_OUT_OF_RANGE`로 끊지만
+그건 체크인 레코드를 만들지 않으려는 흐름 제어이지 판정의 성패가 아니다. 흐름 제어는 호출자가 정한다.
+
+**백엔드와 같은 답을 내기 위해 지킨 것** (`ai-service/gps.py`)
+
+- 지구 반지름 `6_371_000.0` m, Haversine 공식 동일
+- 판정은 **반올림 전 거리**로 `distance <= radius` — 경계값(거리 == 반경)은 통과
+- 보고용 `distance_meters`만 소수 둘째 자리 `HALF_UP` (백엔드 `NUMERIC(10,2)`와 동일)
+
+### 9.3 `POST /verify/photo`
+
+`POST /verify`(§4)와 **같은 핸들러**다. 요청·응답 형식이 완전히 같다.
+`/verify`는 백엔드 `AiVerificationClient`가 부르는 기존 계약이라 남겨 둔다.
+
+### 9.4 `POST /verify/check-in`
+
+`multipart/form-data`. 인증 방식 하나로 GPS·사진을 묶어 최종 판정까지 낸다 —
+백엔드가 체크인과 사진 업로드 두 번에 나눠 하던 판정을 한 번에 한다.
+
+| 필드 | 필수 | 설명 |
+|---|---|---|
+| `verification_type` | O | `GPS` \| `AI` \| `GPS_PHOTO_AI` |
+| `category`, `image` | AI 계열일 때 | §4와 동일한 제약 |
+| `target_lat`, `target_lng`, `radius_meters`, `submitted_lat`, `submitted_lng` | GPS 계열일 때 | §9.2와 동일 |
+
+최종 규칙은 백엔드 `finalizeDecisionAfterAi`와 같다 (§8.5 표와 동일).
+
+| verification_type | 최종 판정 | 실패 사유 |
+|---|---|---|
+| `GPS` | `gps_passed` | `GPS_OUT_OF_RADIUS` |
+| `AI` | `ai_passed` (GPS를 보지 않음) | `AI_REJECTED` |
+| `GPS_PHOTO_AI` | `gps_passed AND ai_passed` | GPS 실패가 우선 |
+
+**Response 200**
+
+```json
+{
+  "verification_type": "GPS_PHOTO_AI",
+  "decision_status": "CONFIRMED",
+  "final_passed": true,
+  "failure_reason": null,
+  "gps": { "passed": true, "distance_meters": 12.34, "radius_meters": 50, "failure_reason": null },
+  "ai": { "passed": true, "confidence_score": 0.87, "storage_key": "exercise/20260829/ab12.png" }
+}
+```
+
+`decision_status`는 항상 `CONFIRMED`다 — 사진까지 이 요청 안에서 받으므로 유보할 이유가 없다.
+`PENDING`은 백엔드가 두 단계로 나눠 부를 때만 생긴다.
+
+**Response 4xx**
+
+| 상태 | 상황 |
+|---|---|
+| 400 | `verification_type`이 `PHOTO`·`GPS_PHOTO` 등 미지원 (백엔드도 체크인 시점에 거절) |
+| 400 | 인증 방식이 요구하는 필드 누락 (어떤 필드인지 `detail`에 나열) |
+| 413 / 415 / 422 | §4와 동일 |
+
+---
+
+## 10. AI 오케스트레이션 — LangChain
+
+모델 호출은 전부 LangChain을 거친다.
+
+```python
+ChatPromptTemplate | ChatAnthropic.with_structured_output(PhotoVerdict, include_raw=True)
+```
+
+`PhotoVerdict` 스키마가 도구 정의로 바뀌어 `tool_choice`로 모델에 강제되므로,
+응답 본문을 손으로 파싱할 일이 없다. 프롬프트에서 "JSON만 반환하라" 지시를 뺀 것도 그래서다.
+
+### 10.1 계약에 생긴 변화 — 502
+
+**모델에서 판정을 못 받으면 이제 502다.** 예전 구현은 파싱 실패를 `passed=false`로 폴백해서
+**모델이 형식을 틀린 것과 실제 인증 거절이 구분되지 않았다** — 멀쩡한 사진을 올린 사용자가
+반려당하는 경로였다. 백엔드는 5xx를 재시도 가능한 `AI_VERIFICATION_502`로 번역하므로
+(§8.4) 거짓 거절 대신 재시도가 된다. **백엔드 코드 변경 없이 동작하는 개선이다.**
+
+### 10.2 전환 범위
+
+| 항목 | 전환 여부 |
+|---|---|
+| 사진 판정 모델 호출 | ✅ LangChain (`ChatAnthropic`) |
+| 프롬프트 조립 | ✅ `ChatPromptTemplate` |
+| 출력 파싱 | ✅ structured output (수동 파서 삭제) |
+| GPS 판정 | ❌ 전환 대상 아님 — 모델이 개입하지 않는 순수 계산 |
+| 이미지 저장 | ❌ 전환 대상 아님 — `Storage` 인터페이스 유지 |
+
+### 10.3 모델에게 나가는 문구는 네 갈래다
+
+structured output으로 바뀌면서 "프롬프트"의 범위가 넓어졌다. `system`과 사용자
+메시지 텍스트만이 아니라, LangChain이 도구 정의로 실어 보내는 다음 두 곳도
+그대로 모델이 읽는 지시문이다.
+
+1. `system` — 판별기 역할·판단 원칙
+2. 사용자 메시지 텍스트 블록 — 카테고리별 판정 기준
+3. `tools[].input_schema.properties[].description` — `PhotoVerdict` 필드별 출력 지시
+4. `tools[].description` — 도구 자체의 설명
+
+3·4번이 함정이었다. 특히 4번은 한때 `PhotoVerdict` 클래스의 **docstring**이었다 —
+코드를 설명하려고 쓴 문장이 그대로 판정 프롬프트로 나가고 있었고, 실제로 리팩터링
+중 그 docstring을 고쳤다가 라이브 프롬프트가 바뀌는 사고가 있었다. 지금은 네 갈래
+전부 `ai-service/policies/verification.yaml`에서 나온다 (`schemas.py`가
+`json_schema_extra`로 도구 설명을 덮어써 docstring이 새어 나가지 않게 막는다).
+`ai-service/tests/test_prompt_policy.py`가 조립된 payload 전체를 골든 스냅샷으로
+고정해 이 중 하나라도 조용히 바뀌는 것을 잡는다.

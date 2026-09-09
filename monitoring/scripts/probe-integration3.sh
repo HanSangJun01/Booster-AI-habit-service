@@ -45,7 +45,7 @@ mkchallenge() { # $1=approvalType $2=deposit $3=creatorSlot  -> id
     -H "Authorization: Bearer ${TOK[$3]}" \
     -d "{\"title\":\"p3_${1}_${STAMP}_$RANDOM\",\"category\":\"HEALTH\",\"verificationType\":\"GPS\",
          \"durationDays\":14,\"depositCoins\":$2,\"maxParticipants\":10,
-         \"visibility\":\"PUBLIC\",\"approvalType\":\"$1\"}")
+         \"visibility\":\"PUBLIC\",\"approvalType\":\"$1\",\"gpsLat\":37.5665,\"gpsLng\":126.9780,\"gpsRadiusMeters\":100,\"gpsPlaceName\":\"CityHall\"}")
   echo "$resp" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2
 }
 
@@ -146,6 +146,9 @@ fi
 hdr "R7: 예치금 > 잔액 참여 (음수/과차감)"
 BAL7=$(psql_q "SELECT coin_balance FROM users WHERE id=${UID_[8]};")
 BIG=$(( ${BAL7:-0} + 100000 ))
+# 방장도 생성 시점에 예치금을 내므로(방장 자동 참가), 생성자에게 먼저 예치금 이상의 잔액을 준다.
+# 안 그러면 "예치금 > 방장 잔액"으로 챌린지 생성 자체가 거부되어 이 시나리오에 도달하지 못한다.
+psql_q "UPDATE users SET coin_balance=$(( BIG + 1000 )) WHERE id=${UID_[1]};" >/dev/null
 CH7=$(mkchallenge AUTO "$BIG" 1)
 if [ -z "${CH7:-}" ]; then skip "R7 챌린지 생성 실패(대형 예치금)"; else
   J7=$(join "$CH7" 8)

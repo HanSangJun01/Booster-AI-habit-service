@@ -1,7 +1,18 @@
 # A축 계획서(bs-25) ↔ 실제 기준 대조 / 어긋난 부분 정리
 
+> ## ⚠️ 이 대조표는 만료됐다 (2026-08-27)
+>
+> A축 착수 전(2026-06-20) 계획서와 스펙의 차이를 정리한 문서다. 그 뒤 A축이 구현되고
+> **복귀 미션 → 주간 목표 모델 전환**까지 일어나 여기서 비교한 양쪽이 모두 바뀌었다.
+>
+> **현재 기준선**: `docs/project-plan.md` · `docs/api/MVP_API_SPEC.md` · `docs/erd/MVP_ERD.md`
+>
+> 아래는 당시 판단 기록으로 보존한다.
+
+---
+
 > 작성일: 2026-06-20
-> 목적: A축 구현 착수 전, `docs/plan-axis-a-backend.md`(bs-25) 초안을 **실제 기준**과 대조하여 조정 지점을 확정한다.
+> 목적: A축 구현 착수 전, `docs/backend/plan-axis-a-backend.md`(bs-25) 초안을 **실제 기준**과 대조하여 조정 지점을 확정한다.
 > 비교 대상:
 > - (가) 범용 MVP 스펙 — `docs/erd/MVP_ERD.md`, `docs/api/MVP_API_SPEC.md` (main)
 > - (나) B축 실제 구현 — `origin/feature/BS-26-b-axis-backend` (Spring Boot, `com.booster`)

@@ -43,11 +43,15 @@ const SEED_LAT = 37.5665;
 const SEED_LNG = 126.9780;
 
 // A축 읽기 엔드포인트들 (전부 JWT 필요). tags.name 으로 엔드포인트별 통계가 따로 잡힘.
+// ★ /api/personal/recovery/status 는 복귀 미션 폐지(V14)와 함께 삭제된 경로다.
+//   그대로 두면 읽기 부하의 20%가 404 로 새고, 404 는 DB 도 안 타고 즉시 리턴되므로
+//   p95 가 실제보다 좋게 나온다(Grafana 「요청량」에 uri="/**" 로 잡혀 발견됨).
+//   후신인 주간 목표 조회로 교체한다 — 같은 성격(개인 트랙 상태 조회)이고 실제로 DB 를 탄다.
 const READ_ENDPOINTS = [
   '/api/dashboard/home',
   '/api/users/me/coins',
   '/api/personal/check-in/today',
-  '/api/personal/recovery/status',
+  '/api/personal/weekly-goal',
   '/api/users/me/location',
 ];
 

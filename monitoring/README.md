@@ -37,6 +37,53 @@
 |---|---|
 | `probe-integration.sh` | 통합면 논리버그를 한 방씩 찌름(부하 아님, P1~P8): 코인보존·잔액경합·팀채팅 권한·size 클램프·본문길이·응원 ID공간·A/B 체크인 연쇄·actuator 노출. 결과 `[BUG]`/`[OK]`/`[??]` |
 | `probe-integration2.sh` | 2차 프로브 — 돈 정합성·동시성·엣지(Q1~Q5): PENDING 취소 환불·동시취소 이중환불·leaderboard 필수파라미터·정원 초과 동시참여·응원 중복. 발견 내역은 [FINDINGS_5차](../docs/monitoring/load-findings/FINDINGS_5차.md) |
+| `probe-integration3.sh` | 3차 프로브 — 권한(멤버십)·라이프사이클·정보노출: 조회 API 멤버십 검사 누락, 탈퇴(soft delete)와 진행중 챌린지 연동 공백, 종료 전 정산결과 조회 |
+| `probe-frontend-blockers.sh` | 프론트 블로킹 이슈 수정 검증(F1~F10) — 정원 고정·방장 자동참가·참가자 목록·내 챌린지·submissionId·multipart 상한·가입 토큰·에러코드·좀비 인증타입 |
+| `probe-weekly-goal.sh` | 주간 목표 모델 전환 후 A축 개인 트랙 HTTP 계약(W1~W12) — 목표 예약·구제권·스트릭 |
+| `probe-user-journey.sh` | **여정 프로브(J1~J8)** — 엔드포인트 단위가 아니라 사용자가 앱에서 밟는 순서 그대로 기능을 가로질러 따라간다(온보딩→AI 전환→사진→팀 챌린지→코인 고갈→구제 유예→탈퇴→전역 정합성). 기능 사이 경계의 결함 탐지용 |
+| `watch-bugs.sh` | **버그 관측 러너** — 스택 전체를 한 번에 띄우고(`up`), 지표 현재값을 찍고(`status`), 결함을 눈앞에서 재현한다(`demo`). 아래 §버그 관측 참고 |
+| `load.sh` | **부하 러너** — k6 를 Docker 로 돌린다(로컬 설치 불필요). `load` / `write` / `stress` / `soak`. 시나리오별로 "무슨 패널을 왜 봐야 하는지"를 실행 전에 안내한다 |
+
+---
+
+## 버그 관측 — 고치기 전에 지켜보기
+
+`probe-user-journey.sh` 가 찾은 결함을 **수정하지 않고** 계속 관측하기 위한 세트. 애플리케이션 코드는 건드리지 않는다.
+
+기존 `a-axis-overview` / `b-axis-overview` 는 "요청이 얼마나 빨랐나"(actuator)를 본다. 이번 결함들은 HTTP 계층에 흔적이 없고 **남은 데이터의 상태**로만 드러나므로(반경이 얼마나 큰가, 벌칙이 몇 번 적용됐나), postgres_exporter 로 DB 를 직접 센다.
+
+| 파일 | 무엇 |
+|---|---|
+| `postgres-exporter/queries.yaml` | DB → Prometheus 지표 변환 쿼리. `booster_gps_radius_*` / `booster_weekly_penalty_*` / `booster_rescue_*` / `booster_integrity_*` / `booster_shedlock_*` |
+| `grafana/dashboards/bug-watch.json` | 대시보드 `booster-bug-watch`. 상단 4개 stat 이 0 이 아니면 그 결함이 실제로 발생 중 |
+| `scripts/watch-bugs.sh` | 기동 · 상태 · 재현 · 정리 |
+
+```bash
+monitoring/scripts/watch-bugs.sh up      # DB·백엔드·Prometheus·Grafana·exporter 전부 detached
+# → Grafana http://localhost:3000/d/booster-bug-watch  (admin/admin)
+
+monitoring/scripts/watch-bugs.sh demo doublepunish   # ★ 구제 만료 이중 처벌 재현
+monitoring/scripts/watch-bugs.sh demo radius         # 반경 상한 부재 (시드니에서 인증 통과)
+monitoring/scripts/watch-bugs.sh demo badradius      # 반경 검증이 400 대신 409
+monitoring/scripts/watch-bugs.sh demo rescue         # 구제 유예 파이프라인
+
+monitoring/scripts/watch-bugs.sh status  # 지표 현재값
+monitoring/scripts/watch-bugs.sh reset   # demo 가 만든 demo-*@bugwatch.local 만 삭제
+monitoring/scripts/watch-bugs.sh down
+```
+
+**핵심 지표 읽는 법**
+
+| 지표 | 정상 | 뜻 |
+|---|---|---|
+| `booster_weekly_penalty_duplicate_penalty_users` | 0 | 0 이 아니면 같은 날 미달 벌칙이 2회 이상 적용됨 = 구제 만료 중복 실행 |
+| `penalty_total` vs `failed_evaluations` | 같음 | 벌어지면 위와 같은 원인 |
+| `booster_gps_radius_*_max_meters` | 수백 m | 1km 넘으면 의심, 100km 넘으면 GPS 인증 우회 |
+| `booster_rescue_overdue_not_expired` | 하루 내 0 | 계속 남으면 만료 스케줄러(00:10 KST)가 안 돌거나 실패 중 |
+| `booster_integrity_*` | 전부 0 | 하나라도 오르면 회귀 |
+| `booster_shedlock_age_seconds{name=...}` | — | 여기 나오는 스케줄러만 다중 인스턴스에서 1회 실행. 주간목표 3종이 없는 것이 결함 |
+
+`demo doublepunish` 는 실제 발동 조건(인스턴스 2대 + KST 00:10 + 만료 대상)을 기다릴 수 없으므로, `expireOverdueRescues` 가 내보내는 쓰기를 그대로 두 번 재현한다 — 락을 기다리던 두 번째 인스턴스가 낡은 스냅샷을 보고 또 처리하는 상황.
 
 **러너 · 헬퍼 (B축)**
 | 파일 | 무엇 |

@@ -1,9 +1,11 @@
 package com.booster.personallocation.dto;
 
+import com.booster.shared.common.GpsPolicy;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 public record LocationRequest(
@@ -16,7 +18,8 @@ public record LocationRequest(
         Double lng,
 
         @NotNull(message = "반경은 필수입니다.")
-        @Positive(message = "반경은 0보다 커야 합니다.")
+        @Min(value = GpsPolicy.MIN_RADIUS_METERS, message = GpsPolicy.RADIUS_MESSAGE)
+        @Max(value = GpsPolicy.MAX_RADIUS_METERS, message = GpsPolicy.RADIUS_MESSAGE)
         Integer radiusMeters,
 
         @Size(max = 200)

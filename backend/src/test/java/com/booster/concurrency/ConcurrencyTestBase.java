@@ -8,11 +8,10 @@ import com.booster.coin.repository.CoinTransactionRepository;
 import com.booster.coin.service.CoinService;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalCheckInService;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.personallocation.dto.LocationRequest;
 import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
-import com.booster.recovery.repository.RecoveryMissionRepository;
-import com.booster.recovery.service.RecoveryService;
 import com.booster.streak.repository.StreakRepository;
 import com.booster.user.repository.UserRepository;
 import jakarta.persistence.EntityManager;
@@ -75,13 +74,11 @@ public abstract class ConcurrencyTestBase {
     @Autowired protected AuthService authService;
     @Autowired protected PersonalLocationService personalLocationService;
     @Autowired protected PersonalCheckInService personalCheckInService;
-    @Autowired protected RecoveryService recoveryService;
     @Autowired protected CoinService coinService;
 
     @Autowired protected UserRepository userRepository;
     @Autowired protected StreakRepository streakRepository;
     @Autowired protected PersonalCheckInRepository personalCheckInRepository;
-    @Autowired protected RecoveryMissionRepository recoveryMissionRepository;
     @Autowired protected CoinTransactionRepository coinTransactionRepository;
     @Autowired protected PersonalLocationRepository personalLocationRepository;
 
@@ -98,8 +95,19 @@ public abstract class ConcurrencyTestBase {
     /** 가입(보너스 +500) + 개인 위치 등록까지 마친 신규 유저 id 반환. */
     protected Long newUserWithLocation(String prefix) {
         String email = prefix + SEQ.incrementAndGet() + "-" + System.nanoTime() + "@ct.test";
-        Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
+        // 닉네임도 유일해야 한다 — 가입이 활성 계정 기준 닉네임 중복을 막는다.
+        String nickname = "u" + System.nanoTime();
+        Long userId = authService.signup(new SignupRequest(email, "password1234", nickname)).userId();
         personalLocationService.register(userId, new LocationRequest(LAT, LNG, 100, "home"));
+        // 인증 방식을 GPS 단독으로 둔다. 기본값(GPS_PHOTO_AI)이면 체크인이 PENDING 으로 남아
+        // 사진을 기다리는데, 이 패키지가 보는 건 사진 판정이 아니라 동시 요청의 레이스
+        // (중복 체크인·코인 이중 차감·참여율 Lost Update)다. 체크인이 그 자리에서 확정돼야
+        // 그 레이스를 그대로 재현할 수 있다.
+        //
+        // 이 클래스는 일부러 비트랜잭셔널이라(위 주석 참조) 더티체킹이 돌지 않는다.
+        // inTransaction 으로 감싸야 변경이 실제로 커밋된다.
+        inTransaction(() -> personalLocationRepository.findById(userId).orElseThrow()
+                .changeVerificationType(VerificationType.GPS));
         return userId;
     }
 

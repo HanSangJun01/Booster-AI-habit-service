@@ -26,6 +26,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import com.booster.shared.common.BusinessException;
 
 @Slf4j
 @Service
@@ -83,7 +84,8 @@ public class SettlementService {
         try {
             List<Team> teams = teamRepository.findByChallengeId(challengeId);
             if (teams.size() < 2) {
-                throw new IllegalStateException("Challenge must have 2 teams for settlement: " + challengeId);
+                throw BusinessException.conflict("TEAMS_NOT_FORMED",
+                        "정산하려면 팀이 2개여야 합니다: challengeId=" + challengeId);
             }
 
             Team teamA = teams.get(0);

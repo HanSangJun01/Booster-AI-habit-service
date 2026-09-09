@@ -1,0 +1,51 @@
+name: booster_app
+description: Booster - 팀 기반 습관 챌린지 앱 (목업 → Flutter)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  geolocator: ^14.0.3
+  flutter_map: ^8.3.1
+  latlong2: ^0.10.1
+  shared_preferences: ^2.5.5
+  image_picker: ^1.1.2
+  # MultipartFile의 contentType을 지정하려면 필요하다. http가 이미 끌어오는
+  # 패키지지만, 직접 import하므로 명시한다.
+  http_parser: ^4.0.2
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/booster_emblem.png
+
+  # Pretendard (SIL OFL 1.1) — 라이선스 전문은 assets/fonts/OFL.txt.
+  #
+  # 앱에서 실제로 쓰는 굵기만 넣는다. 9종을 다 넣으면 14MB인데 Thin·Light 등은
+  # 한 번도 안 쓴다. TTF가 아니라 OTF인 이유도 같다 — 같은 글립을 담고도 파일이
+  # 40% 작다(1.5MB vs 2.5MB).
+  fonts:
+    - family: Pretendard
+      fonts:
+        - asset: assets/fonts/Pretendard-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Pretendard-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Pretendard-SemiBold.otf
+          weight: 600
+        - asset: assets/fonts/Pretendard-Bold.otf
+          weight: 700
+        - asset: assets/fonts/Pretendard-ExtraBold.otf
+          weight: 800
+        - asset: assets/fonts/Pretendard-Black.otf
+          weight: 900

@@ -19,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -28,6 +29,14 @@ public class AiVerificationClient {
 
     @Value("${AI_SERVICE_URL:http://localhost:8000}")
     private String baseUrl;
+
+    /**
+     * ai-service 공유 시크릿. ai-service 쪽 AI_SERVICE_API_KEY 와 같은 값이어야 한다.
+     * 비어 있으면 헤더를 보내지 않는다(로컬 개발 — ai-service 쪽도 미설정이어야 통신됨).
+     * 운영에서는 반드시 설정하라 — 없으면 ai-service 가 무인증 과금 프록시로 노출된다.
+     */
+    @Value("${AI_SERVICE_API_KEY:}")
+    private String serviceApiKey;
 
     private final ObjectMapper objectMapper;
     private HttpClient httpClient;
@@ -40,16 +49,32 @@ public class AiVerificationClient {
                 .build();
     }
 
+    /**
+     * ai-service 가 판정할 수 있는 카테고리.
+     *
+     * <p>여기서 걸러내지 않으면 잘못된 값이 그대로 넘어가 ai-service 가 422 를 주고, 이 클라이언트는
+     * upstream 4xx 를 "계약 오류"로 보아 <b>500</b> 으로 올린다. 사용자 입력 때문에 서버 오류가
+     * 나는 셈이라, 경계에서 400 으로 돌려준다. 개인·팀 두 인증 경로가 모두 이 메서드를 지난다.
+     */
+    private static final Set<String> SUPPORTED_CATEGORIES = Set.of("EXERCISE", "STUDY");
+
     public AiServiceVerdict verify(String category, byte[] imageBytes, String filename, MediaType mediaType) {
+        if (category == null || !SUPPORTED_CATEGORIES.contains(category)) {
+            throw new AiVerificationException(HttpStatus.BAD_REQUEST,
+                    "AI 인증은 EXERCISE 또는 STUDY 만 판정할 수 있습니다: " + category);
+        }
         String boundary = "----BoosterBoundary" + UUID.randomUUID();
         byte[] body = buildMultipartBody(boundary, category, imageBytes, filename, mediaType.toString());
 
-        HttpRequest request = HttpRequest.newBuilder()
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/verify"))
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        if (serviceApiKey != null && !serviceApiKey.isBlank()) {
+            requestBuilder.header("X-API-Key", serviceApiKey);
+        }
+        HttpRequest request = requestBuilder.build();
 
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());

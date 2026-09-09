@@ -1,5 +1,21 @@
 # Booster 데이터베이스 설계 계획서
 
+> ## ⚠️ 일부 내용이 현재 스키마와 다르다 (2026-08-27)
+>
+> 이 문서 이후 V7~V16이 추가되며 스키마가 크게 바뀌었다.
+>
+> - `recovery_missions` **삭제** (V14, 복귀 미션 폐지)
+> - `personal_locations` / `personal_check_ins` / `personal_ai_verifications` / `weekly_evaluations` 추가
+> - `users` 에 구제권 컬럼 추가 (`free_recovery_tickets` / `paid_recovery_tickets` / `tickets_granted_month`)
+> - `ai_verification_results` 는 Phase 2가 아니라 **구현 완료**
+> - `team_members` / `leaderboards` / `notifications` / `user_settings` / `challenge_rules` 는 **만들지 않았다**
+>
+> **현재 기준선**: `docs/erd/MVP_ERD.md` · 컬럼 수준은 `backend/src/main/resources/db/migration/V1~V16`
+>
+> 아래는 2026-06 시점의 설계 기록으로 보존한다.
+
+---
+
 > 대상: Booster B-axis 백엔드 기능을 지원하기 위한 데이터베이스 설계  
 > 기준 문서: `Booster B-axis 백엔드 구현 계획서 (BS-19)`  
 > 기술 스택: PostgreSQL + Spring Data JPA + Flyway  

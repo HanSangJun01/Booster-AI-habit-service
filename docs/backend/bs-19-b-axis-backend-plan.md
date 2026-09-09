@@ -1,5 +1,22 @@
 # Booster B-axis 백엔드 구현 계획서 (BS-19)
 
+> ## ⚠️ 일부 내용이 현재 구현과 다르다 (2026-08-27)
+>
+> B축 핵심 설계(챌린지·팀·정산)는 유효하지만, 아래는 이후 변경됐다.
+>
+> - 챌린지 경로가 `/api/teams/{teamId}/challenges` → **`/api/challenges`** 로 독립
+> - 팀 생성 API 없음. 정원 10명 충족 시 **서버가 5:5 자동 편성 + 자동 시작**
+> - 정원 **10명 고정** (가변 아님)
+> - **방장이 자동으로 CONFIRMED 참가자**가 되고 예치금도 차감된다
+> - GPS 실패가 서버 로그가 아니라 **400 + 거리 안내**로 나간다
+> - AI 인증은 Phase 2가 아니라 **구현 완료**
+>
+> **현재 기준선**: `docs/project-plan.md` §5 · `docs/api/MVP_API_SPEC.md` §7
+>
+> 아래는 2026-06 시점의 결정 기록으로 보존한다.
+
+---
+
 > 대상: Challenge / Team / ChallengeCheckIn / Settlement 백엔드 (B-axis)
 > 기반: deep-interview `di-booster-20260531` (Ambiguity 19.5%, PASSED)
 > 기술 스택: Spring Boot REST API + PostgreSQL

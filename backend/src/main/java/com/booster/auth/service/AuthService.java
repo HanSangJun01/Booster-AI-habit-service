@@ -39,6 +39,12 @@ public class AuthService {
             throw BusinessException.conflict("DUPLICATE_EMAIL", "이미 사용 중인 이메일입니다.");
         }
 
+        // 닉네임은 팀 화면·승인 목록·리더보드에서 사람을 가리키는 이름이라, 같은 이름이 여럿이면
+        // 방장이 누구를 승인하는지 알 수 없다. 탈퇴한 계정의 닉네임은 다시 쓸 수 있게 둔다.
+        if (userRepository.existsByNicknameAndActiveTrue(request.nickname())) {
+            throw BusinessException.conflict("DUPLICATE_NICKNAME", "이미 사용 중인 닉네임입니다.");
+        }
+
         // (BS-30 7차 F4) 동시 가입으로 위 존재검사를 둘 다 통과하면 두 번째 save가 email UNIQUE를
         // 위반한다. IDENTITY라 save()에서 즉시 INSERT되어 여기서 잡히므로 500이 아닌 409로 변환.
         User user;
@@ -54,7 +60,10 @@ public class AuthService {
         streakRepository.save(Streak.init(user.getId()));
         coinService.grant(user.getId(), signupBonus, CoinTransactionReason.SIGNUP_BONUS, null);
 
-        return SignupResponse.from(user);
+        // 가입 응답에 토큰을 함께 준다. 없으면 클라이언트가 곧바로 login 을 한 번 더 호출해야 해
+        // BCrypt 가 두 번(해싱 + 검증) 돌아 체감 지연이 두 배가 된다.
+        String accessToken = jwtTokenProvider.createAccessToken(user.getId());
+        return SignupResponse.from(user, accessToken);
     }
 
     /** 로그인 → JWT Access Token 발급. */

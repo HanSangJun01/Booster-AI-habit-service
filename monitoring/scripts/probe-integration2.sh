@@ -46,7 +46,7 @@ mkchallenge() {
     -H "Authorization: Bearer ${TOK[$3]}" \
     -d "{\"title\":\"p2_${1}_${STAMP}_$RANDOM\",\"category\":\"HEALTH\",\"verificationType\":\"GPS\",
          \"durationDays\":14,\"depositCoins\":$2,\"maxParticipants\":10,
-         \"visibility\":\"PUBLIC\",\"approvalType\":\"$1\"}")
+         \"visibility\":\"PUBLIC\",\"approvalType\":\"$1\",\"gpsLat\":37.5665,\"gpsLng\":126.9780,\"gpsRadiusMeters\":100,\"gpsPlaceName\":\"CityHall\"}")
   echo "$resp" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2
 }
 

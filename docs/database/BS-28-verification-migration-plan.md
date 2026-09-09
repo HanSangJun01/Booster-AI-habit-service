@@ -1,5 +1,17 @@
 # BS-28 인증 결과 테이블 마이그레이션 설계 (채택안)
 
+> ## ⚠️ 이 마이그레이션 계획은 실행 완료됐고 이후 확장됐다 (2026-08-27)
+>
+> 여기서 계획한 인증 스키마는 V3에 반영됐고, 그 뒤 **V12(팀 AI) · V13(decision_status) ·
+> V16(개인 AI)** 로 확장됐다. 개인 트랙은 이 문서의 구조를 복제하지 않고
+> `personal_check_ins → personal_ai_verifications` 1:1로 단순화했다.
+>
+> **현재 기준선**: `docs/erd/MVP_ERD.md` §3
+>
+> 아래는 당시 계획 기록으로 보존한다.
+
+---
+
 > 대상: 인증/검증 모듈의 인증 결과 저장 구조 (DB/API 구조 설계)
 > 기준 문서: `MVP_ERD.md`, `MVP_API_SPEC.md`, `bs-22-database-design-plan.md`, 실제 `V1__init_schema`
 > 기술 스택: PostgreSQL + Spring Data JPA + Flyway

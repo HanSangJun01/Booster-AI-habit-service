@@ -11,6 +11,9 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.stream.Collectors;
@@ -99,6 +102,41 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMissingParam(MissingServletRequestParameterException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("필수 요청 파라미터가 누락되었습니다: " + ex.getParameterName(), "MISSING_PARAMETER"));
+    }
+
+    /**
+     * 업로드 용량 초과 → 413.
+     *
+     * <p>Spring 의 multipart 상한을 넘으면 {@link MaxUploadSizeExceededException} 이 던져지는데,
+     * 매핑이 없으면 catch-all 로 떨어져 <b>500 INTERNAL_ERROR</b> 가 된다. 클라이언트는 "사진이
+     * 너무 큽니다"를 안내해야 하는데 "서버 오류"로 보여 원인을 알 수 없다.
+     * ai-service·AiVerificationService 와 동일하게 413 으로 통일한다.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        log.warn("Upload exceeds max size: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error("업로드 용량이 너무 큽니다. 10MB 이하의 이미지를 사용하세요.",
+                        "PAYLOAD_TOO_LARGE"));
+    }
+
+    /**
+     * 매핑되지 않은 경로 → 404.
+     *
+     * <p>Spring Boot 3 는 핸들러를 못 찾으면 {@link NoResourceFoundException} 을 던지는데, 이 매핑이
+     * 없으면 catch-all {@code Exception} 핸들러로 떨어져 <b>모든 오타 URL 이 500 INTERNAL_ERROR</b>
+     * 로 나간다. 실제 영향:
+     * <ul>
+     *   <li>클라이언트가 "경로 오타"를 "서버 장애"로 오인한다</li>
+     *   <li>5xx 기반 모니터링·알람이 오작동한다</li>
+     *   <li>폐지된 엔드포인트를 호출해도 500이라 클라이언트가 원인을 알 수 없다</li>
+     * </ul>
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public ResponseEntity<ApiResponse<Void>> handleNoHandler(Exception ex) {
+        log.debug("No handler for request: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.error("요청한 경로를 찾을 수 없습니다.", "NOT_FOUND"));
     }
 
     /**

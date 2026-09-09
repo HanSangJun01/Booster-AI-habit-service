@@ -24,9 +24,14 @@ class F4ConcurrentSignupTest extends ConcurrencyTestBase {
     void concurrentSameEmailSignup_conflictMustBeBusinessException() throws Exception {
         String email = "dupF4-" + SEQ.incrementAndGet() + "-" + System.nanoTime() + "@ct.test";
 
+        // 겨루는 건 이메일이다. 닉네임까지 같으면 닉네임 중복 검사에 먼저 걸려 둘 다 실패하므로,
+        // 이메일만 충돌하도록 닉네임은 서로 다르게 준다.
+        String nicknameA = "f4a" + System.nanoTime();
+        String nicknameB = "f4b" + System.nanoTime();
+
         List<Throwable> errors = runConcurrently(List.of(
-                () -> authService.signup(new SignupRequest(email, "password1234", "u")),
-                () -> authService.signup(new SignupRequest(email, "password1234", "u"))));
+                () -> authService.signup(new SignupRequest(email, "password1234", nicknameA)),
+                () -> authService.signup(new SignupRequest(email, "password1234", nicknameB))));
 
         // 이메일 UNIQUE 상, 정확히 1명만 생성되어야 한다.
         assertThat(userRepository.findByEmail(email))

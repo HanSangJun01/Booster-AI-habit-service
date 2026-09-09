@@ -54,7 +54,7 @@ hdr "P1: 코인 보존 (B축 참가비 차감이 정확히 depositCoins 만큼�
 COIN_BEFORE=$(psql_q "SELECT coin_balance FROM users WHERE id=${UID_[1]};")
 CH=$(curl -s -X POST "$API/api/challenges" -H 'Content-Type: application/json' "${AUTH1[@]}" \
   -d '{"title":"probe_coin","category":"HEALTH","verificationType":"GPS","durationDays":14,
-       "depositCoins":100,"maxParticipants":10,"visibility":"PUBLIC","approvalType":"AUTO"}')
+       "depositCoins":100,"maxParticipants":10,"visibility":"PUBLIC","approvalType":"AUTO","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"CityHall"}')
 CH_ID=$(echo "$CH" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
 if [ -z "${CH_ID:-}" ]; then skip "챌린지 생성 실패 — 응답: $CH"; else
   curl -s -X POST "$API/api/challenges/$CH_ID/participants" -H 'Content-Type: application/json' "${AUTH1[@]}" \
@@ -72,7 +72,7 @@ A2=(-H "Authorization: Bearer ${TOK[2]}")
 for n in 1 2; do
   R=$(curl -s -X POST "$API/api/challenges" -H 'Content-Type: application/json' "${AUTH1[@]}" \
     -d "{\"title\":\"probe_bal$n\",\"category\":\"HEALTH\",\"verificationType\":\"GPS\",\"durationDays\":14,
-         \"depositCoins\":100,\"maxParticipants\":10,\"visibility\":\"PUBLIC\",\"approvalType\":\"AUTO\"}")
+         \"depositCoins\":100,\"maxParticipants\":10,\"visibility\":\"PUBLIC\",\"approvalType\":\"AUTO\",\"gpsLat\":37.5665,\"gpsLng\":126.9780,\"gpsRadiusMeters\":100,\"gpsPlaceName\":\"CityHall\"}")
   eval "RACE_CH$n=$(echo "$R" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)"
 done
 # 동시에 쏜다
@@ -90,7 +90,7 @@ hdr "P3: 남의 팀 채팅 읽기 (GET /teams/{id}/chat 멤버십 검사)"
 # 10명 채워 팀 자동편성 트리거
 TEAMCH=$(curl -s -X POST "$API/api/challenges" -H 'Content-Type: application/json' "${AUTH1[@]}" \
   -d '{"title":"probe_team","category":"HEALTH","verificationType":"GPS","durationDays":14,
-       "depositCoins":0,"maxParticipants":10,"visibility":"PUBLIC","approvalType":"AUTO"}')
+       "depositCoins":0,"maxParticipants":10,"visibility":"PUBLIC","approvalType":"AUTO","gpsLat":37.5665,"gpsLng":126.9780,"gpsRadiusMeters":100,"gpsPlaceName":"CityHall"}')
 TEAMCH_ID=$(echo "$TEAMCH" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
 for i in $(seq 1 10); do
   curl -s -o /dev/null -X POST "$API/api/challenges/$TEAMCH_ID/participants" -H 'Content-Type: application/json' \

@@ -12,7 +12,9 @@ import com.booster.challengecheckin.repository.VerificationDecisionRepository;
 import com.booster.challengecheckin.repository.VerificationSubmissionRepository;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
+import com.booster.shared.common.BusinessException;
 import com.booster.shared.common.ResourceNotFoundException;
+import com.booster.shared.common.Sha256;
 import com.booster.shared.common.UnauthorizedException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +28,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import com.booster.shared.common.BusinessException;
 
 @Slf4j
 @Service
@@ -69,8 +72,8 @@ public class AiVerificationService {
         }
 
         aiResultRepository.findBySubmissionId(submissionId).ifPresent(existing -> {
-            throw new IllegalStateException(
-                    "AI verification already exists for submission " + submissionId);
+            throw BusinessException.conflict("AI_VERIFICATION_ALREADY_EXISTS",
+                    "이미 AI 인증이 완료된 제출입니다.");
         });
 
         validateImage(image);
@@ -81,6 +84,14 @@ public class AiVerificationService {
         } catch (IOException e) {
             throw new AiVerificationException(HttpStatus.BAD_REQUEST, "이미지 읽기 실패", e);
         }
+
+        // (악용 방어) 사진 재사용 차단 — 같은 챌린지에서 동일 이미지가 이미 판정된
+        // 적이 있으면 AI를 부르기 전에 끊는다(호출 비용도 아낀다). 자기 재사용
+        // ("헬스장 사진 한 장으로 30일")과 팀원 간 돌려쓰기를 함께 잡는다.
+        // 스코프를 챌린지로 좁힌 이유: 전역 차단이면 무관한 챌린지의 우연한 동일
+        // 이미지(기본 배경 등)까지 막아 오탐이 된다.
+        String imageSha256 = Sha256.hex(bytes);
+        rejectIfImageReusedInChallenge(imageSha256, checkIn.getChallengeId());
 
         MediaType mediaType = MediaType.parseMediaType(image.getContentType());
         String filename = image.getOriginalFilename() != null
@@ -98,6 +109,7 @@ public class AiVerificationService {
                 .reason(verdict.reason())
                 .storageKey(verdict.storageKey())
                 .rawResponse(writeJson(verdict.rawResponse()))
+                .imageSha256(imageSha256)
                 .build());
 
         log.info("AI verification saved: submissionId={}, passed={}, confidence={}",
@@ -111,6 +123,19 @@ public class AiVerificationService {
                 .orElse(null);
 
         return toResponse(saved, verdict.detectedLabels(), finalPassed);
+    }
+
+    private void rejectIfImageReusedInChallenge(String imageSha256, Long challengeId) {
+        for (AiVerificationResult prior : aiResultRepository.findAllByImageSha256(imageSha256)) {
+            Long priorChallengeId = submissionRepository.findById(prior.getSubmissionId())
+                    .flatMap(s -> checkInRepository.findById(s.getCheckInId()))
+                    .map(ChallengeCheckIn::getChallengeId)
+                    .orElse(null);
+            if (challengeId.equals(priorChallengeId)) {
+                throw BusinessException.conflict("DUPLICATE_IMAGE",
+                        "이미 이 챌린지에서 사용된 사진입니다. 새로 촬영한 사진으로 인증해 주세요.");
+            }
+        }
     }
 
     private void validateImage(MultipartFile image) {

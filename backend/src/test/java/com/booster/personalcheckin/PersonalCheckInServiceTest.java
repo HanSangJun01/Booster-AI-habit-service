@@ -6,7 +6,9 @@ import com.booster.personalcheckin.domain.PersonalCheckInStatus;
 import com.booster.personalcheckin.dto.CheckInResponse;
 import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalCheckInService;
+import com.booster.challenge.domain.VerificationType;
 import com.booster.personallocation.dto.LocationRequest;
+import com.booster.personallocation.repository.PersonalLocationRepository;
 import com.booster.personallocation.service.PersonalLocationService;
 import com.booster.shared.common.BusinessException;
 import com.booster.support.MutableClock;
@@ -34,14 +36,25 @@ class PersonalCheckInServiceTest {
     @Autowired PersonalLocationService personalLocationService;
     @Autowired PersonalCheckInService personalCheckInService;
     @Autowired PersonalCheckInRepository personalCheckInRepository;
+    @Autowired PersonalLocationRepository personalLocationRepository;
     @Autowired MutableClock clock;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
 
+    /**
+     * 위치 인증만으로 체크인이 확정되는 사용자.
+     *
+     * <p>기본 인증 방식은 GPS_PHOTO_AI 라 체크인이 PENDING 으로 남고 사진을 기다린다.
+     * 이 클래스가 보는 건 사진 판정이 아니라 <b>스트릭·코인·중복 방지 같은 체크인 자체의
+     * 규칙</b>이므로, GPS 단독으로 두어 체크인이 그 자리에서 SUCCESS 가 되게 한다.
+     * 사진 경로는 {@code PersonalAiVerificationServiceTest} 가 따로 본다.
+     */
     private Long newUserWithLocation() {
         String email = "p" + SEQ.incrementAndGet() + "@test.com";
         Long userId = authService.signup(new SignupRequest(email, "password1234", "u")).userId();
         personalLocationService.register(userId, new LocationRequest(37.0, 127.0, 100, "home"));
+        personalLocationRepository.findById(userId).orElseThrow()
+                .changeVerificationType(VerificationType.GPS);
         return userId;
     }
 
@@ -58,8 +71,9 @@ class PersonalCheckInServiceTest {
         assertThat(resp.coinBalance()).isEqualTo(500L); // 가입 보너스만
     }
 
+    /** 마일스톤 보상은 7번째 인증하는 그 순간 지급된다(주간 채점을 기다리지 않는다). */
     @Test
-    void sevenDayStreak_grantsRewardCoins() {
+    void sevenCheckIns_grantMilestoneRewardImmediately() {
         Long userId = newUserWithLocation();
         LocalDate start = LocalDate.of(2035, 3, 5);
 
@@ -70,8 +84,27 @@ class PersonalCheckInServiceTest {
         }
 
         assertThat(resp.currentStreak()).isEqualTo(7);
-        assertThat(resp.rewardGranted()).isTrue();
-        assertThat(resp.coinBalance()).isEqualTo(600L); // 500 + 100
+        assertThat(resp.rewardGranted()).as("7회 도달 즉시 보상").isTrue();
+        assertThat(resp.coinBalance()).as("가입 500 + 마일스톤 100").isEqualTo(600L);
+    }
+
+    /**
+     * [주간 목표 모델] 날짜 갭이 있어도 스트릭은 끊기지 않는다.
+     * 주 3회 목표라면 월·수·금 사이의 빈 날은 정상이기 때문이다.
+     * (과거 B1 수정이 강제하던 "갭 = 리셋"은 폐기됐고, 리셋은 주간 채점만 수행한다.)
+     */
+    @Test
+    void gapDay_doesNotBreakStreak() {
+        Long userId = newUserWithLocation();
+        LocalDate d = LocalDate.of(2035, 3, 2);
+
+        clock.setDate(d);
+        assertThat(personalCheckInService.checkIn(userId, 37.0, 127.0).currentStreak()).isEqualTo(1);
+
+        clock.setDate(d.plusDays(2)); // 하루 건너뜀
+        assertThat(personalCheckInService.checkIn(userId, 37.0, 127.0).currentStreak())
+                .as("갭이 있어도 누적된다 — 주간 목표 달성 여부는 주간 채점이 판정한다")
+                .isEqualTo(2);
     }
 
     @Test

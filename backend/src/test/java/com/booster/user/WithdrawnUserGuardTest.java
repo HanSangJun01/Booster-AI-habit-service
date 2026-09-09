@@ -7,9 +7,7 @@ import com.booster.personalcheckin.repository.PersonalCheckInRepository;
 import com.booster.personalcheckin.service.PersonalCheckInService;
 import com.booster.personallocation.dto.LocationRequest;
 import com.booster.personallocation.service.PersonalLocationService;
-import com.booster.recovery.domain.RecoveryMission;
-import com.booster.recovery.repository.RecoveryMissionRepository;
-import com.booster.recovery.service.RecoveryService;
+import com.booster.weeklygoal.service.RecoveryTicketService;
 import com.booster.shared.common.BusinessException;
 import com.booster.support.MutableClock;
 import com.booster.support.TestClockConfig;
@@ -44,9 +42,8 @@ class WithdrawnUserGuardTest {
     @Autowired UserService userService;
     @Autowired PersonalLocationService personalLocationService;
     @Autowired PersonalCheckInService personalCheckInService;
-    @Autowired RecoveryService recoveryService;
+    @Autowired RecoveryTicketService recoveryTicketService;
     @Autowired PersonalCheckInRepository personalCheckInRepository;
-    @Autowired RecoveryMissionRepository recoveryMissionRepository;
     @Autowired MutableClock clock;
 
     private static final AtomicInteger SEQ = new AtomicInteger();
@@ -119,27 +116,19 @@ class WithdrawnUserGuardTest {
     }
 
     /**
-     * [B3] 복귀 미션 보유 유저가 탈퇴 후 performRecovery 시도.
-     * 기대: 비활성 계정이므로 BusinessException으로 거부되어야 한다.
-     * 현재: active 검사가 없어 복귀가 정상 수행됨 → 예외 미발생 (RED).
+     * [B3 계승] 탈퇴 유저의 구제권 구매 시도.
+     *
+     * <p>복귀 미션이 폐지되면서 {@code performRecovery} 의 active 가드는 사라졌지만, 같은 성격의
+     * 가드가 구제권 구매 경로에 필요하다 — 비활성 계정이 코인을 쓰거나 스트릭 방어 수단을
+     * 확보하면 안 된다.
      */
     @Test
-    void withdrawnUser_cannotPerformRecovery() {
+    void withdrawnUser_cannotPurchaseRecoveryTicket() {
         Long userId = newUserWithLocation();
-        LocalDate today = LocalDate.of(2035, 5, 10);
-        clock.setDate(today);
-
-        // 대기 중 복귀 미션 세팅
-        PersonalCheckIn pending = personalCheckInRepository.save(
-                PersonalCheckIn.recoveryPending(userId, today.minusDays(1)));
-        OffsetDateTime deadline = today.atTime(23, 59, 59).atZone(MutableClock.KST).toOffsetDateTime();
-        recoveryMissionRepository.save(
-                RecoveryMission.createPending(userId, pending.getId(), deadline));
-
         userService.withdraw(userId);
 
-        assertThatThrownBy(() -> recoveryService.performRecovery(userId, 37.0, 127.0))
-                .as("탈퇴(비활성) 계정의 복귀 미션 수행은 거부되어야 한다")
+        assertThatThrownBy(() -> recoveryTicketService.purchase(userId))
+                .as("탈퇴(비활성) 계정의 구제권 구매는 거부되어야 한다")
                 .isInstanceOf(BusinessException.class);
     }
 }

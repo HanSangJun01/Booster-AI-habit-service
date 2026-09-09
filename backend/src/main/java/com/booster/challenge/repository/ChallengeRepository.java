@@ -34,4 +34,7 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
     List<Challenge> findByStatusAndEndedAtBefore(ChallengeStatus status, LocalDateTime threshold);
 
     List<Challenge> findByStatus(ChallengeStatus status);
+
+    /** 이 사람이 만든 특정 상태의 챌린지. 탈퇴 시 모집 중인 방을 해산하는 데 쓴다. */
+    List<Challenge> findByCreatedByAndStatus(Long createdBy, ChallengeStatus status);
 }

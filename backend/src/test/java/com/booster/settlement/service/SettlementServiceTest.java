@@ -29,6 +29,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import com.booster.shared.common.BusinessException;
 
 @ExtendWith(MockitoExtension.class)
 class SettlementServiceTest {
@@ -106,10 +107,10 @@ class SettlementServiceTest {
         when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
         when(settlementRepository.findByChallengeId(challengeId)).thenReturn(Optional.empty());
 
-        // 팀 1개만 반환 → teams.size() < 2 → IllegalStateException 발생
+        // 팀 1개만 반환 → teams.size() < 2 → BusinessException(409) 발생
         when(teamRepository.findByChallengeId(challengeId)).thenReturn(List.of(mock(Team.class)));
 
-        assertThrows(IllegalStateException.class, () -> settlementService.settleChallenge(challengeId));
+        assertThrows(BusinessException.class, () -> settlementService.settleChallenge(challengeId));
     }
 
     /**
