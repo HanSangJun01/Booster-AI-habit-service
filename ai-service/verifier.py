@@ -28,6 +28,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.prompts import ChatPromptTemplate
 
 import prompts
+from policy import POLICY
 from schemas import Category, PhotoVerdict, VerificationResult
 
 
@@ -133,5 +134,8 @@ class LangChainVerifier(Verifier):
             detected_labels=list(verdict.detected_labels),
             model_name=self.model,
             reason=verdict.reason,
-            raw_response=verdict.model_dump(),
+            # 어떤 정책으로 내려진 판정인지를 결과 자체에 각인한다. 정책 파일은
+            # 재배포 없이 볼륨으로 갈아끼워지므로, 이 해시가 없으면 과거 판정을
+            # 되짚을 때 "그때 기준이 뭐였는지"를 증명할 방법이 없다.
+            raw_response={**verdict.model_dump(), "policy_sha256": POLICY.sha256},
         )

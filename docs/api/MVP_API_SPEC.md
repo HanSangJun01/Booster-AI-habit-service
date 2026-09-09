@@ -642,6 +642,14 @@ MVP 핵심 흐름은 다음과 같다.
 - `gpsResult`: gps_verification_results에 저장된 GPS 인증 결과 (거리·반경 내 포함 여부).
 - `finalPassed`, `failureReason`: verification_decisions에 저장된 최종 판정. MVP에서는 GPS 결과만으로 결정된다.
 
+#### 오류 (BS-41 악용 방어)
+
+| status | code | 조건 |
+|---|---|---|
+| 429 | `VERIFICATION_ATTEMPTS_EXCEEDED` | 하루(체크인 1건) 인증 시도 상한 초과 (기본 3회, `VERIFICATION_MAX_ATTEMPTS_PER_DAY`) |
+| 429 | `VERIFICATION_COOLDOWN` | 직전 시도 후 쿨다운 미경과 (기본 60초, `VERIFICATION_ATTEMPT_COOLDOWN_SECONDS`) |
+| 409 | `DUPLICATE_IMAGE` | AI 인증(`/ai-verification`)에서 같은 챌린지에 이미 제출된 동일 이미지(SHA-256) 재사용 |
+
 ---
 
 ## 9.2 인증 제출/결과 조회

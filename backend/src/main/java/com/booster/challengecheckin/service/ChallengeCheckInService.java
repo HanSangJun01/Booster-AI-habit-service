@@ -17,6 +17,7 @@ import com.booster.challengecheckin.repository.VerificationDecisionRepository;
 import com.booster.challengecheckin.repository.VerificationSubmissionRepository;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.repository.ChallengeParticipantRepository;
+import com.booster.shared.common.BusinessException;
 import com.booster.shared.common.ResourceNotFoundException;
 import com.booster.shared.common.UnauthorizedException;
 import com.booster.shared.gps.GpsVerificationEvaluator;
@@ -24,7 +25,9 @@ import com.booster.team.domain.Team;
 import com.booster.team.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +55,17 @@ public class ChallengeCheckInService {
     private final GpsVerificationResultRepository gpsResultRepository;
     private final VerificationDecisionRepository decisionRepository;
     private final CheckInInsertHelper checkInInsertHelper;
+
+    // (악용 방어) LLM 판정은 확률적이다 — 시도 상한이 없으면 경계 사진을 각도·크롭만
+    // 바꿔 반복 제출하는 '뽑기'가 되고, 정책을 아무리 엄격히 써도 무의미해진다.
+    // 체크인은 (참여자, 날짜)당 1건이므로 이 상한이 곧 하루 판정 시도 상한이다.
+    // 패키지-프라이빗 & 비-final: 단위 테스트가 같은 패키지에서 직접 조정한다.
+    @Value("${booster.verification.max-attempts-per-day:3}")
+    int maxVerificationAttemptsPerDay = 3;
+
+    // 시도 간 최소 간격(초). 상한 안에서도 스크립트로 연사하는 것을 막는다. 0이면 끔.
+    @Value("${booster.verification.attempt-cooldown-seconds:60}")
+    int attemptCooldownSeconds = 60;
 
     public CheckInResponse recordCheckIn(Long userId, Long challengeId, double submittedLat, double submittedLng) {
         log.info("CheckIn requested: userId={}, challengeId={}", userId, challengeId);
@@ -128,8 +142,25 @@ public class ChallengeCheckInService {
         boolean needsAi = (verificationType == VerificationType.AI
                 || verificationType == VerificationType.GPS_PHOTO_AI);
 
-        // 5. VerificationSubmission 생성
+        // 5. VerificationSubmission 생성 — 그 전에 시도 상한·쿨다운부터 확인한다.
+        //    (판정 한 건이 실제 과금되는 AI 호출로 이어지므로, 여기서 끊어야 비용도 선다)
         int attemptNumber = submissionRepository.countByCheckInId(checkIn.getId()) + 1;
+        if (attemptNumber > maxVerificationAttemptsPerDay) {
+            throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                    "VERIFICATION_ATTEMPTS_EXCEEDED",
+                    "오늘 인증 시도 횟수(" + maxVerificationAttemptsPerDay + "회)를 모두 사용했습니다.");
+        }
+        if (attemptCooldownSeconds > 0) {
+            submissionRepository.findTopByCheckInIdOrderByIdDesc(checkIn.getId())
+                    .map(VerificationSubmission::getSubmittedAt)
+                    .filter(last -> last != null
+                            && last.isAfter(LocalDateTime.now().minusSeconds(attemptCooldownSeconds)))
+                    .ifPresent(last -> {
+                        throw new BusinessException(HttpStatus.TOO_MANY_REQUESTS,
+                                "VERIFICATION_COOLDOWN",
+                                "인증 재시도는 " + attemptCooldownSeconds + "초 후에 가능합니다.");
+                    });
+        }
         VerificationSubmission submission = submissionRepository.save(
                 VerificationSubmission.builder()
                         .checkInId(checkIn.getId())

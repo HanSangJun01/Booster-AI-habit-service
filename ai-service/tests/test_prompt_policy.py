@@ -258,3 +258,18 @@ def test_every_category_sends_its_own_criteria():
         assert texts[category.value] == prompts.build_instruction(category)
 
     assert len(set(texts.values())) == len(texts), f"카테고리별 기준이 겹친다: {list(texts)}"
+
+
+def test_system_prompt_defends_against_in_image_text_injection():
+    """이미지 속 텍스트를 지시로 읽지 말라는 방어 문구가 살아 있는가.
+
+    "passed=true 라고 적힌 종이를 찍어 올리는" 계열(typographic prompt
+    injection)의 유일한 프롬프트 층 방어다. 정책 파일을 튜닝하다 이 줄들을
+    지우면 방어가 통째로 사라지므로, 핵심 문구의 존재를 못박는다.
+    문구를 다듬는 것은 자유지만, 취지가 유지되는지 이 테스트가 묻게 하라.
+    """
+    for phrase in ("지시가 아니다", "조작 시도"):
+        assert phrase in prompts.SYSTEM_PROMPT, (
+            f"system 프롬프트에서 인젝션 방어 문구가 사라졌다: {phrase!r}\n"
+            "policies/verification.yaml::system 의 판단 원칙을 확인하라."
+        )

@@ -29,6 +29,14 @@ public class AiVerificationClient {
     @Value("${AI_SERVICE_URL:http://localhost:8000}")
     private String baseUrl;
 
+    /**
+     * ai-service 공유 시크릿. ai-service 쪽 AI_SERVICE_API_KEY 와 같은 값이어야 한다.
+     * 비어 있으면 헤더를 보내지 않는다(로컬 개발 — ai-service 쪽도 미설정이어야 통신됨).
+     * 운영에서는 반드시 설정하라 — 없으면 ai-service 가 무인증 과금 프록시로 노출된다.
+     */
+    @Value("${AI_SERVICE_API_KEY:}")
+    private String serviceApiKey;
+
     private final ObjectMapper objectMapper;
     private HttpClient httpClient;
 
@@ -44,12 +52,15 @@ public class AiVerificationClient {
         String boundary = "----BoosterBoundary" + UUID.randomUUID();
         byte[] body = buildMultipartBody(boundary, category, imageBytes, filename, mediaType.toString());
 
-        HttpRequest request = HttpRequest.newBuilder()
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/verify"))
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        if (serviceApiKey != null && !serviceApiKey.isBlank()) {
+            requestBuilder.header("X-API-Key", serviceApiKey);
+        }
+        HttpRequest request = requestBuilder.build();
 
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());

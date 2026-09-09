@@ -22,6 +22,15 @@
 set -u
 
 BASE_URL="${BASE_URL:-http://localhost:8000}"
+
+# 서버에 AI_SERVICE_API_KEY 가 설정돼 있으면 같은 값을 환경변수로 줘야 한다:
+#   AI_SERVICE_API_KEY=... bash batch_test.sh
+# (macOS 기본 bash 3.2 + set -u 에서 빈 배열 확장이 터지므로 +확장을 쓴다)
+AUTH_ARGS=()
+if [ -n "${AI_SERVICE_API_KEY:-}" ]; then
+  AUTH_ARGS=(-H "X-API-Key: $AI_SERVICE_API_KEY")
+fi
+
 CATEGORIES=("EXERCISE" "STUDY")
 if [ $# -ge 1 ]; then
   CATEGORIES=("$1")
@@ -75,6 +84,7 @@ _verify() {
   local cat="$1" img="$2"
   local resp
   resp=$(curl -s -X POST "$BASE_URL/verify" \
+    ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
     -F "category=$cat" \
     -F "image=@$img" \
     --max-time 30)

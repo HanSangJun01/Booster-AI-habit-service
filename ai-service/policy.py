@@ -20,6 +20,7 @@
 배포가 실패하는 편이 사용자가 500을 받는 것보다 낫다.
 """
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,11 @@ class VerificationPolicy:
     """`verification.yaml` 한 벌. 값은 전부 **모델에게 가는 문구**다."""
 
     path: Path
+    #: 정책 파일 원문의 SHA-256. 판정 기준이 볼륨 마운트로 갈아끼워지는 구조라,
+    #: "이 판정이 어떤 기준으로 내려졌는가"를 되짚을 열쇠가 코드 밖에 있다.
+    #: 기동 로그·/health·판정 raw_response 에 이 값이 실려 나간다 — 정책 파일을
+    #: 몰래 바꾸면 여기서부터 흔적이 남는다.
+    sha256: str
     system: str
     instruction_template: str
     output_description: str
@@ -138,6 +144,7 @@ def load(prompt_dir: Path | None = None) -> VerificationPolicy:
 
     return VerificationPolicy(
         path=path,
+        sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
         system=_require_text(data, "system", path),
         instruction_template=instruction_template,
         output_description=_require_text(data, "output_description", path),

@@ -18,6 +18,7 @@ import com.booster.challengecheckin.repository.VerificationSubmissionRepository;
 import com.booster.participant.domain.ChallengeParticipant;
 import com.booster.participant.domain.ParticipantStatus;
 import com.booster.participant.repository.ChallengeParticipantRepository;
+import com.booster.shared.common.BusinessException;
 import com.booster.shared.gps.GpsVerificationEvaluator;
 import com.booster.team.repository.TeamRepository;
 import org.junit.jupiter.api.Test;
@@ -395,5 +396,71 @@ class ChallengeCheckInServiceTest {
 
         // 이미 확정된 결정은 다시 저장/갱신하지 않아야 함
         verify(decisionRepository, never()).save(any());
+    }
+
+    // ── (악용 방어) 판정 시도 상한·쿨다운 — LLM 판정을 '뽑기'로 만들지 못하게 ──
+    //  경계 사진을 각도만 바꿔 무한 재제출하면 확률적 판정은 언젠가 통과한다.
+    //  상한 초과·쿨다운 위반은 submission 생성(→과금되는 AI 호출) 전에 429로 끊는다.
+
+    private ChallengeCheckIn pendingCheckInToday() {
+        ChallengeCheckIn pending = mock(ChallengeCheckIn.class);
+        when(pending.getStatus()).thenReturn(CheckInStatus.PENDING);
+        return pending;
+    }
+
+    private void arrangeActiveGpsChallengeWithPendingCheckIn() {
+        ChallengeParticipant participant = confirmedParticipantWithTeam();
+        when(participantRepository.findConfirmedByUserAndChallenge(challengeId, userId))
+                .thenReturn(Optional.of(participant));
+
+        Challenge challenge = mock(Challenge.class);
+        when(challenge.getStatus()).thenReturn(ChallengeStatus.ACTIVE);
+        when(challenge.getVerificationType()).thenReturn(VerificationType.GPS);
+        when(challengeRepository.findById(challengeId)).thenReturn(Optional.of(challenge));
+
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+        // 주의: thenReturn 인자 안에서 새 mock 을 스터빙하면 UnfinishedStubbing —
+        // 먼저 만들어 두고 넘긴다.
+        ChallengeCheckIn pending = pendingCheckInToday();
+        when(checkInRepository.findByParticipantIdAndCheckInDate(any(), eq(today)))
+                .thenReturn(Optional.of(pending));
+    }
+
+    @Test
+    void recordCheckIn_whenDailyAttemptsExhausted_shouldThrow429AndSkipSubmission() {
+        checkInService.maxVerificationAttemptsPerDay = 3;
+        checkInService.attemptCooldownSeconds = 0;
+        arrangeActiveGpsChallengeWithPendingCheckIn();
+        when(submissionRepository.countByCheckInId(any())).thenReturn(3); // 4번째 시도
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
+
+        assertEquals("VERIFICATION_ATTEMPTS_EXCEEDED", ex.getCode());
+        assertEquals(429, ex.getStatus().value());
+        verify(submissionRepository, never()).save(any()); // 시도 자체가 기록되기 전 차단
+    }
+
+    @Test
+    void recordCheckIn_whenWithinCooldown_shouldThrow429() {
+        checkInService.maxVerificationAttemptsPerDay = 3;
+        checkInService.attemptCooldownSeconds = 60;
+        arrangeActiveGpsChallengeWithPendingCheckIn();
+        when(submissionRepository.countByCheckInId(any())).thenReturn(1); // 상한 안
+
+        VerificationSubmission justNow = VerificationSubmission.builder()
+                .checkInId(100L)
+                .submittedLat(lat).submittedLng(lng)
+                .attemptNumber(1)
+                .submittedAt(java.time.LocalDateTime.now().minusSeconds(5))
+                .build();
+        when(submissionRepository.findTopByCheckInIdOrderByIdDesc(any()))
+                .thenReturn(Optional.of(justNow));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> checkInService.recordCheckIn(userId, challengeId, lat, lng));
+
+        assertEquals("VERIFICATION_COOLDOWN", ex.getCode());
+        verify(submissionRepository, never()).save(any());
     }
 }
