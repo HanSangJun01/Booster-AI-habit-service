@@ -171,6 +171,76 @@ class DeviceTestFixesIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    @DisplayName("기간 상한: 366일은 400 — 20억일 방이 정원 채워지는 순간 팀 편성을 깨뜨렸다")
+    void challengeDurationHasMaximum() throws Exception {
+        long userId = signup("durmax");
+        registerLocation(userId, 300);
+        Map<String, Object> body = challengeBody();
+        body.put("durationDays", 366);
+        mockMvc.perform(post("/api/challenges").with(authentication(auth(userId)))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("기간 상한: int 최대값에 가까운 값도 막힌다 — 종료일이 timestamptz 범위를 넘던 경로")
+    void challengeDurationRejectsAbsurdValue() throws Exception {
+        long userId = signup("durhuge");
+        registerLocation(userId, 300);
+        Map<String, Object> body = challengeBody();
+        body.put("durationDays", 2_000_000_000);
+        mockMvc.perform(post("/api/challenges").with(authentication(auth(userId)))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("기간 경계: 365일까지는 통과 — 앱이 쓰는 7·14·21·30 을 막지 않는다")
+    void challengeDurationAllowsBoundary() throws Exception {
+        long userId = signup("durok");
+        registerLocation(userId, 300);
+        Map<String, Object> body = challengeBody();
+        body.put("durationDays", 365);
+        createChallenge(userId, body);
+    }
+
+    @Test
+    @DisplayName("설명 상한: 1,000자를 넘으면 400 — 목록 응답에 항목마다 실려 나가는 값이다")
+    void challengeDescriptionHasMaximum() throws Exception {
+        long userId = signup("descmax");
+        registerLocation(userId, 300);
+        Map<String, Object> body = challengeBody();
+        body.put("description", "가".repeat(1001));
+        mockMvc.perform(post("/api/challenges").with(authentication(auth(userId)))
+                        .contentType(MediaType.APPLICATION_JSON).content(json(body)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("설명 경계: 1,000자까지는 통과")
+    void challengeDescriptionAllowsBoundary() throws Exception {
+        long userId = signup("descok");
+        registerLocation(userId, 300);
+        Map<String, Object> body = challengeBody();
+        body.put("description", "가".repeat(1000));
+        createChallenge(userId, body);
+    }
+
+    @Test
+    @DisplayName("응원 이모지: 50자를 넘으면 400 — DB VARCHAR(50)에서 터져 409 \"충돌\"로 잘못 나가던 값")
+    void cheerEmojiTypeHasMaximum() throws Exception {
+        long userId = signup("emoji");
+        registerLocation(userId, 300);
+        long challengeId = createChallenge(userId, challengeBody());
+        // 서비스도 400(SELF_CHEER 등)을 던지므로 상태 코드만으로는 구분되지 않는다 → 코드까지 본다.
+        mockMvc.perform(post("/api/challenges/{id}/cheers", challengeId).with(authentication(auth(userId)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json(Map.of("toParticipantId", 1, "emojiType", "F".repeat(51)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
     // ────────────────────────── 계정 ──────────────────────────
 
     @Test
