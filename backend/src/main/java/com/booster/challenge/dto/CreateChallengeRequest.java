@@ -27,12 +27,31 @@ public class CreateChallengeRequest {
     @Size(max = 200)
     private String title;
 
+    /**
+     * 챌린지 설명(선택).
+     *
+     * <p>DB 는 TEXT 라 상한이 없고 title 만 200자로 막혀 있어, API 를 직접 호출하면 임의 길이가
+     * 그대로 저장됐다. 이 값은 목록 조회 응답({@code ChallengeResponse})에 항목마다 실려 나가므로
+     * 길이를 두지 않으면 팀 탐색 응답 하나가 통째로 비대해진다.
+     */
+    @Size(max = 1000)
     private String description;
 
     @NotNull
     private VerificationType verificationType;
 
+    /**
+     * 챌린지 기간(일). 앱이 고르는 값은 7·14·21·30 뿐이다.
+     *
+     * <p>[상한 필수] 하한만 있던 시절엔 {@code int} 전 범위가 통과했다. 큰 값으로 만든 방은
+     * 정원이 찰 때까지 조용히 있다가, 10명이 채워지는 순간 {@code ChallengeLifecycleService}
+     * 가 {@code now.plusDays(durationDays)} 로 종료일을 계산하면서 timestamptz 표현 범위를
+     * 넘겨 팀 편성 트랜잭션이 통째로 롤백된다 → 10번째 참가는 500 으로 실패하고 방은 9명에서
+     * 영구히 멈춘 채 예치금만 잠긴다. 되살릴 경로가 없으므로 입구에서 막는다.
+     * ({@code ParticipationRateCalculator} 의 일자별 집계 루프도 이 값만큼 돈다.)
+     */
     @Min(1)
+    @Max(value = 365, message = "챌린지 기간은 365일 이하여야 합니다.")
     private int durationDays;
 
     /**
