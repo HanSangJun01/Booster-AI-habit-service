@@ -183,6 +183,8 @@ class _VerifyScreenState extends State<VerifyScreen> {
         // 목표에 카테고리가 저장돼 있으면 그대로 쓴다. 매번 무엇을 인증하는지
         // 다시 묻지 않기 위해서다(없으면 시트가 고르게 한다).
         fixedAiCategory: _goal?.category,
+        // 서버가 (사용자, 날짜)로 시도를 세므로 상한은 계정 전체에 걸린다.
+        perChallenge: false,
         upload: (path, bytes, aiCategory) => PersonalService.verifyPhoto(
           checkInId: checkInId,
           filePath: path,
@@ -229,6 +231,9 @@ class _VerifyScreenState extends State<VerifyScreen> {
       request: PhotoVerifyRequest(
         subtitle: '${challenge.title} 인증 사진을 올려주세요.',
         fixedAiCategory: aiCategory,
+        // 서버가 시도를 체크인별로 세고, 체크인은 (참여자, 날짜)당 1건이다 —
+        // 그래서 상한은 이 챌린지 하나에만 걸린다.
+        perChallenge: true,
         upload: (path, bytes, category) => ChallengeService.verifyPhoto(
           submissionId: submissionId,
           filePath: path,

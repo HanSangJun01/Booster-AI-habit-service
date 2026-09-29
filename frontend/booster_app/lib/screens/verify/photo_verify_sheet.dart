@@ -37,6 +37,23 @@ Future<PickedImage?> pickWithImagePicker(ImageSource source) async {
   return PickedImage(path: file.path, bytes: await file.readAsBytes());
 }
 
+/// 하루에 올릴 수 있는 인증 사진 수.
+///
+/// 서버의 `booster.verification.max-attempts-per-day`(기본 3)와 손으로 맞춰 둔
+/// 값이다 — 남은 횟수를 알려주는 응답 필드가 없어서 앱이 물어볼 곳이 없다.
+/// 서버 설정을 바꾸면 이 값도 같이 바꿔야 한다.
+const int kMaxVerifyAttemptsPerDay = 3;
+
+/// 하루 시도 상한 안내 문구.
+///
+/// 범위를 [perChallenge]로 나누는 건 서버가 상한을 세는 단위가 두 트랙에서
+/// 다르기 때문이다. 팀은 체크인이 (참여자, 날짜)당 1건이라 시도 수를 체크인별로
+/// 세므로 결과적으로 **챌린지마다** 하루 3번이고, 개인은 (사용자, 날짜)로 세어
+/// **계정 전체가** 하루 3번이다. 한 문구를 양쪽에 쓰면 한쪽이 거짓말이 된다.
+String attemptLimitNoteFor({required bool perChallenge}) => perChallenge
+    ? '이 챌린지는 하루 $kMaxVerifyAttemptsPerDay번까지 인증할 수 있어요.'
+    : '하루 $kMaxVerifyAttemptsPerDay번까지 인증할 수 있어요.';
+
 /// 사진 인증 한 건에 필요한 것들.
 class PhotoVerifyRequest {
   /// 시트 제목 아래 붙는 설명(무엇을 인증하는지).
@@ -48,6 +65,10 @@ class PhotoVerifyRequest {
   /// 저장하는 곳이 서버에 없어서** 올릴 때마다 물어야 한다.
   final String? fixedAiCategory;
 
+  /// 하루 시도 상한이 이 챌린지 하나에만 걸리는지(팀), 계정 전체에 걸리는지(개인).
+  /// 안내 문구의 범위를 정한다 — [attemptLimitNoteFor] 참고.
+  final bool perChallenge;
+
   final Future<AiVerificationResult> Function(
     String filePath,
     Uint8List bytes,
@@ -57,6 +78,7 @@ class PhotoVerifyRequest {
   const PhotoVerifyRequest({
     required this.subtitle,
     required this.fixedAiCategory,
+    required this.perChallenge,
     required this.upload,
   });
 }
@@ -104,6 +126,9 @@ class _PhotoVerifySheetState extends State<_PhotoVerifySheet> {
 
   AiVerificationResult? _result;
   String _message = '';
+
+  String get _limitNote =>
+      attemptLimitNoteFor(perChallenge: widget.request.perChallenge);
 
   String? get _aiCategory => widget.request.fixedAiCategory ?? _category.aiValue;
 
@@ -243,6 +268,10 @@ class _PhotoVerifySheetState extends State<_PhotoVerifySheet> {
       const SizedBox(height: 10),
       const Text('JPG·PNG·WEBP · 10MB 이하',
           style: TextStyle(fontSize: 11.5, color: BC.ink3)),
+      const SizedBox(height: 3),
+      // 올리기 전에 상한을 알려준다. 서버는 남은 횟수를 주지 않으므로, 이 줄이
+      // 없으면 사용자가 상한을 알게 되는 건 429로 막힌 다음뿐이다.
+      Text(_limitNote, style: const TextStyle(fontSize: 11.5, color: BC.ink3)),
       const SizedBox(height: 4),
       Center(child: _cancelButton('나중에')),
     ];
@@ -305,11 +334,13 @@ class _PhotoVerifySheetState extends State<_PhotoVerifySheet> {
       ),
       const SizedBox(height: 12),
       // 거절되면 서버가 체크인 레코드를 지운다 — PENDING이 하루를 점유해 재시도가
-      // 막히는 걸 막으려는 것이다. 그래서 오늘이 끝난 게 아니다.
-      const NoteBox(
+      // 막히는 걸 막으려는 것이다. 그래서 오늘이 끝난 게 아니다. 다만 무한히
+      // 다시 찍을 수는 없어서, 여기서 상한을 한 번 더 밝힌다.
+      NoteBox(
         icon: Icons.refresh_rounded,
-        child: Text('오늘 다시 시도할 수 있어요. 인증할 내용이 잘 보이게 찍어주세요.',
-            style: TextStyle(fontSize: 12.5, color: BC.ink2, height: 1.5)),
+        child: Text(
+            '오늘 다시 시도할 수 있어요. 인증할 내용이 잘 보이게 찍어주세요. $_limitNote',
+            style: const TextStyle(fontSize: 12.5, color: BC.ink2, height: 1.5)),
       ),
       const SizedBox(height: 18),
       PrimaryButton(

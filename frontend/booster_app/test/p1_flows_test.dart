@@ -467,6 +467,7 @@ void main() {
       WidgetTester tester, {
       required ImagePickFn pick,
       String? fixedAiCategory,
+      bool perChallenge = false,
       required Future<AiVerificationResult> Function(String, Uint8List, String) upload,
     }) async {
       AiVerificationResult? result;
@@ -482,6 +483,7 @@ void main() {
                   request: PhotoVerifyRequest(
                     subtitle: '오늘의 습관을 찍어서 올려주세요.',
                     fixedAiCategory: fixedAiCategory,
+                    perChallenge: perChallenge,
                     upload: upload,
                   ),
                 ),
@@ -596,6 +598,58 @@ void main() {
       expect(find.text('운동하는 모습이 보이지 않아요'), findsOneWidget);
       expect(find.textContaining('오늘 다시 시도할 수 있어요'), findsOneWidget);
       expect(find.text('다시 찍기'), findsOneWidget);
+    });
+
+    testWidgets('올리기 전에 하루 상한을 알려준다 — 범위는 트랙마다 다르다', (tester) async {
+      // 서버는 남은 횟수를 응답에 싣지 않는다. 이 줄이 없으면 사용자가 상한을
+      // 알게 되는 건 429로 막힌 다음뿐이다.
+      await pumpSheet(
+        tester,
+        pick: pickFake(),
+        fixedAiCategory: 'EXERCISE',
+        perChallenge: false,
+        upload: (_, __, ___) async => throw StateError('안 불려야 한다'),
+      );
+      // 개인은 (사용자, 날짜)로 세므로 계정 전체가 하루 3번이다.
+      expect(find.text('하루 $kMaxVerifyAttemptsPerDay번까지 인증할 수 있어요.'), findsOneWidget);
+    });
+
+    testWidgets('팀은 상한이 이 챌린지에만 걸린다고 밝힌다', (tester) async {
+      // 팀은 체크인이 (참여자, 날짜)당 1건이라 상한도 챌린지마다 따로 걸린다.
+      // 개인과 같은 문구를 쓰면 다른 챌린지도 막힌 줄 알게 된다.
+      await pumpSheet(
+        tester,
+        pick: pickFake(),
+        fixedAiCategory: 'EXERCISE',
+        perChallenge: true,
+        upload: (_, __, ___) async => throw StateError('안 불려야 한다'),
+      );
+      expect(find.text('이 챌린지는 하루 $kMaxVerifyAttemptsPerDay번까지 인증할 수 있어요.'),
+          findsOneWidget);
+    });
+
+    testWidgets('거절 화면에도 남은 예산을 밝힌다', (tester) async {
+      await pumpSheet(
+        tester,
+        pick: pickFake(),
+        fixedAiCategory: 'EXERCISE',
+        perChallenge: true,
+        upload: (_, __, ___) async => const AiVerificationResult(
+          passed: false,
+          reason: '운동하는 모습이 보이지 않아요',
+          currentStreak: 0,
+          coinBalance: 1500,
+          rewardGranted: false,
+        ),
+      );
+
+      await tester.tap(find.text('사진 찍기'));
+      await tester.pumpAndSettle();
+
+      // 다시 찍으라고 하는 자리에서 무한이 아니라는 것도 같이 말해야 한다.
+      expect(
+          find.textContaining('이 챌린지는 하루 $kMaxVerifyAttemptsPerDay번까지'),
+          findsOneWidget);
     });
 
     testWidgets('업로드가 실패해도 인증이 남아 있다고 알린다', (tester) async {
